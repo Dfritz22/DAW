@@ -420,10 +420,7 @@ struct UiState {
     bool recordUsingWasapi {false};
 };
 
-// ── Project title bar helper ────────────────────────────────────────────────
-// Forward declaration (LoadWavStereo defined later in file)
-bool LoadWavStereo(const std::wstring& path, LoadedAudio* out, std::wstring* error);
-bool WriteWavPcm16Stereo(const std::wstring& path, const std::vector<float>& stereo, int sampleRate);
+// ── Forward declarations ────────────────────────────────────────────────────
 bool RenderTrackToStereoLocked(const UiState& state, int trackIndex, std::vector<float>* outStereo, int* outSampleRate);
 bool RenderFullMixToStereoLocked(const UiState& state, std::vector<float>* outStereo, int* outSampleRate);
 bool RenderBusStemToStereoLocked(const UiState& state, int busIndex, std::vector<float>* outStereo, int* outSampleRate);
