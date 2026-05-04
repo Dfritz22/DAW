@@ -4,6 +4,7 @@ add_executable(daw_gui WIN32
     io/wav_io.cpp
     dsp/chain.cpp
     ui/layout.cpp
+    core/timeline_edit.cpp
 )
 
 target_link_libraries(daw_gui
