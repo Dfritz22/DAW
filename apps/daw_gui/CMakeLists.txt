@@ -3,6 +3,7 @@ add_executable(daw_gui WIN32
     draw.cpp
     io/wav_io.cpp
     dsp/chain.cpp
+    ui/layout.cpp
 )
 
 target_link_libraries(daw_gui
