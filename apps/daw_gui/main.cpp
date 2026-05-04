@@ -28,10 +28,16 @@ InsertBypassArray DefaultInsertBypass() {
     return bypass;
 }
 
-InsertParamsArray DefaultInsertParams() {
-    InsertParamsArray arr;
-    // arr is value-initialized; InsertParams uses in-class defaults, so nothing extra needed.
+InsertConfigArray DefaultInsertParams() {
+    InsertConfigArray arr;
+    // arr is value-initialized; InsertConfig uses in-class defaults, so nothing extra needed.
     return arr;
+}
+
+static void EnsureInsertDspStateStorage(const UiState& state) {
+    if (state.trackInsertDspState.size() != state.project.tracks.size()) {
+        state.trackInsertDspState.resize(state.project.tracks.size());
+    }
 }
 
 float DbToLinear(float db) {
@@ -77,6 +83,7 @@ void ApplyBalancePan(float pan, float* left, float* right) {
 }
 
 void ImportWavFiles(HWND hwnd, UiState& state);
+
 
 static bool IsWasapiBackend(AudioBackend backend) {
     return backend == AudioBackend::WasapiShared || backend == AudioBackend::WasapiExclusive;
@@ -938,6 +945,7 @@ bool FillRealtimeBufferLocked(UiState& state, std::int16_t* outInterleaved, int 
                 state.project.tracks[static_cast<size_t>(ti)].insertEffects,
                 state.project.tracks[static_cast<size_t>(ti)].insertBypass,
                 state.project.tracks[static_cast<size_t>(ti)].insertParams,
+                state.trackInsertDspState[static_cast<size_t>(ti)],
                 state.project.tracks[static_cast<size_t>(ti)].insertSlots);
         }
 
@@ -967,6 +975,7 @@ bool FillRealtimeBufferLocked(UiState& state, std::int16_t* outInterleaved, int 
                 state.project.buses[static_cast<size_t>(b)].insertEffects,
                 state.project.buses[static_cast<size_t>(b)].insertBypass,
                 state.project.buses[static_cast<size_t>(b)].insertParams,
+                state.busInsertDspState[static_cast<size_t>(b)],
                 state.project.buses[static_cast<size_t>(b)].insertSlots);
         }
 
@@ -1370,10 +1379,10 @@ bool ParseAutoMixSettings(
 static void AutoMixAppendInsert(
     InsertEffectArray* effects,
     InsertBypassArray* bypass,
-    InsertParamsArray* params,
+    InsertConfigArray* params,
     int* slotCount,
     int effectType,
-    const InsertParams& p)
+    const InsertConfig& p)
 {
     if (effects == nullptr || bypass == nullptr || params == nullptr || slotCount == nullptr) return;
     if (*slotCount < 0 || *slotCount >= kMaxInsertSlots) return;
@@ -1582,7 +1591,7 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
                     std::fabs(s.presenceDb) > 0.05f ||
                     std::fabs(s.airDb) > 0.05f;
                 if (hasEq) {
-                    InsertParams p = DefaultInsertParams()[0];
+                    InsertConfig p = DefaultInsertParams()[0];
                     p.eq[0].type = (s.highpassHz > 5.0f) ? kEqHighPass : kEqLowShelf;
                     p.eq[0].freq_hz = std::clamp(s.highpassHz > 5.0f ? s.highpassHz : 120.0f, 20.0f, 20000.0f);
                     p.eq[0].gain_db = (s.highpassHz > 5.0f) ? 0.0f : std::clamp(s.lowShelfDb, -18.0f, 18.0f);
@@ -1607,7 +1616,7 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
                 }
 
                 if (s.compRatio > 1.05f) {
-                    InsertParams p = DefaultInsertParams()[0];
+                    InsertConfig p = DefaultInsertParams()[0];
                     p.cmp_threshold_db = std::clamp(s.compThresholdDb, -60.0f, 0.0f);
                     p.cmp_ratio = std::clamp(s.compRatio, 1.0f, 20.0f);
                     p.cmp_makeup_db = std::clamp(s.compMakeupDb, 0.0f, 24.0f);
@@ -1618,7 +1627,7 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
                 }
 
                 if (s.deesserDb < -0.05f) {
-                    InsertParams p = DefaultInsertParams()[0];
+                    InsertConfig p = DefaultInsertParams()[0];
                     p.dee_threshold_db = std::clamp(-22.0f + s.deesserDb * 2.0f, -40.0f, 0.0f);
                     p.dee_freq_hz = 7000.0f;
                     p.dee_bandwidth_hz = 3500.0f;
@@ -1627,14 +1636,14 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
                 }
 
                 if (s.saturationBlend > 0.01f && s.saturationDriveDb > 0.01f) {
-                    InsertParams p = DefaultInsertParams()[0];
+                    InsertConfig p = DefaultInsertParams()[0];
                     p.sat_drive = std::clamp(s.saturationDriveDb / 8.0f, 0.0f, 1.0f);
                     p.sat_mix = std::clamp(s.saturationBlend, 0.0f, 1.0f);
                     AutoMixAppendInsert(&fx, &by, &pp, &slots, kFxSAT, p);
                 }
 
                 if (s.delayMix > 0.01f && s.delayTimeMs > 1.0f) {
-                    InsertParams p = DefaultInsertParams()[0];
+                    InsertConfig p = DefaultInsertParams()[0];
                     p.dly_time_ms = std::clamp(s.delayTimeMs, 10.0f, 2000.0f);
                     p.dly_feedback = std::clamp(s.delayFeedback, 0.0f, 0.95f);
                     p.dly_mix = std::clamp(s.delayMix, 0.0f, 1.0f);
@@ -1642,7 +1651,7 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
                 }
 
                 if (s.reverbMix > 0.01f) {
-                    InsertParams p = DefaultInsertParams()[0];
+                    InsertConfig p = DefaultInsertParams()[0];
                     p.rev_mix = std::clamp(s.reverbMix, 0.0f, 1.0f);
                     p.rev_room_size = std::clamp((s.reverbDecayS - 0.2f) / 2.3f, 0.0f, 1.0f);
                     p.rev_damping = std::clamp(0.35f + s.reverbPreDelayMs / 80.0f, 0.0f, 1.0f);
@@ -1675,7 +1684,7 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
         InsertParamsArray pp = DefaultInsertParams();
         int slots = 0;
 
-        InsertParams p = DefaultInsertParams()[0];
+        InsertConfig p = DefaultInsertParams()[0];
         p.cmp_threshold_db = std::clamp(master.compThresholdDb, -60.0f, 0.0f);
         p.cmp_ratio = std::clamp(master.compRatio, 1.0f, 20.0f);
         p.cmp_makeup_db = std::clamp(master.compMakeupDb, 0.0f, 24.0f);
@@ -1744,6 +1753,8 @@ void StopPlayback(UiState& state, bool rewind) {
 }
 
 bool RenderTrackToStereoLocked(const UiState& state, int trackIndex, std::vector<float>* outStereo, int* outSampleRate) {
+        EnsureInsertDspStateStorage(state);
+
     if (trackIndex < 0 || trackIndex >= static_cast<int>(state.project.tracks.size()) || state.project.projectSampleRate <= 0) {
         return false;
     }
@@ -1934,6 +1945,7 @@ bool RenderFullMixToStereoLocked(const UiState& state, std::vector<float>* outSt
                 state.project.tracks[static_cast<size_t>(ti)].insertEffects,
                 state.project.tracks[static_cast<size_t>(ti)].insertBypass,
                 state.project.tracks[static_cast<size_t>(ti)].insertParams,
+                state.trackInsertDspState[static_cast<size_t>(ti)],
                 state.project.tracks[static_cast<size_t>(ti)].insertSlots);
         }
 
@@ -1987,6 +1999,7 @@ bool RenderFullMixToStereoLocked(const UiState& state, std::vector<float>* outSt
             state.project.buses[static_cast<size_t>(b)].insertEffects,
             state.project.buses[static_cast<size_t>(b)].insertBypass,
             state.project.buses[static_cast<size_t>(b)].insertParams,
+            state.busInsertDspState[static_cast<size_t>(b)],
             state.project.buses[static_cast<size_t>(b)].insertSlots);
         const float busGainLin = std::pow(10.0f, BusGainDbAt(state, b) / 20.0f);
         for (std::uint64_t f = 0; f < endFrame; ++f) {
@@ -2009,6 +2022,8 @@ bool RenderFullMixToStereoLocked(const UiState& state, std::vector<float>* outSt
 // Renders all tracks routed to busIndex (with track+bus gain/pan applied) into a stereo buffer.
 // Must NOT be called with audioStateLock held.
 bool RenderBusStemToStereoLocked(const UiState& state, int busIndex, std::vector<float>* outStereo, int* outSampleRate) {
+        EnsureInsertDspStateStorage(state);
+
     if (state.project.projectSampleRate <= 0 || state.project.clips.empty() || state.project.tracks.empty()) return false;
 
     std::uint64_t endFrame = 0;
@@ -2071,6 +2086,7 @@ bool RenderBusStemToStereoLocked(const UiState& state, int busIndex, std::vector
                 state.project.tracks[static_cast<size_t>(ti)].insertEffects,
                 state.project.tracks[static_cast<size_t>(ti)].insertBypass,
                 state.project.tracks[static_cast<size_t>(ti)].insertParams,
+                state.trackInsertDspState[static_cast<size_t>(ti)],
                 state.project.tracks[static_cast<size_t>(ti)].insertSlots);
         }
 
@@ -2084,6 +2100,7 @@ bool RenderBusStemToStereoLocked(const UiState& state, int busIndex, std::vector
                 state.project.buses[static_cast<size_t>(busIndex)].insertEffects,
                 state.project.buses[static_cast<size_t>(busIndex)].insertBypass,
                 state.project.buses[static_cast<size_t>(busIndex)].insertParams,
+                state.busInsertDspState[static_cast<size_t>(busIndex)],
                 state.project.buses[static_cast<size_t>(busIndex)].insertSlots);
         }
 
@@ -4404,7 +4421,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                             const RECT kRect{kx, ky, kx + kw - 2, ky + kInspParamH - 18};
                             if (PtInRect(&kRect, pt)) {
                                 // Get current value for this paramId
-                                const InsertParams& P = (*pParams)[static_cast<size_t>(selSlot)];
+                                const InsertConfig& P = (*pParams)[static_cast<size_t>(selSlot)];
                                 float curVal = 0.0f;
                                 switch (knobs[k].paramId) {
                                 case 0: curVal=P.eq[0].freq_hz; break; case 1: curVal=P.eq[0].gain_db; break;
@@ -4788,7 +4805,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     pPA = &state->project.buses[static_cast<size_t>(inspIdx)].insertParams;
             }
             if (pPA && slotIdx >= 0 && slotIdx < kMaxInsertSlots) {
-                InsertParams& P = (*pPA)[static_cast<size_t>(slotIdx)];
+                InsertConfig& P = (*pPA)[static_cast<size_t>(slotIdx)];
                 // Sensitivity: dragging 100px covers full range; shift = 10x finer
                 // We encode the range in the lo/hi from original knob definitions
                 // Instead store range implicitly: use paramKnobDragStartVal + delta * range/100

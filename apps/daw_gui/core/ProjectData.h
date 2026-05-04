@@ -5,7 +5,7 @@
 #include <array>
 
 // Forward declarations of types from state.h (avoid circular includes)
-struct InsertParams;
+struct InsertConfig;
 struct LoadedAudio;
 struct ClipItem;
 
@@ -20,7 +20,7 @@ constexpr int PROJECT_BUS_COUNT = 4;
 
 using ProjectInsertEffectArray = std::array<std::uint8_t, PROJECT_MAX_INSERT_SLOTS>;
 using ProjectInsertBypassArray = std::array<bool, PROJECT_MAX_INSERT_SLOTS>;
-using ProjectInsertParamsArray = std::array<InsertParams, PROJECT_MAX_INSERT_SLOTS>;
+using ProjectInsertParamsArray = std::array<InsertConfig, PROJECT_MAX_INSERT_SLOTS>;
 
 struct TrackData {
     std::wstring name;

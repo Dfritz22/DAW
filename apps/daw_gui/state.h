@@ -129,16 +129,18 @@ struct EqBand {
     float gain_db {0.0f};     // -24 - +24 (ignored for LP/HP)
     float q       {0.707f};   // 0.1 - 10
     int   type    {kEqPeak};  // kEqPeak / kEqLowShelf / ...
-    // Persistent biquad filter state (mutable — internal DSP state)
-    mutable float bq_x1[2]{0.0f, 0.0f};
-    mutable float bq_x2[2]{0.0f, 0.0f};
-    mutable float bq_y1[2]{0.0f, 0.0f};
-    mutable float bq_y2[2]{0.0f, 0.0f};
+};
+
+struct EqBandDspState {
+    float bq_x1[2]{0.0f, 0.0f};
+    float bq_x2[2]{0.0f, 0.0f};
+    float bq_y1[2]{0.0f, 0.0f};
+    float bq_y2[2]{0.0f, 0.0f};
 };
 
 // All per-slot parameter values. The active fields depend on the effect type
 // stored in the parallel InsertEffectArray. Unused fields are simply ignored.
-struct InsertParams {
+struct InsertConfig {
     // ---- EQ (kEqBandCount parametric bands) ----
     EqBand eq[kEqBandCount] = {
         {80.0f,    0.0f, 0.707f, kEqLowShelf },
@@ -184,34 +186,46 @@ struct InsertParams {
     // ---- Limiter ----
     float lim_ceiling_db  {-0.3f}; // -12 - 0
     float lim_release_ms  {50.0f}; // 5 - 500
-
-    // --- Persistent DSP state (mutable — internal processing state, not user params) ---
-    // Delay line
-    mutable std::vector<float> dly_bufL, dly_bufR;
-    mutable int   dly_wpos{0};
-    mutable int   dly_lastFrames{-1};
-    // Reverb (Schroeder: 4 comb + 2 allpass, mono)
-    mutable std::vector<float> rev_combBuf[4];
-    mutable std::vector<float> rev_apBuf[2];
-    mutable int   rev_combPos[4]{0,0,0,0};
-    mutable int   rev_apPos[2]{0,0};
-    mutable float rev_combFilt[4]{0.0f,0.0f,0.0f,0.0f};
-    mutable int   rev_lastCombLen[4]{-1,-1,-1,-1};
-    // Envelope followers
-    mutable float cmp_env{0.0f};
-    mutable float gate_env{0.0f};
-    mutable float gate_holdTimer{0.0f};
-    mutable float gate_gainState{0.0f};
-    mutable float dee_env{0.0f};
-    mutable float lim_env{0.0f};
-    // De-esser sidechain biquad state
-    mutable float dee_sc_x1[2]{0.0f,0.0f};
-    mutable float dee_sc_x2[2]{0.0f,0.0f};
-    mutable float dee_sc_y1[2]{0.0f,0.0f};
-    mutable float dee_sc_y2[2]{0.0f,0.0f};
 };
 
-using InsertParamsArray = std::array<InsertParams, kMaxInsertSlots>;
+struct InsertDspState {
+    // EQ band filter persistent state
+    EqBandDspState eq[kEqBandCount];
+
+    // --- Persistent DSP state (internal processing state, not user params) ---
+    // Delay line
+    std::vector<float> dly_bufL, dly_bufR;
+    int   dly_wpos{0};
+    int   dly_lastFrames{-1};
+    // Reverb (Schroeder: 4 comb + 2 allpass, mono)
+    std::vector<float> rev_combBuf[4];
+    std::vector<float> rev_apBuf[2];
+    int   rev_combPos[4]{0,0,0,0};
+    int   rev_apPos[2]{0,0};
+    float rev_combFilt[4]{0.0f,0.0f,0.0f,0.0f};
+    int   rev_lastCombLen[4]{-1,-1,-1,-1};
+    // Envelope followers
+    float cmp_env{0.0f};
+    float gate_env{0.0f};
+    float gate_holdTimer{0.0f};
+    float gate_gainState{0.0f};
+    float dee_env{0.0f};
+    float lim_env{0.0f};
+    // De-esser sidechain biquad state
+    float dee_sc_x1[2]{0.0f,0.0f};
+    float dee_sc_x2[2]{0.0f,0.0f};
+    float dee_sc_y1[2]{0.0f,0.0f};
+    float dee_sc_y2[2]{0.0f,0.0f};
+};
+
+struct InsertParams {
+    InsertConfig config;
+    InsertDspState state;
+};
+
+using InsertConfigArray = std::array<InsertConfig, kMaxInsertSlots>;
+using InsertDspStateArray = std::array<InsertDspState, kMaxInsertSlots>;
+using InsertParamsArray = InsertConfigArray;
 
 struct LayoutRects {
     RECT topBar;
@@ -399,6 +413,10 @@ struct UiState {
 
     // Persistent project data model
     ProjectData project;
+
+    // Runtime-only DSP state for insert chains (not serialized)
+    mutable std::vector<InsertDspStateArray> trackInsertDspState;
+    mutable std::array<InsertDspStateArray, kBusCount> busInsertDspState{};
 };
 
 // ── Forward declarations ────────────────────────────────────────────────────

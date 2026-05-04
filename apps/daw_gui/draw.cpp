@@ -291,7 +291,7 @@ void DrawInsertInspector(HDC hdc, const RECT& client, const UiState& state) {
     if (state.fxInspectorSelectedSlot >= 0 && state.fxInspectorSelectedSlot < slotCount) {
         const int selSlot = state.fxInspectorSelectedSlot;
 
-        const InsertParamsArray* pParams = nullptr;
+        const InsertConfigArray* pParams = nullptr;
         const InsertEffectArray* pEff = nullptr;
         if (state.fxInspectorIsTrack) {
             if (idx < static_cast<int>(state.project.tracks.size()))
@@ -319,7 +319,7 @@ void DrawInsertInspector(HDC hdc, const RECT& client, const UiState& state) {
         DrawTextW(hdc, pHdr, -1, &pHdrRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
         if (pParams && pEff) {
-            const InsertParams& P = (*pParams)[static_cast<size_t>(selSlot)];
+            const InsertConfig& P = (*pParams)[static_cast<size_t>(selSlot)];
             const int fxT = std::clamp(static_cast<int>((*pEff)[static_cast<size_t>(selSlot)]), 0, kInsertEffectTypeCount - 1);
 
             // Draw up to 4 labeled knobs for the current effect type

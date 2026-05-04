@@ -5,7 +5,7 @@
 void UpdateWindowTitle(HWND hwnd, const UiState& state);
 InsertEffectArray DefaultInsertEffects();
 InsertBypassArray DefaultInsertBypass();
-InsertParamsArray DefaultInsertParams();
+InsertConfigArray DefaultInsertParams();
 
 // ── JSON project serialization ───────────────────────────────────────────────
 // Minimal hand-written JSON - no external dependency required.
@@ -69,14 +69,14 @@ static std::string JsonUnescape(const std::string& s) {
 // Encode all params for all slots as a flat pipe-delimited CSV string.
 // Format: slot0_val0,val1,...valN|slot1_val0,...|...
 // The float layout per slot is fixed and must match DecodeInsertParamsCsv.
-static std::string EncodeInsertParamsCsv(const InsertParamsArray& params, int slotCount) {
+static std::string EncodeInsertParamsCsv(const InsertConfigArray& params, int slotCount) {
     std::ostringstream out;
     out << std::fixed;
     out.precision(4);
     const int count = std::clamp(slotCount, 0, kMaxInsertSlots);
     for (int s = 0; s < count; ++s) {
         if (s > 0) out << '|';
-        const InsertParams& p = params[static_cast<size_t>(s)];
+        const InsertConfig& p = params[static_cast<size_t>(s)];
         // EQ bands: freq,gain,q,type  x kEqBandCount
         for (int b = 0; b < kEqBandCount; ++b) {
             out << p.eq[b].freq_hz << ',' << p.eq[b].gain_db << ','
@@ -105,7 +105,7 @@ static std::string EncodeInsertParamsCsv(const InsertParamsArray& params, int sl
     return out.str();
 }
 
-static void DecodeInsertParamsCsv(const std::string& csv, int slotCount, InsertParamsArray* params) {
+static void DecodeInsertParamsCsv(const std::string& csv, int slotCount, InsertConfigArray* params) {
     if (!params) return;
     *params = DefaultInsertParams();
     if (csv.empty()) return;
@@ -121,7 +121,7 @@ static void DecodeInsertParamsCsv(const std::string& csv, int slotCount, InsertP
         slotStrs.push_back(tok);
     }
     for (int s = 0; s < count && s < static_cast<int>(slotStrs.size()); ++s) {
-        InsertParams& p = (*params)[static_cast<size_t>(s)];
+        InsertConfig& p = (*params)[static_cast<size_t>(s)];
         std::vector<std::string> vals;
         {
             std::string tok;
@@ -658,6 +658,10 @@ bool LoadProject(const std::wstring& path, UiState& state) {
 
     state.projectFilePath = path;
     state.projectModified = false;
+
+    // Runtime DSP state is not serialized; reset to defaults after load.
+    state.trackInsertDspState.assign(state.project.tracks.size(), InsertDspStateArray{});
+    state.busInsertDspState = {};
 
 
     return true;

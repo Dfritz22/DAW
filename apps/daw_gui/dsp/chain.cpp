@@ -7,7 +7,7 @@
 // Stateless offline processing — coefficients recomputed per-call.
 // Operates on interleaved stereo float buffer in-place.
 
-static void DspApplyBiquadBand(std::vector<float>& buf, const EqBand& band, float sampleRate) {
+static void DspApplyBiquadBand(std::vector<float>& buf, const EqBand& band, EqBandDspState& bandState, float sampleRate) {
     if (buf.size() < 2) return;
     const float f0 = std::clamp(band.freq_hz, 20.0f, sampleRate * 0.499f);
     const float Q  = std::max(0.1f, band.q);
@@ -84,8 +84,8 @@ static void DspApplyBiquadBand(std::vector<float>& buf, const EqBand& band, floa
     // Process left and right channels with persistent state
     const size_t frames = buf.size() / 2;
     for (int ch = 0; ch < 2; ++ch) {
-        float& x1 = band.bq_x1[ch]; float& x2 = band.bq_x2[ch];
-        float& y1 = band.bq_y1[ch]; float& y2 = band.bq_y2[ch];
+        float& x1 = bandState.bq_x1[ch]; float& x2 = bandState.bq_x2[ch];
+        float& y1 = bandState.bq_y1[ch]; float& y2 = bandState.bq_y2[ch];
         for (size_t f = 0; f < frames; ++f) {
             const float x0 = buf[f*2 + static_cast<size_t>(ch)];
             const float y0 = b0*x0 + b1*x1 + b2*x2 - a1*y1 - a2*y2;
@@ -95,22 +95,22 @@ static void DspApplyBiquadBand(std::vector<float>& buf, const EqBand& band, floa
     }
 }
 
-static void DspApplyEQ(std::vector<float>& buf, const InsertParams& p, float sampleRate) {
+static void DspApplyEQ(std::vector<float>& buf, const InsertConfig& config, InsertDspState& state, float sampleRate) {
     for (int b = 0; b < kEqBandCount; ++b) {
-        DspApplyBiquadBand(buf, p.eq[b], sampleRate);
+        DspApplyBiquadBand(buf, config.eq[b], state.eq[b], sampleRate);
     }
 }
 
-static void DspApplyCompressor(std::vector<float>& buf, const InsertParams& p, float sampleRate) {
+static void DspApplyCompressor(std::vector<float>& buf, const InsertConfig& config, InsertDspState& state, float sampleRate) {
     if (buf.size() < 2) return;
-    const float threshold = std::pow(10.0f, p.cmp_threshold_db / 20.0f);
-    const float ratio = std::max(1.0f, p.cmp_ratio);
-    const float makeup = std::pow(10.0f, p.cmp_makeup_db / 20.0f);
-    const float attackCoef  = std::exp(-1.0f / (p.cmp_attack_ms   * 0.001f * sampleRate));
-    const float releaseCoef = std::exp(-1.0f / (p.cmp_release_ms  * 0.001f * sampleRate));
-    const float kneeHalf = p.cmp_knee_db * 0.5f;
+    const float threshold = std::pow(10.0f, config.cmp_threshold_db / 20.0f);
+    const float ratio = std::max(1.0f, config.cmp_ratio);
+    const float makeup = std::pow(10.0f, config.cmp_makeup_db / 20.0f);
+    const float attackCoef  = std::exp(-1.0f / (config.cmp_attack_ms   * 0.001f * sampleRate));
+    const float releaseCoef = std::exp(-1.0f / (config.cmp_release_ms  * 0.001f * sampleRate));
+    const float kneeHalf = config.cmp_knee_db * 0.5f;
 
-    float& env = p.cmp_env;  // persistent across blocks
+    float& env = state.cmp_env;  // persistent across blocks
     const size_t frames = buf.size() / 2;
     for (size_t f = 0; f < frames; ++f) {
         const float L = buf[f*2];
@@ -123,7 +123,7 @@ static void DspApplyCompressor(std::vector<float>& buf, const InsertParams& p, f
             env = releaseCoef * env + (1.0f - releaseCoef) * peak;
 
         const float envDb = (env > 1e-6f) ? 20.0f * std::log10(env) : -120.0f;
-        const float thDb  = p.cmp_threshold_db;
+        const float thDb  = config.cmp_threshold_db;
 
         float gainDb = 0.0f;
         const float over = envDb - thDb;
@@ -139,10 +139,10 @@ static void DspApplyCompressor(std::vector<float>& buf, const InsertParams& p, f
     }
 }
 
-static void DspApplySaturation(std::vector<float>& buf, const InsertParams& p) {
+static void DspApplySaturation(std::vector<float>& buf, const InsertConfig& config) {
     if (buf.size() < 2) return;
-    const float drive = std::clamp(p.sat_drive, 0.0f, 1.0f);
-    const float mix   = std::clamp(p.sat_mix, 0.0f, 1.0f);
+    const float drive = std::clamp(config.sat_drive, 0.0f, 1.0f);
+    const float mix   = std::clamp(config.sat_mix, 0.0f, 1.0f);
     if (drive < 0.001f || mix < 0.001f) return;
     const float gain = 1.0f + drive * 9.0f;  // up to 10x drive
     for (size_t i = 0; i < buf.size(); ++i) {
@@ -154,19 +154,19 @@ static void DspApplySaturation(std::vector<float>& buf, const InsertParams& p) {
     }
 }
 
-static void DspApplyDelay(std::vector<float>& buf, const InsertParams& p, float sampleRate) {
+static void DspApplyDelay(std::vector<float>& buf, const InsertConfig& config, InsertDspState& state, float sampleRate) {
     if (buf.size() < 2) return;
-    const int delayFrames = std::max(1, static_cast<int>(p.dly_time_ms * 0.001f * sampleRate));
-    const float fb  = std::clamp(p.dly_feedback, 0.0f, 0.95f);
-    const float mix = std::clamp(p.dly_mix, 0.0f, 1.0f);
+    const int delayFrames = std::max(1, static_cast<int>(config.dly_time_ms * 0.001f * sampleRate));
+    const float fb  = std::clamp(config.dly_feedback, 0.0f, 0.95f);
+    const float mix = std::clamp(config.dly_mix, 0.0f, 1.0f);
     if (mix < 0.001f) return;
 
     // Resize delay lines only when the delay time changes (preserves tail)
-    if (p.dly_lastFrames != delayFrames) {
-        p.dly_bufL.assign(static_cast<size_t>(delayFrames), 0.0f);
-        p.dly_bufR.assign(static_cast<size_t>(delayFrames), 0.0f);
-        p.dly_wpos       = 0;
-        p.dly_lastFrames = delayFrames;
+    if (state.dly_lastFrames != delayFrames) {
+        state.dly_bufL.assign(static_cast<size_t>(delayFrames), 0.0f);
+        state.dly_bufR.assign(static_cast<size_t>(delayFrames), 0.0f);
+        state.dly_wpos       = 0;
+        state.dly_lastFrames = delayFrames;
     }
 
     const size_t frames = buf.size() / 2;
@@ -175,24 +175,24 @@ static void DspApplyDelay(std::vector<float>& buf, const InsertParams& p, float 
         const float dryL = buf[f*2];
         const float dryR = buf[f*2+1];
         // Ping-pong: L reads from R delay line, R reads from L delay line
-        const float wetL = p.dly_bufR[static_cast<size_t>(p.dly_wpos)];
-        const float wetR = p.dly_bufL[static_cast<size_t>(p.dly_wpos)];
-        p.dly_bufL[static_cast<size_t>(p.dly_wpos)] = dryL + wetR * fb;
-        p.dly_bufR[static_cast<size_t>(p.dly_wpos)] = dryR + wetL * fb;
-        p.dly_wpos = (p.dly_wpos + 1) % dframes;
+        const float wetL = state.dly_bufR[static_cast<size_t>(state.dly_wpos)];
+        const float wetR = state.dly_bufL[static_cast<size_t>(state.dly_wpos)];
+        state.dly_bufL[static_cast<size_t>(state.dly_wpos)] = dryL + wetR * fb;
+        state.dly_bufR[static_cast<size_t>(state.dly_wpos)] = dryR + wetL * fb;
+        state.dly_wpos = (state.dly_wpos + 1) % dframes;
         buf[f*2]   = dryL * (1.0f - mix) + wetL * mix;
         buf[f*2+1] = dryR * (1.0f - mix) + wetR * mix;
     }
 }
 
-static void DspApplyReverb(std::vector<float>& buf, const InsertParams& p, float sampleRate) {
+static void DspApplyReverb(std::vector<float>& buf, const InsertConfig& config, InsertDspState& state, float sampleRate) {
     if (buf.size() < 2) return;
-    const float mix = std::clamp(p.rev_mix, 0.0f, 1.0f);
+    const float mix = std::clamp(config.rev_mix, 0.0f, 1.0f);
     if (mix < 0.001f) return;
 
     // Simple Schroeder reverb: 4 comb filters + 2 allpass (persistent state)
-    const float room = std::clamp(p.rev_room_size, 0.0f, 1.0f);
-    const float damp = std::clamp(p.rev_damping, 0.0f, 1.0f);
+    const float room = std::clamp(config.rev_room_size, 0.0f, 1.0f);
+    const float damp = std::clamp(config.rev_damping, 0.0f, 1.0f);
 
     static const float kCombMs[4] = {29.7f, 37.1f, 41.1f, 43.7f};
     static const float kApMs[2]   = {5.0f, 1.7f};
@@ -210,17 +210,17 @@ static void DspApplyReverb(std::vector<float>& buf, const InsertParams& p, float
 
     // Allocate/resize persistent comb and allpass buffers only when room size changes
     for (int c = 0; c < 4; ++c) {
-        if (p.rev_lastCombLen[c] != combLen[c]) {
-            p.rev_combBuf[c].assign(static_cast<size_t>(combLen[c]), 0.0f);
-            p.rev_combPos[c]     = 0;
-            p.rev_combFilt[c]    = 0.0f;
-            p.rev_lastCombLen[c] = combLen[c];
+        if (state.rev_lastCombLen[c] != combLen[c]) {
+            state.rev_combBuf[c].assign(static_cast<size_t>(combLen[c]), 0.0f);
+            state.rev_combPos[c]     = 0;
+            state.rev_combFilt[c]    = 0.0f;
+            state.rev_lastCombLen[c] = combLen[c];
         }
     }
     for (int a = 0; a < 2; ++a) {
-        if (static_cast<int>(p.rev_apBuf[a].size()) != apLen[a]) {
-            p.rev_apBuf[a].assign(static_cast<size_t>(apLen[a]), 0.0f);
-            p.rev_apPos[a] = 0;
+        if (static_cast<int>(state.rev_apBuf[a].size()) != apLen[a]) {
+            state.rev_apBuf[a].assign(static_cast<size_t>(apLen[a]), 0.0f);
+            state.rev_apPos[a] = 0;
         }
     }
 
@@ -233,20 +233,20 @@ static void DspApplyReverb(std::vector<float>& buf, const InsertParams& p, float
         float revOut = 0.0f;
 
         for (int c = 0; c < 4; ++c) {
-            const size_t cp = static_cast<size_t>(p.rev_combPos[c]);
-            const float delayed = p.rev_combBuf[c][cp];
-            p.rev_combFilt[c] = delayed * (1.0f - dampCoef) + p.rev_combFilt[c] * dampCoef;
-            p.rev_combBuf[c][cp] = mono + p.rev_combFilt[c] * feedback;
-            p.rev_combPos[c] = (p.rev_combPos[c] + 1) % combLen[c];
+            const size_t cp = static_cast<size_t>(state.rev_combPos[c]);
+            const float delayed = state.rev_combBuf[c][cp];
+            state.rev_combFilt[c] = delayed * (1.0f - dampCoef) + state.rev_combFilt[c] * dampCoef;
+            state.rev_combBuf[c][cp] = mono + state.rev_combFilt[c] * feedback;
+            state.rev_combPos[c] = (state.rev_combPos[c] + 1) % combLen[c];
             revOut += delayed;
         }
         revOut *= 0.25f;
 
         for (int a = 0; a < 2; ++a) {
-            const size_t ap = static_cast<size_t>(p.rev_apPos[a]);
-            const float delayed = p.rev_apBuf[a][ap];
-            p.rev_apBuf[a][ap] = revOut + delayed * 0.5f;
-            p.rev_apPos[a] = (p.rev_apPos[a] + 1) % apLen[a];
+            const size_t ap = static_cast<size_t>(state.rev_apPos[a]);
+            const float delayed = state.rev_apBuf[a][ap];
+            state.rev_apBuf[a][ap] = revOut + delayed * 0.5f;
+            state.rev_apPos[a] = (state.rev_apPos[a] + 1) % apLen[a];
             revOut = delayed - revOut * 0.5f;
         }
 
@@ -255,16 +255,16 @@ static void DspApplyReverb(std::vector<float>& buf, const InsertParams& p, float
     }
 }
 
-static void DspApplyGate(std::vector<float>& buf, const InsertParams& p, float sampleRate) {
+static void DspApplyGate(std::vector<float>& buf, const InsertConfig& config, InsertDspState& state, float sampleRate) {
     if (buf.size() < 2) return;
-    const float threshold = std::pow(10.0f, p.gate_threshold_db / 20.0f);
-    const float attackCoef  = std::exp(-1.0f / (p.gate_attack_ms   * 0.001f * sampleRate));
-    const float releaseCoef = std::exp(-1.0f / (p.gate_release_ms  * 0.001f * sampleRate));
-    const float holdSamples = p.gate_hold_ms * 0.001f * sampleRate;
+    const float threshold = std::pow(10.0f, config.gate_threshold_db / 20.0f);
+    const float attackCoef  = std::exp(-1.0f / (config.gate_attack_ms   * 0.001f * sampleRate));
+    const float releaseCoef = std::exp(-1.0f / (config.gate_release_ms  * 0.001f * sampleRate));
+    const float holdSamples = config.gate_hold_ms * 0.001f * sampleRate;
 
-    float& env      = p.gate_env;        // persistent across blocks
-    float& holdTimer= p.gate_holdTimer;
-    float& gateGain = p.gate_gainState;
+    float& env      = state.gate_env;        // persistent across blocks
+    float& holdTimer= state.gate_holdTimer;
+    float& gateGain = state.gate_gainState;
     const size_t frames = buf.size() / 2;
     for (size_t f = 0; f < frames; ++f) {
         const float peak = std::max(std::fabs(buf[f*2]), std::fabs(buf[f*2+1]));
@@ -287,16 +287,16 @@ static void DspApplyGate(std::vector<float>& buf, const InsertParams& p, float s
     }
 }
 
-static void DspApplyDeEsser(std::vector<float>& buf, const InsertParams& p, float sampleRate) {
+static void DspApplyDeEsser(std::vector<float>& buf, const InsertConfig& config, InsertDspState& state, float sampleRate) {
     if (buf.size() < 2) return;
     // Sidechain: bandpass around dee_freq_hz, then compress just that band
-    const float threshold = std::pow(10.0f, p.dee_threshold_db / 20.0f);
-    const float reduction = std::clamp(p.dee_reduction_db, 0.0f, 40.0f);
+    const float threshold = std::pow(10.0f, config.dee_threshold_db / 20.0f);
+    const float reduction = std::clamp(config.dee_reduction_db, 0.0f, 40.0f);
     const float reductionLin = std::pow(10.0f, -reduction / 20.0f);
 
     // Build sidechain biquad coefficients (peak at sibilance freq)
-    const float scFreq = std::clamp(p.dee_freq_hz, 1000.0f, sampleRate * 0.499f);
-    const float scQ    = scFreq / std::max(1.0f, p.dee_bandwidth_hz);
+    const float scFreq = std::clamp(config.dee_freq_hz, 1000.0f, sampleRate * 0.499f);
+    const float scQ    = scFreq / std::max(1.0f, config.dee_bandwidth_hz);
     const float w0  = 2.0f * 3.14159265f * scFreq / sampleRate;
     const float cosW = std::cos(w0);
     const float alpha = std::sin(w0) / (2.0f * scQ);
@@ -309,8 +309,8 @@ static void DspApplyDeEsser(std::vector<float>& buf, const InsertParams& p, floa
     // Process sidechain copy using persistent biquad state
     std::vector<float> scBuf = buf;
     for (int ch = 0; ch < 2; ++ch) {
-        float& x1 = p.dee_sc_x1[ch]; float& x2 = p.dee_sc_x2[ch];
-        float& y1 = p.dee_sc_y1[ch]; float& y2 = p.dee_sc_y2[ch];
+        float& x1 = state.dee_sc_x1[ch]; float& x2 = state.dee_sc_x2[ch];
+        float& y1 = state.dee_sc_y1[ch]; float& y2 = state.dee_sc_y2[ch];
         const size_t frames2 = scBuf.size() / 2;
         for (size_t f = 0; f < frames2; ++f) {
             const float x0 = scBuf[f*2 + static_cast<size_t>(ch)];
@@ -323,7 +323,7 @@ static void DspApplyDeEsser(std::vector<float>& buf, const InsertParams& p, floa
     // Apply gain reduction based on sidechain envelope (fast attack, 20ms release)
     const float attackCoef  = std::exp(-1.0f / (0.5f  * 0.001f * sampleRate));  // 0.5ms
     const float releaseCoef = std::exp(-1.0f / (20.0f * 0.001f * sampleRate));  // 20ms
-    float& env = p.dee_env;  // persistent across blocks
+    float& env = state.dee_env;  // persistent across blocks
     const size_t frames = buf.size() / 2;
     for (size_t f = 0; f < frames; ++f) {
         const float peak = std::max(std::fabs(scBuf[f*2]), std::fabs(scBuf[f*2+1]));
@@ -340,12 +340,12 @@ static void DspApplyDeEsser(std::vector<float>& buf, const InsertParams& p, floa
     }
 }
 
-static void DspApplyLimiter(std::vector<float>& buf, const InsertParams& p, float sampleRate) {
+static void DspApplyLimiter(std::vector<float>& buf, const InsertConfig& config, InsertDspState& state, float sampleRate) {
     if (buf.size() < 2) return;
-    const float ceiling = std::pow(10.0f, p.lim_ceiling_db / 20.0f);
-    const float releaseCoef = std::exp(-1.0f / (p.lim_release_ms * 0.001f * sampleRate));
+    const float ceiling = std::pow(10.0f, config.lim_ceiling_db / 20.0f);
+    const float releaseCoef = std::exp(-1.0f / (config.lim_release_ms * 0.001f * sampleRate));
     // 0.1ms lookahead approximated as instant attack
-    float& env = p.lim_env;  // persistent across blocks
+    float& env = state.lim_env;  // persistent across blocks
     const size_t frames = buf.size() / 2;
     for (size_t f = 0; f < frames; ++f) {
         const float peak = std::max(std::fabs(buf[f*2]), std::fabs(buf[f*2+1]));
@@ -364,23 +364,25 @@ void ApplyInsertChain(
     std::vector<float>& buf, float sampleRate,
     const InsertEffectArray& effects,
     const InsertBypassArray& bypass,
-    const InsertParamsArray& params,
+    const InsertConfigArray& configs,
+    InsertDspStateArray& states,
     int slotCount)
 {
     const int count = std::clamp(slotCount, 0, kMaxInsertSlots);
     for (int s = 0; s < count; ++s) {
         if (bypass[static_cast<size_t>(s)]) continue;
         const int fxType = std::clamp(static_cast<int>(effects[static_cast<size_t>(s)]), 0, kInsertEffectTypeCount - 1);
-        const InsertParams& p = params[static_cast<size_t>(s)];
+        const InsertConfig& config = configs[static_cast<size_t>(s)];
+        InsertDspState& state = states[static_cast<size_t>(s)];
         switch (fxType) {
-        case kFxEQ:  DspApplyEQ(buf, p, sampleRate);           break;
-        case kFxCMP: DspApplyCompressor(buf, p, sampleRate);   break;
-        case kFxSAT: DspApplySaturation(buf, p);               break;
-        case kFxDLY: DspApplyDelay(buf, p, sampleRate);        break;
-        case kFxREV: DspApplyReverb(buf, p, sampleRate);       break;
-        case kFxGATE:DspApplyGate(buf, p, sampleRate);         break;
-        case kFxDEE: DspApplyDeEsser(buf, p, sampleRate);      break;
-        case kFxLIM: DspApplyLimiter(buf, p, sampleRate);      break;
+        case kFxEQ:  DspApplyEQ(buf, config, state, sampleRate);           break;
+        case kFxCMP: DspApplyCompressor(buf, config, state, sampleRate);   break;
+        case kFxSAT: DspApplySaturation(buf, config);                       break;
+        case kFxDLY: DspApplyDelay(buf, config, state, sampleRate);         break;
+        case kFxREV: DspApplyReverb(buf, config, state, sampleRate);        break;
+        case kFxGATE:DspApplyGate(buf, config, state, sampleRate);          break;
+        case kFxDEE: DspApplyDeEsser(buf, config, state, sampleRate);       break;
+        case kFxLIM: DspApplyLimiter(buf, config, state, sampleRate);       break;
         default: break;
         }
     }

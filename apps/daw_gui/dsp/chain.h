@@ -9,5 +9,6 @@ void ApplyInsertChain(
     std::vector<float>& buf, float sampleRate,
     const InsertEffectArray& effects,
     const InsertBypassArray& bypass,
-    const InsertParamsArray& params,
+    const InsertConfigArray& configs,
+    InsertDspStateArray& states,
     int slotCount);
