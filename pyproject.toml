@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "daw-ai-assistant"
+version = "0.1.0"
+description = "Offline AI analysis assistant for multitrack mixing workflows"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.26.0",
+  "scipy>=1.11.0",
+  "librosa>=0.10.1",
+  "soundfile>=0.12.1",
+  "pyloudnorm>=0.1.1",
+]
+
+[project.scripts]
+daw-ai-analyze = "daw_ai.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

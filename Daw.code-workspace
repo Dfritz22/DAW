@@ -1,0 +1,21 @@
+{
+  "folders": [
+    { "path": "." },
+    { "path": "src" },
+    { "path": "docs" },
+    { "path": "projects" },
+    { "path": "tests" },
+    { "path": "apps" },
+    { "path": "packages" },
+    { "path": "examples" }
+  ],
+  "settings": {
+    "python.testing.pytestEnabled": true,
+    "python.analysis.extraPaths": [
+      "src"
+    ],
+    "files.exclude": {
+      "**/__pycache__": true
+    }
+  }
+}
