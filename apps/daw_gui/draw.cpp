@@ -1,4 +1,4 @@
-﻿#include "draw.h"
+#include "draw.h"
 
 const wchar_t* InsertEffectName(int effectType) {
     static const wchar_t* kNames[kInsertEffectTypeCount] = {
@@ -130,9 +130,9 @@ void DrawTopBar(HDC hdc, const RECT& client, UiState& state) {
 
     const int visibleBars = std::max(1, static_cast<int>(std::round(state.viewBeatsVisible / 4.0f)));
     std::wstring status =
-        L"BPM " + std::to_wstring(state.bpm) +
-        L"   |   SR " + std::to_wstring(state.projectSampleRate > 0 ? state.projectSampleRate : 0) +
-        L"   |   Tracks " + std::to_wstring(static_cast<int>(state.tracks.size())) +
+        L"BPM " + std::to_wstring(static_cast<int>(state.project.bpm)) +
+        L"   |   SR " + std::to_wstring(state.project.projectSampleRate > 0 ? state.project.projectSampleRate : 0) +
+        L"   |   Tracks " + std::to_wstring(static_cast<int>(state.project.tracks.size())) +
         L"   |   View " + std::to_wstring(visibleBars) + L" bars" +
         L"   |   In " + state.selectedInputDeviceName +
         L"   |   Out " + state.selectedOutputDeviceName;
@@ -149,11 +149,11 @@ RECT GetInspectorPanelRect(const RECT& client, const UiState& state) {
     const int idx = state.fxInspectorIndex;
     int slotCount = 0;
     if (state.fxInspectorIsTrack) {
-        if (idx >= 0 && idx < static_cast<int>(state.trackInsertSlots.size()))
-            slotCount = std::clamp(state.trackInsertSlots[static_cast<size_t>(idx)], 0, kMaxInsertSlots);
+        if (idx >= 0 && idx < static_cast<int>(state.project.tracks.size()))
+            slotCount = std::clamp(state.project.tracks[static_cast<size_t>(idx)].insertSlots, 0, kMaxInsertSlots);
     } else {
-        if (idx >= 0 && idx < static_cast<int>(state.busInsertSlots.size()))
-            slotCount = std::clamp(state.busInsertSlots[static_cast<size_t>(idx)], 0, kMaxInsertSlots);
+        if (idx >= 0 && idx < static_cast<int>(state.project.buses.size()))
+            slotCount = std::clamp(state.project.buses[static_cast<size_t>(idx)].insertSlots, 0, kMaxInsertSlots);
     }
     const bool hasSelected = (state.fxInspectorSelectedSlot >= 0 && state.fxInspectorSelectedSlot < slotCount);
     RECT r{};
@@ -183,7 +183,7 @@ void DrawInsertInspector(HDC hdc, const RECT& client, const UiState& state) {
 
     const int idx = state.fxInspectorIndex;
     std::wstring title = state.fxInspectorIsTrack
-        ? (L"INSERTS - " + (idx < static_cast<int>(state.tracks.size()) ? state.tracks[static_cast<size_t>(idx)] : L"Track"))
+        ? (L"INSERTS - " + (idx < static_cast<int>(state.project.tracks.size()) ? state.project.tracks[static_cast<size_t>(idx)].name : L"Track"))
         : (L"INSERTS - " + std::wstring(BusName(idx)));
     RECT titleRect{headerRow.left + 8, headerRow.top, headerRow.right - 28, headerRow.bottom};
     SetTextColor(hdc, RGB(220, 225, 235));
@@ -203,11 +203,11 @@ void DrawInsertInspector(HDC hdc, const RECT& client, const UiState& state) {
 
     int slotCount = 0;
     if (state.fxInspectorIsTrack) {
-        if (idx >= 0 && idx < static_cast<int>(state.trackInsertSlots.size()))
-            slotCount = std::clamp(state.trackInsertSlots[static_cast<size_t>(idx)], 0, kMaxInsertSlots);
+        if (idx >= 0 && idx < static_cast<int>(state.project.tracks.size()))
+            slotCount = std::clamp(state.project.tracks[static_cast<size_t>(idx)].insertSlots, 0, kMaxInsertSlots);
     } else {
-        if (idx >= 0 && idx < static_cast<int>(state.busInsertSlots.size()))
-            slotCount = std::clamp(state.busInsertSlots[static_cast<size_t>(idx)], 0, kMaxInsertSlots);
+        if (idx >= 0 && idx < static_cast<int>(state.project.buses.size()))
+            slotCount = std::clamp(state.project.buses[static_cast<size_t>(idx)].insertSlots, 0, kMaxInsertSlots);
     }
 
     const bool canAdd = slotCount < kMaxInsertSlots;
@@ -249,15 +249,15 @@ void DrawInsertInspector(HDC hdc, const RECT& client, const UiState& state) {
         const InsertEffectArray* effects = nullptr;
         const InsertBypassArray* bypass  = nullptr;
         if (state.fxInspectorIsTrack) {
-            if (idx < static_cast<int>(state.trackInsertEffects.size()))
-                effects = &state.trackInsertEffects[static_cast<size_t>(idx)];
-            if (idx < static_cast<int>(state.trackInsertBypass.size()))
-                bypass  = &state.trackInsertBypass[static_cast<size_t>(idx)];
+            if (idx < static_cast<int>(state.project.tracks.size()))
+                effects = &state.project.tracks[static_cast<size_t>(idx)].insertEffects;
+            if (idx < static_cast<int>(state.project.tracks.size()))
+                bypass  = &state.project.tracks[static_cast<size_t>(idx)].insertBypass;
         } else {
-            if (idx < static_cast<int>(state.busInsertEffects.size()))
-                effects = &state.busInsertEffects[static_cast<size_t>(idx)];
-            if (idx < static_cast<int>(state.busInsertBypass.size()))
-                bypass  = &state.busInsertBypass[static_cast<size_t>(idx)];
+            if (idx < static_cast<int>(state.project.buses.size()))
+                effects = &state.project.buses[static_cast<size_t>(idx)].insertEffects;
+            if (idx < static_cast<int>(state.project.buses.size()))
+                bypass  = &state.project.buses[static_cast<size_t>(idx)].insertBypass;
         }
 
         const int  effectType = (effects && s < kMaxInsertSlots)
@@ -294,15 +294,15 @@ void DrawInsertInspector(HDC hdc, const RECT& client, const UiState& state) {
         const InsertParamsArray* pParams = nullptr;
         const InsertEffectArray* pEff = nullptr;
         if (state.fxInspectorIsTrack) {
-            if (idx < static_cast<int>(state.trackInsertParams.size()))
-                pParams = &state.trackInsertParams[static_cast<size_t>(idx)];
-            if (idx < static_cast<int>(state.trackInsertEffects.size()))
-                pEff = &state.trackInsertEffects[static_cast<size_t>(idx)];
+            if (idx < static_cast<int>(state.project.tracks.size()))
+                pParams = &state.project.tracks[static_cast<size_t>(idx)].insertParams;
+            if (idx < static_cast<int>(state.project.tracks.size()))
+                pEff = &state.project.tracks[static_cast<size_t>(idx)].insertEffects;
         } else {
-            if (idx < static_cast<int>(state.busInsertParams.size()))
-                pParams = &state.busInsertParams[static_cast<size_t>(idx)];
-            if (idx < static_cast<int>(state.busInsertEffects.size()))
-                pEff = &state.busInsertEffects[static_cast<size_t>(idx)];
+            if (idx < static_cast<int>(state.project.buses.size()))
+                pParams = &state.project.buses[static_cast<size_t>(idx)].insertParams;
+            if (idx < static_cast<int>(state.project.buses.size()))
+                pEff = &state.project.buses[static_cast<size_t>(idx)].insertEffects;
         }
 
         // Position param strip after all slots
@@ -424,13 +424,13 @@ void DrawLeftTrackPanel(HDC hdc, const RECT& rect, const UiState& state) {
     RECT headerText{header.left + 14, header.top, header.right, header.bottom};
     DrawTextW(hdc, L"TRACKS", -1, &headerText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
-    if (state.tracks.empty()) {
+    if (state.project.tracks.empty()) {
         RECT emptyText{rect.left + 14, rect.top + 46, rect.right - 14, rect.top + 100};
         DrawTextW(hdc, L"No tracks loaded.\nClick Import WAV.", -1, &emptyText, DT_LEFT | DT_WORDBREAK);
         return;
     }
 
-    for (size_t i = 0; i < state.tracks.size(); ++i) {
+    for (size_t i = 0; i < state.project.tracks.size(); ++i) {
         const int y = rect.top + kRulerHeight + static_cast<int>(i) * kTrackRowHeight;
         RECT row{rect.left, y, rect.right, y + kTrackRowHeight};
         Fill(hdc, row, (i % 2 == 0) ? RGB(39, 43, 49) : RGB(42, 47, 53));
@@ -441,7 +441,7 @@ void DrawLeftTrackPanel(HDC hdc, const RECT& rect, const UiState& state) {
 
         RECT nameRect{row.left + 14, row.top + 10, row.right - 82, row.top + 30};
         SetTextColor(hdc, kPalette.textPrimary);
-        DrawTextW(hdc, state.tracks[i].c_str(), -1, &nameRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        DrawTextW(hdc, state.project.tracks[i].name.c_str(), -1, &nameRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
         RECT busRect{};
         RECT panKnobRect{};
@@ -472,13 +472,13 @@ void DrawLeftTrackPanel(HDC hdc, const RECT& rect, const UiState& state) {
         }
         DrawTextW(hdc, panText, -1, &panValRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-        const int trackFxSlots = (i < state.trackInsertSlots.size()) ? std::clamp(state.trackInsertSlots[i], 0, 8) : 0;
+        const int trackFxSlots = (i < state.project.tracks.size()) ? std::clamp(state.project.tracks[i].insertSlots, 0, 8) : 0;
         wchar_t fxText[16] = {};
-        if (trackFxSlots <= 0 || i >= state.trackInsertEffects.size()) {
+        if (trackFxSlots <= 0 || i >= state.project.tracks.size()) {
             swprintf_s(fxText, L"FX0");
         } else {
-            const int effectType = std::clamp(static_cast<int>(state.trackInsertEffects[i][0]), 0, kInsertEffectTypeCount - 1);
-            const bool bypass = (i < state.trackInsertBypass.size()) ? state.trackInsertBypass[i][0] : false;
+            const int effectType = std::clamp(static_cast<int>(state.project.tracks[i].insertEffects[0]), 0, kInsertEffectTypeCount - 1);
+            const bool bypass = (i < state.project.tracks.size()) ? state.project.tracks[i].insertBypass[0] : false;
             const wchar_t* nm = InsertEffectName(effectType);
             if (trackFxSlots > 1) {
                 swprintf_s(fxText, L"%s%s+%d", bypass ? L"~" : L"", nm, trackFxSlots - 1);
@@ -493,9 +493,9 @@ void DrawLeftTrackPanel(HDC hdc, const RECT& rect, const UiState& state) {
         RECT recRect{};
         GetTrackButtonRects(rect, static_cast<int>(i), &muteRect, &soloRect, &recRect);
 
-        const bool muted = i < state.trackMute.size() && state.trackMute[i];
-        const bool soloed = i < state.trackSolo.size() && state.trackSolo[i];
-        const bool armed = i < state.trackRecordArm.size() && state.trackRecordArm[i];
+        const bool muted = i < state.project.tracks.size() && state.project.tracks[i].mute;
+        const bool soloed = i < state.project.tracks.size() && state.project.tracks[i].solo;
+        const bool armed = i < state.project.tracks.size() && state.project.tracks[i].recordArm;
 
         Fill(hdc, muteRect, muted ? RGB(176, 76, 76) : RGB(56, 60, 67));
         Fill(hdc, soloRect, soloed ? RGB(186, 154, 63) : RGB(56, 60, 67));
@@ -595,13 +595,13 @@ void DrawLeftTrackPanel(HDC hdc, const RECT& rect, const UiState& state) {
             }
             DrawTextW(hdc, panText, -1, &panValRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-            const int busFxSlots = (b < static_cast<int>(state.busInsertSlots.size())) ? std::clamp(state.busInsertSlots[static_cast<size_t>(b)], 0, 8) : 0;
+            const int busFxSlots = (b < static_cast<int>(state.project.buses.size())) ? std::clamp(state.project.buses[static_cast<size_t>(b)].insertSlots, 0, 8) : 0;
             wchar_t busFxText[16] = {};
-            if (busFxSlots <= 0 || b >= static_cast<int>(state.busInsertEffects.size())) {
+            if (busFxSlots <= 0 || b >= static_cast<int>(state.project.buses.size())) {
                 swprintf_s(busFxText, L"FX0");
             } else {
-                const int effectType = std::clamp(static_cast<int>(state.busInsertEffects[static_cast<size_t>(b)][0]), 0, kInsertEffectTypeCount - 1);
-                const bool bypass = (b < static_cast<int>(state.busInsertBypass.size())) ? state.busInsertBypass[static_cast<size_t>(b)][0] : false;
+                const int effectType = std::clamp(static_cast<int>(state.project.buses[static_cast<size_t>(b)].insertEffects[0]), 0, kInsertEffectTypeCount - 1);
+                const bool bypass = (b < static_cast<int>(state.project.buses.size())) ? state.project.buses[static_cast<size_t>(b)].insertBypass[0] : false;
                 const wchar_t* nm = InsertEffectName(effectType);
                 if (busFxSlots > 1) {
                     swprintf_s(busFxText, L"%s%s+%d", bypass ? L"~" : L"", nm, busFxSlots - 1);
@@ -726,7 +726,7 @@ void DrawArrangeLanes(HDC hdc, const RECT& rect, const UiState& state) {
     HPEN lanePen = CreatePen(PS_SOLID, 1, RGB(40, 44, 50));
     HGDIOBJ oldPen = SelectObject(hdc, lanePen);
 
-    for (size_t i = 0; i < state.tracks.size(); ++i) {
+    for (size_t i = 0; i < state.project.tracks.size(); ++i) {
         const int y = rect.top + static_cast<int>(i) * kTrackRowHeight;
         RECT lane{rect.left, y, rect.right, y + kTrackRowHeight};
         Fill(hdc, lane, (i % 2 == 0) ? kPalette.laneDark : kPalette.laneLight);
@@ -742,21 +742,21 @@ void DrawArrangeLanes(HDC hdc, const RECT& rect, const UiState& state) {
         LineTo(hdc, x, rect.bottom);
     }
 
-    for (size_t i = 0; i < state.clips.size(); ++i) {
+    for (size_t i = 0; i < state.project.clips.size(); ++i) {
         RECT clipRect{};
-        if (!ClipRectForDraw(rect, state, state.clips[i], &clipRect)) {
+        if (!ClipRectForDraw(rect, state, state.project.clips[i], &clipRect)) {
             continue;
         }
 
-        const int clipUnclippedLeft = BeatToX(rect, state, state.clips[i].startBeat);
-        const int clipUnclippedRight = BeatToX(rect, state, state.clips[i].startBeat + state.clips[i].lengthBeats);
+        const int clipUnclippedLeft = BeatToX(rect, state, state.project.clips[i].startBeat);
+        const int clipUnclippedRight = BeatToX(rect, state, state.project.clips[i].startBeat + state.project.clips[i].lengthBeats);
         const int fullClipPx = std::max(1, clipUnclippedRight - clipUnclippedLeft);
         const int clippedLeft = static_cast<int>(clipRect.left);
         const int clippedRight = static_cast<int>(clipRect.right);
         const int visibleLeftPx = std::max(0, clippedLeft - clipUnclippedLeft);
         const int visibleRightPx = std::min(fullClipPx, visibleLeftPx + std::max(1, clippedRight - clippedLeft));
 
-        Fill(hdc, clipRect, state.clips[i].color);
+        Fill(hdc, clipRect, state.project.clips[i].color);
 
         // Name badge at the top, waveform body underneath across full clip width.
         const int clipInnerLeft = clipRect.left + 2;
@@ -771,13 +771,13 @@ void DrawArrangeLanes(HDC hdc, const RECT& rect, const UiState& state) {
         StrokeRect(hdc, labelRect, RGB(60, 66, 74));
 
         RECT waveRect{clipInnerLeft, labelRect.bottom + 1, clipInnerRight, clipInnerBottom};
-        if (state.clips[i].audioIndex >= 0 && state.clips[i].audioIndex < static_cast<int>(state.audio.size()) && waveRect.right > waveRect.left && waveRect.bottom > waveRect.top) {
-            const LoadedAudio& audio = state.audio[static_cast<size_t>(state.clips[i].audioIndex)];
+        if (state.project.clips[i].audioIndex >= 0 && state.project.clips[i].audioIndex < static_cast<int>(state.project.audio.size()) && waveRect.right > waveRect.left && waveRect.bottom > waveRect.top) {
+            const LoadedAudio& audio = state.project.audio[static_cast<size_t>(state.project.clips[i].audioIndex)];
             const std::uint64_t totalFrames = static_cast<std::uint64_t>(audio.frames);
             const float spb = SamplesPerBeat(state);
-            const std::uint64_t srcOffset = state.clips[i].sourceOffsetFrames;
+            const std::uint64_t srcOffset = state.project.clips[i].sourceOffsetFrames;
             const std::uint64_t clipLenFrames = std::min(
-                static_cast<std::uint64_t>(state.clips[i].lengthBeats * spb),
+                static_cast<std::uint64_t>(state.project.clips[i].lengthBeats * spb),
                 totalFrames > srcOffset ? totalFrames - srcOffset : std::uint64_t{0});
             if (clipLenFrames > 0) {
                 const auto fcp = static_cast<std::uint64_t>(std::max(1, fullClipPx));
@@ -801,7 +801,7 @@ void DrawArrangeLanes(HDC hdc, const RECT& rect, const UiState& state) {
         RECT textRect{labelRect.left + 4, labelRect.top, labelRect.right - 4, labelRect.bottom};
         SetBkMode(hdc, TRANSPARENT);
         SetTextColor(hdc, RGB(240, 240, 240));
-        DrawTextW(hdc, state.clips[i].name.c_str(), -1, &textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        DrawTextW(hdc, state.project.clips[i].name.c_str(), -1, &textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     }
 
     const int playheadX = BeatToX(rect, state, state.playheadBeat);
@@ -816,7 +816,7 @@ void DrawArrangeLanes(HDC hdc, const RECT& rect, const UiState& state) {
     DeleteObject(lanePen);
     SelectObject(hdc, oldPen);
 
-    if (state.tracks.empty()) {
+    if (state.project.tracks.empty()) {
         RECT hint{rect.left + 24, rect.top + 24, rect.right - 24, rect.top + 80};
         SetTextColor(hdc, kPalette.textMuted);
         SetBkMode(hdc, TRANSPARENT);

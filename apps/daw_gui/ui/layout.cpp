@@ -3,24 +3,24 @@
 // ── Track / bus accessors ────────────────────────────────────────────────────
 
 float TrackGainDbAt(const UiState& state, int trackIndex) {
-    if (trackIndex < 0 || trackIndex >= static_cast<int>(state.trackGainDb.size())) {
+    if (trackIndex < 0 || trackIndex >= static_cast<int>(state.project.tracks.size())) {
         return 0.0f;
     }
-    return state.trackGainDb[static_cast<size_t>(trackIndex)];
+    return state.project.tracks[static_cast<size_t>(trackIndex)].gainDb;
 }
 
 int TrackBusIndexAt(const UiState& state, int trackIndex) {
-    if (trackIndex < 0 || trackIndex >= static_cast<int>(state.trackBusIndex.size())) {
+    if (trackIndex < 0 || trackIndex >= static_cast<int>(state.project.tracks.size())) {
         return 1;  // default to Music bus
     }
-    return std::clamp(state.trackBusIndex[static_cast<size_t>(trackIndex)], 0, kBusCount - 1);
+    return std::clamp(state.project.tracks[static_cast<size_t>(trackIndex)].busIndex, 0, kBusCount - 1);
 }
 
 float TrackPanAt(const UiState& state, int trackIndex) {
-    if (trackIndex < 0 || trackIndex >= static_cast<int>(state.trackPan.size())) {
+    if (trackIndex < 0 || trackIndex >= static_cast<int>(state.project.tracks.size())) {
         return 0.0f;
     }
-    return std::clamp(state.trackPan[static_cast<size_t>(trackIndex)], -1.0f, 1.0f);
+    return std::clamp(state.project.tracks[static_cast<size_t>(trackIndex)].pan, -1.0f, 1.0f);
 }
 
 // ── Left panel / track row rects ─────────────────────────────────────────────
@@ -56,7 +56,7 @@ void GetTrackRoutingRects(const RECT& leftPanel, int trackIndex, RECT* busRect, 
 }
 
 int BusPanelTop(const RECT& leftPanel, const UiState& state) {
-    return leftPanel.top + kRulerHeight + static_cast<int>(state.tracks.size()) * kTrackRowHeight + 6;
+    return leftPanel.top + kRulerHeight + static_cast<int>(state.project.tracks.size()) * kTrackRowHeight + 6;
 }
 
 void GetBusControlRects(const RECT& leftPanel, const UiState& state, int busIndex,
@@ -76,20 +76,20 @@ void GetBusControlRects(const RECT& leftPanel, const UiState& state, int busInde
 // ── Track audibility / fader math ────────────────────────────────────────────
 
 bool IsTrackAudible(const UiState& state, int trackIndex) {
-    if (trackIndex < 0 || trackIndex >= static_cast<int>(state.tracks.size())) {
+    if (trackIndex < 0 || trackIndex >= static_cast<int>(state.project.tracks.size())) {
         return false;
     }
 
     const bool muted =
-        trackIndex < static_cast<int>(state.trackMute.size()) &&
-        state.trackMute[static_cast<size_t>(trackIndex)];
+        trackIndex < static_cast<int>(state.project.tracks.size()) &&
+        state.project.tracks[static_cast<size_t>(trackIndex)].mute;
     const bool soloed =
-        trackIndex < static_cast<int>(state.trackSolo.size()) &&
-        state.trackSolo[static_cast<size_t>(trackIndex)];
+        trackIndex < static_cast<int>(state.project.tracks.size()) &&
+        state.project.tracks[static_cast<size_t>(trackIndex)].solo;
 
     bool anySolo = false;
-    for (size_t i = 0; i < state.trackSolo.size(); ++i) {
-        if (state.trackSolo[i]) {
+    for (size_t i = 0; i < state.project.tracks.size(); ++i) {
+        if (state.project.tracks[i].solo) {
             anySolo = true;
             break;
         }
@@ -139,11 +139,11 @@ float SnapBeat(float beat) {
 }
 
 float SamplesPerBeat(const UiState& state) {
-    int sr = state.projectSampleRate;
+    int sr = state.project.projectSampleRate;
     if (sr <= 0) sr = state.activeDeviceSampleRate;
     if (sr <= 0) sr = state.preferredSampleRate;
     if (sr <= 0) sr = 1;
-    return static_cast<float>(sr) * 60.0f / static_cast<float>(state.bpm);
+    return static_cast<float>(sr) * 60.0f / state.project.bpm;
 }
 
 float XToBeat(const RECT& arrange, const UiState& state, int x) {
@@ -159,14 +159,14 @@ int BeatToX(const RECT& area, const UiState& state, float beat) {
 }
 
 int TrackIndexFromY(const RECT& arrange, const UiState& state, int y) {
-    if (state.tracks.empty()) {
+    if (state.project.tracks.empty()) {
         return 0;
     }
     if (y < arrange.top) {
         return 0;
     }
     const int idx = (y - arrange.top) / kTrackRowHeight;
-    return std::clamp(idx, 0, static_cast<int>(state.tracks.size()) - 1);
+    return std::clamp(idx, 0, static_cast<int>(state.project.tracks.size()) - 1);
 }
 
 bool ClipRectForDraw(const RECT& arrange, const UiState& state, const ClipItem& clip, RECT* outRect) {

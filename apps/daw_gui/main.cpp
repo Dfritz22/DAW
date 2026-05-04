@@ -1,4 +1,4 @@
-﻿#include "draw.h"
+#include "draw.h"
 #include "io/wav_io.h"
 #include "dsp/chain.h"
 #include "core/timeline_edit.h"
@@ -265,45 +265,6 @@ void DecodeInsertBypassCsv(const std::string& csv, int slotCount, InsertBypassAr
 static AudioBackend AudioBackendFromJson(const std::string& value);
 
 bool SaveProject(const std::wstring& path, UiState& state) {
-    // Sync legacy UiState fields to ProjectData before saving
-    state.project.bpm = static_cast<float>(state.bpm);
-    state.project.projectSampleRate = state.projectSampleRate;
-    state.project.audio = state.audio;
-    state.project.clips = state.clips;
-    
-    // Reconstruct ProjectData tracks from legacy track vectors
-    state.project.tracks.clear();
-    for (size_t i = 0; i < state.tracks.size(); ++i) {
-        TrackData track{};
-        track.name = state.tracks[i];
-        track.gainDb = (i < state.trackGainDb.size()) ? state.trackGainDb[i] : 0.0f;
-        track.mute = (i < state.trackMute.size()) ? state.trackMute[i] : false;
-        track.solo = (i < state.trackSolo.size()) ? state.trackSolo[i] : false;
-        track.recordArm = (i < state.trackRecordArm.size()) ? state.trackRecordArm[i] : false;
-        track.busIndex = (i < state.trackBusIndex.size()) ? state.trackBusIndex[i] : 1;
-        track.pan = (i < state.trackPan.size()) ? state.trackPan[i] : 0.0f;
-        track.insertSlots = (i < state.trackInsertSlots.size()) ? state.trackInsertSlots[i] : 0;
-        if (i < state.trackInsertEffects.size()) track.insertEffects = state.trackInsertEffects[i];
-        if (i < state.trackInsertBypass.size()) track.insertBypass = state.trackInsertBypass[i];
-        if (i < state.trackInsertParams.size()) track.insertParams = state.trackInsertParams[i];
-        state.project.tracks.push_back(track);
-    }
-    
-    // Reconstruct ProjectData buses from legacy bus vectors
-    for (int b = 0; b < kBusCount; ++b) {
-        if (b >= static_cast<int>(state.project.buses.size())) {
-            state.project.buses.push_back(BusData{});
-        }
-        auto& bus = state.project.buses[static_cast<size_t>(b)];
-        bus.name = Utf8ToWstr(WstrToUtf8(BusName(b)));
-        bus.gainDb = BusGainDbAt(state, b);
-        bus.mute = BusMuteAt(state, b);
-        bus.pan = BusPanAt(state, b);
-        bus.insertSlots = (b < static_cast<int>(state.busInsertSlots.size())) ? state.busInsertSlots[static_cast<size_t>(b)] : 0;
-        if (b < static_cast<int>(state.busInsertEffects.size())) bus.insertEffects = state.busInsertEffects[static_cast<size_t>(b)];
-        if (b < static_cast<int>(state.busInsertBypass.size())) bus.insertBypass = state.busInsertBypass[static_cast<size_t>(b)];
-        if (b < static_cast<int>(state.busInsertParams.size())) bus.insertParams = state.busInsertParams[static_cast<size_t>(b)];
-    }
 
     // Materialize recorded in-memory takes so they survive save/load round-trips.
     {
@@ -329,9 +290,6 @@ bool SaveProject(const std::wstring& path, UiState& state) {
                 return false;
             }
             a.sourcePath = takePath.wstring();
-            if (i < state.audio.size()) {
-                state.audio[i].sourcePath = a.sourcePath;
-            }
         }
     }
 
@@ -723,52 +681,6 @@ bool LoadProject(const std::wstring& path, UiState& state) {
     state.projectFilePath = path;
     state.projectModified = false;
 
-    // Sync ProjectData back to legacy UiState fields for backward compatibility
-    state.bpm = static_cast<int>(state.project.bpm);
-    state.projectSampleRate = state.project.projectSampleRate;
-    state.audio = state.project.audio;
-    state.clips = state.project.clips;
-    state.tracks.clear();
-    state.trackGainDb.clear();
-    state.trackMute.clear();
-    state.trackSolo.clear();
-    state.trackRecordArm.clear();
-    state.trackBusIndex.clear();
-    state.trackPan.clear();
-    state.trackInsertSlots.clear();
-    state.trackInsertEffects.clear();
-    state.trackInsertBypass.clear();
-    state.trackInsertParams.clear();
-    for (const auto& track : state.project.tracks) {
-        state.tracks.push_back(track.name);
-        state.trackGainDb.push_back(track.gainDb);
-        state.trackMute.push_back(track.mute);
-        state.trackSolo.push_back(track.solo);
-        state.trackRecordArm.push_back(track.recordArm);
-        state.trackBusIndex.push_back(track.busIndex);
-        state.trackPan.push_back(track.pan);
-        state.trackInsertSlots.push_back(track.insertSlots);
-        state.trackInsertEffects.push_back(track.insertEffects);
-        state.trackInsertBypass.push_back(track.insertBypass);
-        state.trackInsertParams.push_back(track.insertParams);
-    }
-    state.busGainDb.clear();
-    state.busMute.clear();
-    state.busPan.clear();
-    state.busInsertSlots.clear();
-    state.busInsertEffects.clear();
-    state.busInsertBypass.clear();
-    state.busInsertParams.clear();
-    for (int i = 0; i < kBusCount && i < static_cast<int>(state.project.buses.size()); ++i) {
-        const auto& bus = state.project.buses[static_cast<size_t>(i)];
-        state.busGainDb.push_back(bus.gainDb);
-        state.busMute.push_back(bus.mute);
-        state.busPan.push_back(bus.pan);
-        state.busInsertSlots.push_back(bus.insertSlots);
-        state.busInsertEffects.push_back(bus.insertEffects);
-        state.busInsertBypass.push_back(bus.insertBypass);
-        state.busInsertParams.push_back(bus.insertParams);
-    }
 
     return true;
 }
@@ -844,24 +756,24 @@ const wchar_t* BusName(int busIndex) {
 }
 
 float BusGainDbAt(const UiState& state, int busIndex) {
-    if (busIndex < 0 || busIndex >= static_cast<int>(state.busGainDb.size())) {
+    if (busIndex < 0 || busIndex >= static_cast<int>(state.project.buses.size())) {
         return 0.0f;
     }
-    return state.busGainDb[static_cast<size_t>(busIndex)];
+    return state.project.buses[static_cast<size_t>(busIndex)].gainDb;
 }
 
 float BusPanAt(const UiState& state, int busIndex) {
-    if (busIndex < 0 || busIndex >= static_cast<int>(state.busPan.size())) {
+    if (busIndex < 0 || busIndex >= static_cast<int>(state.project.buses.size())) {
         return 0.0f;
     }
-    return std::clamp(state.busPan[static_cast<size_t>(busIndex)], -1.0f, 1.0f);
+    return std::clamp(state.project.buses[static_cast<size_t>(busIndex)].pan, -1.0f, 1.0f);
 }
 
 bool BusMuteAt(const UiState& state, int busIndex) {
-    if (busIndex < 0 || busIndex >= static_cast<int>(state.busMute.size())) {
+    if (busIndex < 0 || busIndex >= static_cast<int>(state.project.buses.size())) {
         return false;
     }
-    return state.busMute[static_cast<size_t>(busIndex)];
+    return state.project.buses[static_cast<size_t>(busIndex)].mute;
 }
 
 void ApplyBalancePan(float pan, float* left, float* right) {
@@ -946,7 +858,7 @@ std::wstring BuildAudioDiagnosticsReport(const UiState& state) {
     auto yn = [](bool ok) -> const wchar_t* { return ok ? L"OK" : L"NO"; };
 
     std::wstringstream ss;
-    ss << L"Project SR: " << state.projectSampleRate << L"\n";
+    ss << L"Project SR: " << state.project.projectSampleRate << L"\n";
      ss << L"Audio Backend: " << AudioBackendLabel(state.audioBackend)
        << (state.playingViaWasapi ? L" (output: WASAPI)" : L" (output: MME)") << L"\n";
      ss << L"Preferred SR: " << state.preferredSampleRate << L"\n";
@@ -971,8 +883,8 @@ std::wstring BuildAudioDiagnosticsReport(const UiState& state) {
     ss << L"Observed Frame Ratio: " << state.lastCaptureObservedRateRatio << L"\n";
     ss << L"Applied Capture Stride: " << state.lastCaptureFrameStride << L"\n\n";
 
-    const int probeA = (state.preferredSampleRate > 0) ? state.preferredSampleRate : state.projectSampleRate;
-    const int probeB = (state.projectSampleRate > 0 && state.projectSampleRate != probeA) ? state.projectSampleRate : state.lastOpenedOutputSampleRate;
+    const int probeA = (state.preferredSampleRate > 0) ? state.preferredSampleRate : state.project.projectSampleRate;
+    const int probeB = (state.project.projectSampleRate > 0 && state.project.projectSampleRate != probeA) ? state.project.projectSampleRate : state.lastOpenedOutputSampleRate;
 
     ss << L"Input Query (16-bit PCM)\n";
     if (probeA > 0) {
@@ -1147,7 +1059,7 @@ static void AsDlgReadFields(HWND hwnd, AudioSettingsDlgData& d) {
 
 static void AsDlgUpdateStatus(HWND hwnd, const UiState& state) {
     wchar_t buf[256]{};
-    const int sr  = state.activeDeviceSampleRate   > 0 ? state.activeDeviceSampleRate   : state.projectSampleRate;
+    const int sr  = state.activeDeviceSampleRate   > 0 ? state.activeDeviceSampleRate   : state.project.projectSampleRate;
     const int bsz = state.activeDeviceBufferFrames > 0 ? state.activeDeviceBufferFrames : state.preferredBufferFrames;
     if (sr > 0) {
         const double ms = bsz > 0 ? static_cast<double>(bsz) / static_cast<double>(sr) * 1000.0 : 0.0;
@@ -1263,7 +1175,7 @@ static LRESULT CALLBACK AudioSettingsDlgProc(HWND hwnd, UINT msg, WPARAM wParam,
                     d->sampleRates.push_back(sr);
             };
             addSR(state.preferredSampleRate);
-            addSR(state.projectSampleRate);
+            addSR(state.project.projectSampleRate);
             addSR(state.activeDeviceSampleRate);
             std::sort(d->sampleRates.begin(), d->sampleRates.end());
             HWND hSr = GetDlgItem(hwnd, kAsDlgSampleRate);
@@ -1272,7 +1184,7 @@ static LRESULT CALLBACK AudioSettingsDlgProc(HWND hwnd, UINT msg, WPARAM wParam,
                 wchar_t rbuf[32]{};
                 swprintf_s(rbuf, L"%d Hz", d->sampleRates[i]);
                 SendMessageW(hSr, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(rbuf));
-                const int target = (state.preferredSampleRate > 0) ? state.preferredSampleRate : state.projectSampleRate;
+                const int target = (state.preferredSampleRate > 0) ? state.preferredSampleRate : state.project.projectSampleRate;
                 if (d->sampleRates[i] == target) selSR = static_cast<int>(i);
             }
             SendMessageW(hSr, CB_SETCURSEL, selSR, 0);
@@ -1475,10 +1387,10 @@ void ShowTopMenu(HWND hwnd, UiState& state, int menuKind, const RECT& menuRect) 
                 }
             };
             addRate(state.preferredSampleRate);
-            addRate(state.projectSampleRate);
+            addRate(state.project.projectSampleRate);
             addRate(state.activeDeviceSampleRate);
             addRate(state.lastOpenedOutputSampleRate);
-            for (const LoadedAudio& a : state.audio) {
+            for (const LoadedAudio& a : state.project.audio) {
                 addRate(a.sampleRate);
             }
             std::sort(sampleRates.begin(), sampleRates.end());
@@ -1572,10 +1484,10 @@ void ShowTopMenu(HWND hwnd, UiState& state, int menuKind, const RECT& menuRect) 
             }
         };
         addRate(state.preferredSampleRate);
-        addRate(state.projectSampleRate);
+        addRate(state.project.projectSampleRate);
         addRate(state.activeDeviceSampleRate);
         addRate(state.lastOpenedOutputSampleRate);
-        for (const LoadedAudio& a : state.audio) addRate(a.sampleRate);
+        for (const LoadedAudio& a : state.project.audio) addRate(a.sampleRate);
         std::sort(sampleRates.begin(), sampleRates.end());
         const size_t idx = static_cast<size_t>(cmd - kCmdAudioSampleRateBase);
         if (idx < sampleRates.size()) {
@@ -1607,8 +1519,8 @@ void ShowTopMenu(HWND hwnd, UiState& state, int menuKind, const RECT& menuRect) 
 std::uint64_t ComputeProjectEndFrameLocked(const UiState& state) {
     const float samplesPerBeat = SamplesPerBeat(state);
     std::uint64_t maxFrame = 0;
-    for (const ClipItem& clip : state.clips) {
-        if (clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.audio.size())) {
+    for (const ClipItem& clip : state.project.clips) {
+        if (clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.project.audio.size())) {
             continue;
         }
         const std::uint64_t clipStartTL   = static_cast<std::uint64_t>(std::llround(std::max(0.0f, clip.startBeat) * samplesPerBeat));
@@ -1661,7 +1573,7 @@ static bool ReadClipSampleAtProjectFrame(
 }
 
 bool FillRealtimeBufferLocked(UiState& state, std::int16_t* outInterleaved, int frames, bool* reachedEnd) {
-    if (state.projectSampleRate <= 0) {
+    if (state.project.projectSampleRate <= 0) {
         std::fill(outInterleaved, outInterleaved + (frames * 2), 0);
         *reachedEnd = true;
         return false;
@@ -1674,7 +1586,7 @@ bool FillRealtimeBufferLocked(UiState& state, std::int16_t* outInterleaved, int 
         && state.playbackFrameCursor.load() < state.recordStartFrame;
     const bool allowNoClipPlayback = runMetPlay || runMetRec || runCountInClick || (state.recording && state.inputMonitoring);
 
-    if (state.clips.empty() && !allowNoClipPlayback) {
+    if (state.project.clips.empty() && !allowNoClipPlayback) {
         std::fill(outInterleaved, outInterleaved + (frames * 2), 0);
         *reachedEnd = true;
         return false;
@@ -1683,11 +1595,11 @@ bool FillRealtimeBufferLocked(UiState& state, std::int16_t* outInterleaved, int 
     const float samplesPerBeat = SamplesPerBeat(state);
     const std::uint64_t endFrame = ComputeProjectEndFrameLocked(state);
     const std::uint64_t startCursor = state.playbackFrameCursor.load();
-    const float sampleRate = static_cast<float>(state.projectSampleRate);
+    const float sampleRate = static_cast<float>(state.project.projectSampleRate);
 
     int activeFrames = 0;
     // Keep running while recording, during count-in, or metronome-only playback.
-    if (state.recording || state.countingIn || (state.clips.empty() && (runMetPlay || runMetRec))) {
+    if (state.recording || state.countingIn || (state.project.clips.empty() && (runMetPlay || runMetRec))) {
         activeFrames = frames;
         *reachedEnd = false;
     } else {
@@ -1697,7 +1609,7 @@ bool FillRealtimeBufferLocked(UiState& state, std::int16_t* outInterleaved, int 
     }
 
     // Per-track stereo buffers: collect clips, apply track insert chain
-    const int trackCount = static_cast<int>(state.tracks.size());
+    const int trackCount = static_cast<int>(state.project.tracks.size());
 
     // Bus stereo accumulation buffers
     std::vector<float> busBuf[kBusCount];
@@ -1711,10 +1623,10 @@ bool FillRealtimeBufferLocked(UiState& state, std::int16_t* outInterleaved, int 
 
         // Fill track buffer from clips
         std::vector<float> trackBuf(static_cast<size_t>(activeFrames) * 2, 0.0f);
-        for (const ClipItem& clip : state.clips) {
+        for (const ClipItem& clip : state.project.clips) {
             if (clip.trackIndex != ti) continue;
-            if (clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.audio.size())) continue;
-            const LoadedAudio& a = state.audio[static_cast<size_t>(clip.audioIndex)];
+            if (clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.project.audio.size())) continue;
+            const LoadedAudio& a = state.project.audio[static_cast<size_t>(clip.audioIndex)];
             const std::uint64_t clipStart = static_cast<std::uint64_t>(
                 std::llround(std::max(0.0f, clip.startBeat) * samplesPerBeat));
             const std::uint64_t clipEnd = clipStart + static_cast<std::uint64_t>(
@@ -1725,7 +1637,7 @@ bool FillRealtimeBufferLocked(UiState& state, std::int16_t* outInterleaved, int 
                 if (gf < clipStart || gf >= clipEnd) continue;
                 float l = 0.0f;
                 float r = 0.0f;
-                if (!ReadClipSampleAtProjectFrame(a, gf - clipStart, state.projectSampleRate, clip.sourceOffsetFrames, &l, &r)) {
+                if (!ReadClipSampleAtProjectFrame(a, gf - clipStart, state.project.projectSampleRate, clip.sourceOffsetFrames, &l, &r)) {
                     continue;
                 }
                 trackBuf[static_cast<size_t>(i)*2]   += l;
@@ -1734,15 +1646,15 @@ bool FillRealtimeBufferLocked(UiState& state, std::int16_t* outInterleaved, int 
         }
 
         // Apply track insert chain
-        if (ti < static_cast<int>(state.trackInsertEffects.size()) &&
-            ti < static_cast<int>(state.trackInsertBypass.size()) &&
-            ti < static_cast<int>(state.trackInsertParams.size()) &&
-            ti < static_cast<int>(state.trackInsertSlots.size())) {
+        if (ti < static_cast<int>(state.project.tracks.size()) &&
+            ti < static_cast<int>(state.project.tracks.size()) &&
+            ti < static_cast<int>(state.project.tracks.size()) &&
+            ti < static_cast<int>(state.project.tracks.size())) {
             ApplyInsertChain(trackBuf, sampleRate,
-                state.trackInsertEffects[static_cast<size_t>(ti)],
-                state.trackInsertBypass[static_cast<size_t>(ti)],
-                state.trackInsertParams[static_cast<size_t>(ti)],
-                state.trackInsertSlots[static_cast<size_t>(ti)]);
+                state.project.tracks[static_cast<size_t>(ti)].insertEffects,
+                state.project.tracks[static_cast<size_t>(ti)].insertBypass,
+                state.project.tracks[static_cast<size_t>(ti)].insertParams,
+                state.project.tracks[static_cast<size_t>(ti)].insertSlots);
         }
 
         // Apply track gain + pan then mix into bus
@@ -1763,15 +1675,15 @@ bool FillRealtimeBufferLocked(UiState& state, std::int16_t* outInterleaved, int 
         if (BusMuteAt(state, b)) continue;
 
         // Apply bus insert chain (bus 3 = master)
-        if (b < static_cast<int>(state.busInsertEffects.size()) &&
-            b < static_cast<int>(state.busInsertBypass.size()) &&
-            b < static_cast<int>(state.busInsertParams.size()) &&
-            b < static_cast<int>(state.busInsertSlots.size())) {
+        if (b < static_cast<int>(state.project.buses.size()) &&
+            b < static_cast<int>(state.project.buses.size()) &&
+            b < static_cast<int>(state.project.buses.size()) &&
+            b < static_cast<int>(state.project.buses.size())) {
             ApplyInsertChain(busBuf[b], sampleRate,
-                state.busInsertEffects[static_cast<size_t>(b)],
-                state.busInsertBypass[static_cast<size_t>(b)],
-                state.busInsertParams[static_cast<size_t>(b)],
-                state.busInsertSlots[static_cast<size_t>(b)]);
+                state.project.buses[static_cast<size_t>(b)].insertEffects,
+                state.project.buses[static_cast<size_t>(b)].insertBypass,
+                state.project.buses[static_cast<size_t>(b)].insertParams,
+                state.project.buses[static_cast<size_t>(b)].insertSlots);
         }
 
         const float busGain = DbToLinear(BusGainDbAt(state, b));
@@ -1896,11 +1808,11 @@ static bool FillRealtimeForDeviceLocked(
         return false;
     }
 
-    if (state.projectSampleRate <= 0) {
-        state.projectSampleRate = deviceSampleRate;
+    if (state.project.projectSampleRate <= 0) {
+        state.project.projectSampleRate = deviceSampleRate;
     }
 
-    const int projectSampleRate = state.projectSampleRate;
+    const int projectSampleRate = state.project.projectSampleRate;
     if (projectSampleRate <= 0 || projectSampleRate == deviceSampleRate) {
         return FillRealtimeBufferLocked(state, outInterleaved, deviceFrames, reachedEnd);
     }
@@ -2231,7 +2143,7 @@ std::filesystem::path FindRepoRoot() {
 }
 
 bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
-    if (state.audio.empty()) {
+    if (state.project.audio.empty()) {
         MessageBoxW(hwnd, L"Import tracks first before applying AutoMix.", L"AutoMix", MB_OK | MB_ICONINFORMATION);
         return false;
     }
@@ -2259,12 +2171,12 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
     std::filesystem::create_directories(inputDir, ec);
 
     std::vector<std::pair<std::wstring, int>> exportedTracks;
-    for (int ti = 0; ti < static_cast<int>(state.tracks.size()); ++ti) {
+    for (int ti = 0; ti < static_cast<int>(state.project.tracks.size()); ++ti) {
         std::vector<float> trackStereo;
         int trackSr = 0;
         EnterCriticalSection(&state.audioStateLock);
         const bool hasTrackAudio = RenderTrackToStereoLocked(state, ti, &trackStereo, &trackSr);
-        const std::wstring trackName = state.tracks[static_cast<size_t>(ti)];
+        const std::wstring trackName = state.project.tracks[static_cast<size_t>(ti)].name;
         LeaveCriticalSection(&state.audioStateLock);
         if (!hasTrackAudio || trackStereo.empty() || trackSr <= 0) {
             continue;
@@ -2351,7 +2263,7 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
     EnterCriticalSection(&state.audioStateLock);
     for (const auto& e : exportedTracks) {
         const int trackIndex = e.second;
-        if (trackIndex < 0 || trackIndex >= static_cast<int>(state.trackGainDb.size())) {
+        if (trackIndex < 0 || trackIndex >= static_cast<int>(state.project.tracks.size())) {
             continue;
         }
         const std::wstring key = ToLowerCopy(e.first);
@@ -2361,19 +2273,19 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
             if (it == settings.end()) continue;
             const AutoMixTrackSettings& s = it->second;
 
-            state.trackGainDb[static_cast<size_t>(trackIndex)] = std::clamp(s.gainDb, kFaderMinDb, kFaderMaxDb);
-            if (trackIndex < static_cast<int>(state.trackPan.size())) {
-                state.trackPan[static_cast<size_t>(trackIndex)] = std::clamp(s.pan, -1.0f, 1.0f);
+            state.project.tracks[static_cast<size_t>(trackIndex)].gainDb = std::clamp(s.gainDb, kFaderMinDb, kFaderMaxDb);
+            if (trackIndex < static_cast<int>(state.project.tracks.size())) {
+                state.project.tracks[static_cast<size_t>(trackIndex)].pan = std::clamp(s.pan, -1.0f, 1.0f);
             }
-            if (trackIndex < static_cast<int>(state.trackBusIndex.size())) {
-                state.trackBusIndex[static_cast<size_t>(trackIndex)] = std::clamp(s.busIndex, 0, kBusCount - 1);
+            if (trackIndex < static_cast<int>(state.project.tracks.size())) {
+                state.project.tracks[static_cast<size_t>(trackIndex)].busIndex = std::clamp(s.busIndex, 0, kBusCount - 1);
                 ++appliedBusRoute;
             }
 
-            if (trackIndex < static_cast<int>(state.trackInsertEffects.size()) &&
-                trackIndex < static_cast<int>(state.trackInsertBypass.size()) &&
-                trackIndex < static_cast<int>(state.trackInsertParams.size()) &&
-                trackIndex < static_cast<int>(state.trackInsertSlots.size())) {
+            if (trackIndex < static_cast<int>(state.project.tracks.size()) &&
+                trackIndex < static_cast<int>(state.project.tracks.size()) &&
+                trackIndex < static_cast<int>(state.project.tracks.size()) &&
+                trackIndex < static_cast<int>(state.project.tracks.size())) {
                 InsertEffectArray fx = DefaultInsertEffects();
                 InsertBypassArray by = DefaultInsertBypass();
                 InsertParamsArray pp = DefaultInsertParams();
@@ -2453,10 +2365,10 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
                     AutoMixAppendInsert(&fx, &by, &pp, &slots, kFxREV, p);
                 }
 
-                state.trackInsertEffects[static_cast<size_t>(trackIndex)] = fx;
-                state.trackInsertBypass[static_cast<size_t>(trackIndex)] = by;
-                state.trackInsertParams[static_cast<size_t>(trackIndex)] = pp;
-                state.trackInsertSlots[static_cast<size_t>(trackIndex)] = slots;
+                state.project.tracks[static_cast<size_t>(trackIndex)].insertEffects = fx;
+                state.project.tracks[static_cast<size_t>(trackIndex)].insertBypass = by;
+                state.project.tracks[static_cast<size_t>(trackIndex)].insertParams = pp;
+                state.project.tracks[static_cast<size_t>(trackIndex)].insertSlots = slots;
                 if (slots > 0) ++appliedFx;
             }
 
@@ -2464,16 +2376,16 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
         } else {
             auto it = gains.find(key);
             if (it == gains.end()) continue;
-            state.trackGainDb[static_cast<size_t>(trackIndex)] = std::clamp(it->second, kFaderMinDb, kFaderMaxDb);
+            state.project.tracks[static_cast<size_t>(trackIndex)].gainDb = std::clamp(it->second, kFaderMinDb, kFaderMaxDb);
             ++applied;
         }
     }
 
     if (hasFullSettings && master.hasCompressor &&
-        state.busInsertEffects.size() > 3 &&
-        state.busInsertBypass.size() > 3 &&
-        state.busInsertParams.size() > 3 &&
-        state.busInsertSlots.size() > 3) {
+        state.project.buses.size() > 3 &&
+        state.project.buses.size() > 3 &&
+        state.project.buses.size() > 3 &&
+        state.project.buses.size() > 3) {
         InsertEffectArray fx = DefaultInsertEffects();
         InsertBypassArray by = DefaultInsertBypass();
         InsertParamsArray pp = DefaultInsertParams();
@@ -2488,10 +2400,10 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
         p.cmp_knee_db = 4.0f;
         AutoMixAppendInsert(&fx, &by, &pp, &slots, kFxCMP, p);
 
-        state.busInsertEffects[3] = fx;
-        state.busInsertBypass[3] = by;
-        state.busInsertParams[3] = pp;
-        state.busInsertSlots[3] = slots;
+        state.project.buses[3].insertEffects = fx;
+        state.project.buses[3].insertBypass = by;
+        state.project.buses[3].insertParams = pp;
+        state.project.buses[3].insertSlots = slots;
     }
 
     LeaveCriticalSection(&state.audioStateLock);
@@ -2548,7 +2460,7 @@ void StopPlayback(UiState& state, bool rewind) {
 }
 
 bool RenderTrackToStereoLocked(const UiState& state, int trackIndex, std::vector<float>* outStereo, int* outSampleRate) {
-    if (trackIndex < 0 || trackIndex >= static_cast<int>(state.tracks.size()) || state.projectSampleRate <= 0) {
+    if (trackIndex < 0 || trackIndex >= static_cast<int>(state.project.tracks.size()) || state.project.projectSampleRate <= 0) {
         return false;
     }
 
@@ -2556,8 +2468,8 @@ bool RenderTrackToStereoLocked(const UiState& state, int trackIndex, std::vector
     std::uint64_t endFrame = 0;
     const float spb = SamplesPerBeat(state);
 
-    for (const ClipItem& clip : state.clips) {
-        if (clip.trackIndex != trackIndex || clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.audio.size())) {
+    for (const ClipItem& clip : state.project.clips) {
+        if (clip.trackIndex != trackIndex || clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.project.audio.size())) {
             continue;
         }
         const std::uint64_t clipStart = static_cast<std::uint64_t>(std::llround(std::max(0.0f, clip.startBeat) * spb));
@@ -2572,11 +2484,11 @@ bool RenderTrackToStereoLocked(const UiState& state, int trackIndex, std::vector
     const std::uint64_t totalFrames = endFrame - startFrame;
     std::vector<float> stereo(static_cast<size_t>(totalFrames) * 2, 0.0f);
 
-    for (const ClipItem& clip : state.clips) {
-        if (clip.trackIndex != trackIndex || clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.audio.size())) {
+    for (const ClipItem& clip : state.project.clips) {
+        if (clip.trackIndex != trackIndex || clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.project.audio.size())) {
             continue;
         }
-        const LoadedAudio& a = state.audio[static_cast<size_t>(clip.audioIndex)];
+        const LoadedAudio& a = state.project.audio[static_cast<size_t>(clip.audioIndex)];
         const std::uint64_t clipStartAbs = static_cast<std::uint64_t>(std::llround(std::max(0.0f, clip.startBeat) * spb));
         if (clipStartAbs < startFrame) {
             continue;
@@ -2587,7 +2499,7 @@ bool RenderTrackToStereoLocked(const UiState& state, int trackIndex, std::vector
         for (std::uint64_t f = 0; f < clipFrames && (writeStart + f) < totalFrames; ++f) {
             float l = 0.0f;
             float r = 0.0f;
-            if (!ReadClipSampleAtProjectFrame(a, f, state.projectSampleRate, clip.sourceOffsetFrames, &l, &r)) {
+            if (!ReadClipSampleAtProjectFrame(a, f, state.project.projectSampleRate, clip.sourceOffsetFrames, &l, &r)) {
                 continue;
             }
             const size_t dst = static_cast<size_t>(writeStart + f) * 2;
@@ -2601,12 +2513,12 @@ bool RenderTrackToStereoLocked(const UiState& state, int trackIndex, std::vector
     }
 
     *outStereo = std::move(stereo);
-    *outSampleRate = state.projectSampleRate;
+    *outSampleRate = state.project.projectSampleRate;
     return true;
 }
 
 bool RenderProjectMixToStereoLocked(const UiState& state, int excludedTrackIndex, std::vector<float>* outStereo, int* outSampleRate) {
-    if (state.projectSampleRate <= 0 || state.clips.empty()) {
+    if (state.project.projectSampleRate <= 0 || state.project.clips.empty()) {
         return false;
     }
 
@@ -2614,8 +2526,8 @@ bool RenderProjectMixToStereoLocked(const UiState& state, int excludedTrackIndex
     std::uint64_t endFrame = 0;
     const float spb = SamplesPerBeat(state);
 
-    for (const ClipItem& clip : state.clips) {
-        if (clip.trackIndex == excludedTrackIndex || clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.audio.size())) {
+    for (const ClipItem& clip : state.project.clips) {
+        if (clip.trackIndex == excludedTrackIndex || clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.project.audio.size())) {
             continue;
         }
         const std::uint64_t clipStart = static_cast<std::uint64_t>(std::llround(std::max(0.0f, clip.startBeat) * spb));
@@ -2630,11 +2542,11 @@ bool RenderProjectMixToStereoLocked(const UiState& state, int excludedTrackIndex
     const std::uint64_t totalFrames = endFrame - startFrame;
     std::vector<float> stereo(static_cast<size_t>(totalFrames) * 2, 0.0f);
 
-    for (const ClipItem& clip : state.clips) {
-        if (clip.trackIndex == excludedTrackIndex || clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.audio.size())) {
+    for (const ClipItem& clip : state.project.clips) {
+        if (clip.trackIndex == excludedTrackIndex || clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.project.audio.size())) {
             continue;
         }
-        const LoadedAudio& a = state.audio[static_cast<size_t>(clip.audioIndex)];
+        const LoadedAudio& a = state.project.audio[static_cast<size_t>(clip.audioIndex)];
         const std::uint64_t clipStartAbs = static_cast<std::uint64_t>(std::llround(std::max(0.0f, clip.startBeat) * spb));
         if (clipStartAbs < startFrame) {
             continue;
@@ -2645,7 +2557,7 @@ bool RenderProjectMixToStereoLocked(const UiState& state, int excludedTrackIndex
         for (std::uint64_t f = 0; f < clipFrames && (writeStart + f) < totalFrames; ++f) {
             float l = 0.0f;
             float r = 0.0f;
-            if (!ReadClipSampleAtProjectFrame(a, f, state.projectSampleRate, clip.sourceOffsetFrames, &l, &r)) {
+            if (!ReadClipSampleAtProjectFrame(a, f, state.project.projectSampleRate, clip.sourceOffsetFrames, &l, &r)) {
                 continue;
             }
             const size_t dst = static_cast<size_t>(writeStart + f) * 2;
@@ -2659,22 +2571,22 @@ bool RenderProjectMixToStereoLocked(const UiState& state, int excludedTrackIndex
     }
 
     *outStereo = std::move(stereo);
-    *outSampleRate = state.projectSampleRate;
+    *outSampleRate = state.project.projectSampleRate;
     return true;
 }
 
 // Renders the full mix to stereo: all un-muted tracks summed with track gain,
 // track pan, bus gain, and bus mute applied. Bus pan is also applied.
 bool RenderFullMixToStereoLocked(const UiState& state, std::vector<float>* outStereo, int* outSampleRate) {
-    if (state.projectSampleRate <= 0 || state.clips.empty() || state.tracks.empty()) {
+    if (state.project.projectSampleRate <= 0 || state.project.clips.empty() || state.project.tracks.empty()) {
         return false;
     }
 
     // Determine total length across all clips
     std::uint64_t endFrame = 0;
     const float spb = SamplesPerBeat(state);
-    for (const ClipItem& clip : state.clips) {
-        if (clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.audio.size())) continue;
+    for (const ClipItem& clip : state.project.clips) {
+        if (clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.project.audio.size())) continue;
         const std::uint64_t clipStart = static_cast<std::uint64_t>(std::llround(std::max(0.0f, clip.startBeat) * spb));
         endFrame = std::max(endFrame, clipStart + static_cast<std::uint64_t>(std::llround(clip.lengthBeats * spb)));
     }
@@ -2682,27 +2594,27 @@ bool RenderFullMixToStereoLocked(const UiState& state, std::vector<float>* outSt
 
     std::vector<float> mix(static_cast<size_t>(endFrame) * 2, 0.0f);
 
-    const int trackCount = static_cast<int>(state.tracks.size());
+    const int trackCount = static_cast<int>(state.project.tracks.size());
     for (int ti = 0; ti < trackCount; ++ti) {
         // Track mute check
-        const bool trackMuted = (ti < static_cast<int>(state.trackMute.size())) && state.trackMute[static_cast<size_t>(ti)];
+        const bool trackMuted = (ti < static_cast<int>(state.project.tracks.size())) && state.project.tracks[static_cast<size_t>(ti)].mute;
         if (trackMuted) continue;
 
         // Bus mute check
-        const int busIdx = (ti < static_cast<int>(state.trackBusIndex.size()))
-            ? std::clamp(state.trackBusIndex[static_cast<size_t>(ti)], 0, kBusCount - 1) : 0;
-        const bool busMuted = (busIdx < static_cast<int>(state.busMute.size())) && state.busMute[static_cast<size_t>(busIdx)];
+        const int busIdx = (ti < static_cast<int>(state.project.tracks.size()))
+            ? std::clamp(state.project.tracks[static_cast<size_t>(ti)].busIndex, 0, kBusCount - 1) : 0;
+        const bool busMuted = (busIdx < static_cast<int>(state.project.buses.size())) && state.project.buses[static_cast<size_t>(busIdx)].mute;
         if (busMuted) continue;
 
         // Gain: track dB + bus dB
-        const float trackDb = (ti < static_cast<int>(state.trackGainDb.size()))
-            ? state.trackGainDb[static_cast<size_t>(ti)] : 0.0f;
+        const float trackDb = (ti < static_cast<int>(state.project.tracks.size()))
+            ? state.project.tracks[static_cast<size_t>(ti)].gainDb : 0.0f;
         const float busDb = BusGainDbAt(state, busIdx);
         const float gain = std::pow(10.0f, (trackDb + busDb) / 20.0f);
 
         // Pan: track pan + bus pan combined (simple additive, clamped)
-        const float trackPan = (ti < static_cast<int>(state.trackPan.size()))
-            ? state.trackPan[static_cast<size_t>(ti)] : 0.0f;
+        const float trackPan = (ti < static_cast<int>(state.project.tracks.size()))
+            ? state.project.tracks[static_cast<size_t>(ti)].pan : 0.0f;
         const float busPan = BusPanAt(state, busIdx);
         const float pan = std::clamp(trackPan + busPan, -1.0f, 1.0f);
         // Constant-power panning
@@ -2712,15 +2624,15 @@ bool RenderFullMixToStereoLocked(const UiState& state, std::vector<float>* outSt
 
         // Build per-track buffer for DSP
         std::vector<float> trackBuf(static_cast<size_t>(endFrame) * 2, 0.0f);
-        for (const ClipItem& clip : state.clips) {
-            if (clip.trackIndex != ti || clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.audio.size())) continue;
-            const LoadedAudio& a = state.audio[static_cast<size_t>(clip.audioIndex)];
+        for (const ClipItem& clip : state.project.clips) {
+            if (clip.trackIndex != ti || clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.project.audio.size())) continue;
+            const LoadedAudio& a = state.project.audio[static_cast<size_t>(clip.audioIndex)];
             const std::uint64_t clipStart = static_cast<std::uint64_t>(std::llround(std::max(0.0f, clip.startBeat) * spb));
             const std::uint64_t clipFrames = static_cast<std::uint64_t>(std::llround(clip.lengthBeats * spb));
             for (std::uint64_t f = 0; f < clipFrames && (clipStart + f) < endFrame; ++f) {
                 float l = 0.0f;
                 float r = 0.0f;
-                if (!ReadClipSampleAtProjectFrame(a, f, state.projectSampleRate, clip.sourceOffsetFrames, &l, &r)) {
+                if (!ReadClipSampleAtProjectFrame(a, f, state.project.projectSampleRate, clip.sourceOffsetFrames, &l, &r)) {
                     continue;
                 }
                 const size_t dst = static_cast<size_t>(clipStart + f) * 2;
@@ -2730,15 +2642,15 @@ bool RenderFullMixToStereoLocked(const UiState& state, std::vector<float>* outSt
         }
 
         // Apply track insert chain
-        if (ti < static_cast<int>(state.trackInsertEffects.size()) &&
-            ti < static_cast<int>(state.trackInsertBypass.size()) &&
-            ti < static_cast<int>(state.trackInsertParams.size()) &&
-            ti < static_cast<int>(state.trackInsertSlots.size())) {
-            ApplyInsertChain(trackBuf, static_cast<float>(state.projectSampleRate),
-                state.trackInsertEffects[static_cast<size_t>(ti)],
-                state.trackInsertBypass[static_cast<size_t>(ti)],
-                state.trackInsertParams[static_cast<size_t>(ti)],
-                state.trackInsertSlots[static_cast<size_t>(ti)]);
+        if (ti < static_cast<int>(state.project.tracks.size()) &&
+            ti < static_cast<int>(state.project.tracks.size()) &&
+            ti < static_cast<int>(state.project.tracks.size()) &&
+            ti < static_cast<int>(state.project.tracks.size())) {
+            ApplyInsertChain(trackBuf, static_cast<float>(state.project.projectSampleRate),
+                state.project.tracks[static_cast<size_t>(ti)].insertEffects,
+                state.project.tracks[static_cast<size_t>(ti)].insertBypass,
+                state.project.tracks[static_cast<size_t>(ti)].insertParams,
+                state.project.tracks[static_cast<size_t>(ti)].insertSlots);
         }
 
         // Mix into master with gain+pan
@@ -2751,30 +2663,30 @@ bool RenderFullMixToStereoLocked(const UiState& state, std::vector<float>* outSt
 
     // Apply bus insert chains per bus
     for (int b = 0; b < kBusCount; ++b) {
-        if (b >= static_cast<int>(state.busInsertEffects.size())) continue;
-        if (b >= static_cast<int>(state.busInsertBypass.size()))  continue;
-        if (b >= static_cast<int>(state.busInsertParams.size()))  continue;
-        if (b >= static_cast<int>(state.busInsertSlots.size()))   continue;
-        if (state.busInsertSlots[static_cast<size_t>(b)] <= 0)    continue;
+        if (b >= static_cast<int>(state.project.buses.size())) continue;
+        if (b >= static_cast<int>(state.project.buses.size()))  continue;
+        if (b >= static_cast<int>(state.project.buses.size()))  continue;
+        if (b >= static_cast<int>(state.project.buses.size()))   continue;
+        if (state.project.buses[static_cast<size_t>(b)].insertSlots <= 0)    continue;
         // Collect all tracks on this bus into a sub-mix
         std::vector<float> busBuf(static_cast<size_t>(endFrame) * 2, 0.0f);
         bool hasContent = false;
         for (int ti2 = 0; ti2 < trackCount; ++ti2) {
-            const int tbus = (ti2 < static_cast<int>(state.trackBusIndex.size()))
-                ? std::clamp(state.trackBusIndex[static_cast<size_t>(ti2)], 0, kBusCount - 1) : 0;
+            const int tbus = (ti2 < static_cast<int>(state.project.tracks.size()))
+                ? std::clamp(state.project.tracks[static_cast<size_t>(ti2)].busIndex, 0, kBusCount - 1) : 0;
             if (tbus != b) continue;
-            const bool muted = (ti2 < static_cast<int>(state.trackMute.size())) && state.trackMute[static_cast<size_t>(ti2)];
+            const bool muted = (ti2 < static_cast<int>(state.project.tracks.size())) && state.project.tracks[static_cast<size_t>(ti2)].mute;
             if (muted) continue;
             hasContent = true;
-            for (const ClipItem& clip : state.clips) {
-                if (clip.trackIndex != ti2 || clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.audio.size())) continue;
-                const LoadedAudio& a2 = state.audio[static_cast<size_t>(clip.audioIndex)];
+            for (const ClipItem& clip : state.project.clips) {
+                if (clip.trackIndex != ti2 || clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.project.audio.size())) continue;
+                const LoadedAudio& a2 = state.project.audio[static_cast<size_t>(clip.audioIndex)];
                 const std::uint64_t cs = static_cast<std::uint64_t>(std::llround(std::max(0.0f, clip.startBeat) * spb));
                 const std::uint64_t cf = static_cast<std::uint64_t>(std::llround(clip.lengthBeats * spb));
                 for (std::uint64_t f = 0; f < cf && (cs + f) < endFrame; ++f) {
                     float l = 0.0f;
                     float r = 0.0f;
-                    if (!ReadClipSampleAtProjectFrame(a2, f, state.projectSampleRate, clip.sourceOffsetFrames, &l, &r)) {
+                    if (!ReadClipSampleAtProjectFrame(a2, f, state.project.projectSampleRate, clip.sourceOffsetFrames, &l, &r)) {
                         continue;
                     }
                     const size_t dst = static_cast<size_t>(cs + f) * 2;
@@ -2787,11 +2699,11 @@ bool RenderFullMixToStereoLocked(const UiState& state, std::vector<float>* outSt
         // Apply bus inserts — result is a differential that we add back to mix
         // (subtract unprocessed, add processed)
         std::vector<float> busBufPre = busBuf;
-        ApplyInsertChain(busBuf, static_cast<float>(state.projectSampleRate),
-            state.busInsertEffects[static_cast<size_t>(b)],
-            state.busInsertBypass[static_cast<size_t>(b)],
-            state.busInsertParams[static_cast<size_t>(b)],
-            state.busInsertSlots[static_cast<size_t>(b)]);
+        ApplyInsertChain(busBuf, static_cast<float>(state.project.projectSampleRate),
+            state.project.buses[static_cast<size_t>(b)].insertEffects,
+            state.project.buses[static_cast<size_t>(b)].insertBypass,
+            state.project.buses[static_cast<size_t>(b)].insertParams,
+            state.project.buses[static_cast<size_t>(b)].insertSlots);
         const float busGainLin = std::pow(10.0f, BusGainDbAt(state, b) / 20.0f);
         for (std::uint64_t f = 0; f < endFrame; ++f) {
             const size_t i = f*2;
@@ -2806,41 +2718,41 @@ bool RenderFullMixToStereoLocked(const UiState& state, std::vector<float>* outSt
     }
 
     *outStereo     = std::move(mix);
-    *outSampleRate = state.projectSampleRate;
+    *outSampleRate = state.project.projectSampleRate;
     return true;
 }
 
 // Renders all tracks routed to busIndex (with track+bus gain/pan applied) into a stereo buffer.
 // Must NOT be called with audioStateLock held.
 bool RenderBusStemToStereoLocked(const UiState& state, int busIndex, std::vector<float>* outStereo, int* outSampleRate) {
-    if (state.projectSampleRate <= 0 || state.clips.empty() || state.tracks.empty()) return false;
+    if (state.project.projectSampleRate <= 0 || state.project.clips.empty() || state.project.tracks.empty()) return false;
 
     std::uint64_t endFrame = 0;
     const float spb = SamplesPerBeat(state);
-    for (const ClipItem& clip : state.clips) {
-        if (clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.audio.size())) continue;
+    for (const ClipItem& clip : state.project.clips) {
+        if (clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.project.audio.size())) continue;
         const std::uint64_t clipStart = static_cast<std::uint64_t>(std::llround(std::max(0.0f, clip.startBeat) * spb));
         endFrame = std::max(endFrame, clipStart + static_cast<std::uint64_t>(std::llround(clip.lengthBeats * spb)));
     }
     if (endFrame == 0) return false;
 
     std::vector<float> mix(static_cast<size_t>(endFrame) * 2, 0.0f);
-    const int trackCount = static_cast<int>(state.tracks.size());
+    const int trackCount = static_cast<int>(state.project.tracks.size());
 
     for (int ti = 0; ti < trackCount; ++ti) {
-        const int tbus = (ti < static_cast<int>(state.trackBusIndex.size()))
-            ? std::clamp(state.trackBusIndex[static_cast<size_t>(ti)], 0, kBusCount - 1) : 0;
+        const int tbus = (ti < static_cast<int>(state.project.tracks.size()))
+            ? std::clamp(state.project.tracks[static_cast<size_t>(ti)].busIndex, 0, kBusCount - 1) : 0;
         if (tbus != busIndex) continue;
 
-        const bool trackMuted = (ti < static_cast<int>(state.trackMute.size())) && state.trackMute[static_cast<size_t>(ti)];
-        const bool busMuted   = (busIndex < static_cast<int>(state.busMute.size())) && state.busMute[static_cast<size_t>(busIndex)];
+        const bool trackMuted = (ti < static_cast<int>(state.project.tracks.size())) && state.project.tracks[static_cast<size_t>(ti)].mute;
+        const bool busMuted   = (busIndex < static_cast<int>(state.project.buses.size())) && state.project.buses[static_cast<size_t>(busIndex)].mute;
         if (trackMuted || busMuted) continue;
 
-        const float trackDb = (ti < static_cast<int>(state.trackGainDb.size())) ? state.trackGainDb[static_cast<size_t>(ti)] : 0.0f;
+        const float trackDb = (ti < static_cast<int>(state.project.tracks.size())) ? state.project.tracks[static_cast<size_t>(ti)].gainDb : 0.0f;
         const float busDb   = BusGainDbAt(state, busIndex);
         const float gain    = std::pow(10.0f, (trackDb + busDb) / 20.0f);
 
-        const float trackPan = (ti < static_cast<int>(state.trackPan.size())) ? state.trackPan[static_cast<size_t>(ti)] : 0.0f;
+        const float trackPan = (ti < static_cast<int>(state.project.tracks.size())) ? state.project.tracks[static_cast<size_t>(ti)].pan : 0.0f;
         const float busPan   = BusPanAt(state, busIndex);
         const float pan      = std::clamp(trackPan + busPan, -1.0f, 1.0f);
         const float panRad   = (pan + 1.0f) * 0.5f * 3.14159265f * 0.5f;
@@ -2849,15 +2761,15 @@ bool RenderBusStemToStereoLocked(const UiState& state, int busIndex, std::vector
 
         // Build per-track buffer for DSP
         std::vector<float> trackBuf(static_cast<size_t>(endFrame) * 2, 0.0f);
-        for (const ClipItem& clip : state.clips) {
-            if (clip.trackIndex != ti || clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.audio.size())) continue;
-            const LoadedAudio& a = state.audio[static_cast<size_t>(clip.audioIndex)];
+        for (const ClipItem& clip : state.project.clips) {
+            if (clip.trackIndex != ti || clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.project.audio.size())) continue;
+            const LoadedAudio& a = state.project.audio[static_cast<size_t>(clip.audioIndex)];
             const std::uint64_t clipStart = static_cast<std::uint64_t>(std::llround(std::max(0.0f, clip.startBeat) * spb));
             const std::uint64_t clipFrames = static_cast<std::uint64_t>(std::llround(clip.lengthBeats * spb));
             for (std::uint64_t f = 0; f < clipFrames && (clipStart + f) < endFrame; ++f) {
                 float l = 0.0f;
                 float r = 0.0f;
-                if (!ReadClipSampleAtProjectFrame(a, f, state.projectSampleRate, clip.sourceOffsetFrames, &l, &r)) {
+                if (!ReadClipSampleAtProjectFrame(a, f, state.project.projectSampleRate, clip.sourceOffsetFrames, &l, &r)) {
                     continue;
                 }
                 const size_t dst = static_cast<size_t>(clipStart + f) * 2;
@@ -2867,28 +2779,28 @@ bool RenderBusStemToStereoLocked(const UiState& state, int busIndex, std::vector
         }
 
         // Apply track insert chain
-        if (ti < static_cast<int>(state.trackInsertEffects.size()) &&
-            ti < static_cast<int>(state.trackInsertBypass.size()) &&
-            ti < static_cast<int>(state.trackInsertParams.size()) &&
-            ti < static_cast<int>(state.trackInsertSlots.size())) {
-            ApplyInsertChain(trackBuf, static_cast<float>(state.projectSampleRate),
-                state.trackInsertEffects[static_cast<size_t>(ti)],
-                state.trackInsertBypass[static_cast<size_t>(ti)],
-                state.trackInsertParams[static_cast<size_t>(ti)],
-                state.trackInsertSlots[static_cast<size_t>(ti)]);
+        if (ti < static_cast<int>(state.project.tracks.size()) &&
+            ti < static_cast<int>(state.project.tracks.size()) &&
+            ti < static_cast<int>(state.project.tracks.size()) &&
+            ti < static_cast<int>(state.project.tracks.size())) {
+            ApplyInsertChain(trackBuf, static_cast<float>(state.project.projectSampleRate),
+                state.project.tracks[static_cast<size_t>(ti)].insertEffects,
+                state.project.tracks[static_cast<size_t>(ti)].insertBypass,
+                state.project.tracks[static_cast<size_t>(ti)].insertParams,
+                state.project.tracks[static_cast<size_t>(ti)].insertSlots);
         }
 
         // Apply bus insert chain as post-fader processing
-        if (busIndex < static_cast<int>(state.busInsertEffects.size()) &&
-            busIndex < static_cast<int>(state.busInsertBypass.size()) &&
-            busIndex < static_cast<int>(state.busInsertParams.size()) &&
-            busIndex < static_cast<int>(state.busInsertSlots.size()) &&
-            state.busInsertSlots[static_cast<size_t>(busIndex)] > 0) {
-            ApplyInsertChain(trackBuf, static_cast<float>(state.projectSampleRate),
-                state.busInsertEffects[static_cast<size_t>(busIndex)],
-                state.busInsertBypass[static_cast<size_t>(busIndex)],
-                state.busInsertParams[static_cast<size_t>(busIndex)],
-                state.busInsertSlots[static_cast<size_t>(busIndex)]);
+        if (busIndex < static_cast<int>(state.project.buses.size()) &&
+            busIndex < static_cast<int>(state.project.buses.size()) &&
+            busIndex < static_cast<int>(state.project.buses.size()) &&
+            busIndex < static_cast<int>(state.project.buses.size()) &&
+            state.project.buses[static_cast<size_t>(busIndex)].insertSlots > 0) {
+            ApplyInsertChain(trackBuf, static_cast<float>(state.project.projectSampleRate),
+                state.project.buses[static_cast<size_t>(busIndex)].insertEffects,
+                state.project.buses[static_cast<size_t>(busIndex)].insertBypass,
+                state.project.buses[static_cast<size_t>(busIndex)].insertParams,
+                state.project.buses[static_cast<size_t>(busIndex)].insertSlots);
         }
 
         for (std::uint64_t f = 0; f < endFrame; ++f) {
@@ -2899,7 +2811,7 @@ bool RenderBusStemToStereoLocked(const UiState& state, int busIndex, std::vector
     }
     for (float& s : mix) s = std::clamp(s, -1.0f, 1.0f);
     *outStereo     = std::move(mix);
-    *outSampleRate = state.projectSampleRate;
+    *outSampleRate = state.project.projectSampleRate;
     return true;
 }
 
@@ -2991,52 +2903,32 @@ static bool ReplaceProjectWithSingleWav(UiState& state, const std::wstring& wavP
     }
 
     EnterCriticalSection(&state.audioStateLock);
-    state.tracks.clear();
-    state.trackGainDb.clear();
-    state.trackMute.clear();
-    state.trackSolo.clear();
-    state.trackRecordArm.clear();
-    state.trackBusIndex.clear();
-    state.trackPan.clear();
-    state.trackInsertSlots.clear();
-    state.trackInsertEffects.clear();
-    state.trackInsertBypass.clear();
-    state.trackInsertParams.clear();
-    state.audio.clear();
-    state.clips.clear();
+    state.project.tracks.clear();
+    state.project.audio.clear();
+    state.project.clips.clear();
 
-    state.busGainDb = {0.0f, 0.0f, 0.0f, 0.0f};
-    state.busMute = {false, false, false, false};
-    state.busPan = {0.0f, 0.0f, 0.0f, 0.0f};
-    state.busInsertSlots = {0, 0, 0, 0};
-    state.busInsertEffects.assign(kBusCount, DefaultInsertEffects());
-    state.busInsertBypass.assign(kBusCount, DefaultInsertBypass());
-    state.busInsertParams.assign(kBusCount, DefaultInsertParams());
+    // Reset buses to defaults
+    state.project.buses.assign(kBusCount, BusData{});
 
-    state.projectSampleRate = audio.sampleRate;
+    state.project.projectSampleRate = audio.sampleRate;
 
-    state.tracks.push_back(audio.displayName);
-    state.trackGainDb.push_back(0.0f);
-    state.trackMute.push_back(false);
-    state.trackSolo.push_back(false);
-    state.trackRecordArm.push_back(false);
-    state.trackBusIndex.push_back(3); // mastered stereo should route directly to Master
-    state.trackPan.push_back(0.0f);
-    state.trackInsertSlots.push_back(0);
-    state.trackInsertEffects.push_back(DefaultInsertEffects());
-    state.trackInsertBypass.push_back(DefaultInsertBypass());
-    state.trackInsertParams.push_back(DefaultInsertParams());
-    state.audio.push_back(std::move(audio));
+    {
+        TrackData t{};
+        t.name = audio.displayName;
+        t.busIndex = 3; // mastered stereo routes directly to Master
+        state.project.tracks.push_back(std::move(t));
+    }
+        state.project.audio.push_back(std::move(audio));
 
-    const float lengthBeats = static_cast<float>(state.audio.back().frames) / SamplesPerBeat(state);
-    state.clips.push_back(ClipItem{
-        0,
-        0,
-        0.0f,
-        std::max(0.25f, lengthBeats),
-        kPalette.clip1,
-        state.tracks.back(),
-    });
+        const float lengthBeats = static_cast<float>(state.project.audio.back().frames) / SamplesPerBeat(state);
+        state.project.clips.push_back(ClipItem{
+            0,
+            0,
+            0.0f,
+            std::max(0.25f, lengthBeats),
+            kPalette.clip1,
+            state.project.tracks.back().name,
+        });
 
     state.selectedTrackIndex = 0;
     state.selectedClipIndex = 0;
@@ -3060,14 +2952,14 @@ bool DoAutoMaster(HWND hwnd, UiState& state) {
     std::wstring sourceWav;
     {
         EnterCriticalSection(&state.audioStateLock);
-        if (!state.clips.empty() && state.selectedClipIndex >= 0 && state.selectedClipIndex < static_cast<int>(state.clips.size())) {
-            const ClipItem& c = state.clips[static_cast<size_t>(state.selectedClipIndex)];
-            if (c.audioIndex >= 0 && c.audioIndex < static_cast<int>(state.audio.size())) {
-                sourceWav = state.audio[static_cast<size_t>(c.audioIndex)].sourcePath;
+        if (!state.project.clips.empty() && state.selectedClipIndex >= 0 && state.selectedClipIndex < static_cast<int>(state.project.clips.size())) {
+            const ClipItem& c = state.project.clips[static_cast<size_t>(state.selectedClipIndex)];
+            if (c.audioIndex >= 0 && c.audioIndex < static_cast<int>(state.project.audio.size())) {
+                sourceWav = state.project.audio[static_cast<size_t>(c.audioIndex)].sourcePath;
             }
         }
-        if (sourceWav.empty() && state.audio.size() == 1) {
-            sourceWav = state.audio[0].sourcePath;
+        if (sourceWav.empty() && state.project.audio.size() == 1) {
+            sourceWav = state.project.audio[0].sourcePath;
         }
         LeaveCriticalSection(&state.audioStateLock);
     }
@@ -3175,7 +3067,7 @@ bool DoAutoMaster(HWND hwnd, UiState& state) {
 }
 
 bool DoMixReadiness(HWND hwnd, UiState& state) {
-    if (state.tracks.empty() || state.clips.empty()) {
+    if (state.project.tracks.empty() || state.project.clips.empty()) {
         MessageBoxW(hwnd, L"Nothing to analyse - add tracks and clips first.", L"Mix Readiness", MB_OK | MB_ICONINFORMATION);
         return false;
     }
@@ -3322,7 +3214,7 @@ bool DoMixReadiness(HWND hwnd, UiState& state) {
 }
 
 bool DoExportMix(HWND hwnd, UiState& state) {
-    if (state.tracks.empty() || state.clips.empty()) {
+    if (state.project.tracks.empty() || state.project.clips.empty()) {
         MessageBoxW(hwnd, L"Nothing to export -- add some tracks and clips first.", L"Export Mix", MB_OK | MB_ICONINFORMATION);
         return false;
     }
@@ -3398,7 +3290,7 @@ std::wstring ReadSmallUtf8Text(const std::filesystem::path& p) {
 
 bool AnalyzeSelectedTrackQuality(HWND hwnd, UiState& state) {
     const int trackIndex = state.selectedTrackIndex;
-    if (trackIndex < 0 || trackIndex >= static_cast<int>(state.tracks.size())) {
+    if (trackIndex < 0 || trackIndex >= static_cast<int>(state.project.tracks.size())) {
         MessageBoxW(hwnd, L"Select a track first, then run Vocal Check.", L"Vocal Check", MB_OK | MB_ICONINFORMATION);
         return false;
     }
@@ -3410,7 +3302,7 @@ bool AnalyzeSelectedTrackQuality(HWND hwnd, UiState& state) {
     EnterCriticalSection(&state.audioStateLock);
     const bool hasAudio = RenderTrackToStereoLocked(state, trackIndex, &stereo, &sampleRate);
     const bool hasReference = RenderProjectMixToStereoLocked(state, trackIndex, &referenceStereo, &referenceSampleRate);
-    const std::wstring trackName = state.tracks[static_cast<size_t>(trackIndex)];
+    const std::wstring trackName = state.project.tracks[static_cast<size_t>(trackIndex)].name;
     LeaveCriticalSection(&state.audioStateLock);
 
     if (!hasAudio || stereo.empty() || sampleRate <= 0) {
@@ -3459,7 +3351,7 @@ bool AnalyzeSelectedTrackQuality(HWND hwnd, UiState& state) {
         QuoteArg(pythonExe.wstring()) +
         L" -m daw_ai.vocal_check --input " + QuoteArg(wavPath.wstring()) +
         L" --output " + QuoteArg(txtPath.wstring()) +
-        L" --bpm " + std::to_wstring(state.bpm) +
+        L" --bpm " + std::to_wstring(static_cast<int>(state.project.bpm)) +
         L" --track-name " + QuoteArg(trackName);
 
     if (wroteReference) {
@@ -3560,46 +3452,41 @@ void ImportWavFiles(HWND hwnd, UiState& state) {
             continue;
         }
 
-        if (state.projectSampleRate == 0) {
-            state.projectSampleRate = audio.sampleRate;
-        } else if (audio.sampleRate != state.projectSampleRate) {
+        if (state.project.projectSampleRate == 0) {
+            state.project.projectSampleRate = audio.sampleRate;
+        } else if (audio.sampleRate != state.project.projectSampleRate) {
             skipped += std::filesystem::path(path).filename().wstring() + L": sample rate mismatch\n";
             continue;
         }
 
-        const int trackIndex = static_cast<int>(state.tracks.size());
-        const int audioIndex = static_cast<int>(state.audio.size());
+        const int trackIndex = static_cast<int>(state.project.tracks.size());
+        const int audioIndex = static_cast<int>(state.project.audio.size());
 
         EnterCriticalSection(&state.audioStateLock);
-        state.tracks.push_back(audio.displayName);
-        state.trackGainDb.push_back(0.0f);
-        state.trackMute.push_back(false);
-        state.trackSolo.push_back(false);
-        state.trackRecordArm.push_back(false);
-        state.trackBusIndex.push_back(1);
-        state.trackPan.push_back(0.0f);
-        state.trackInsertSlots.push_back(0);
-        state.trackInsertEffects.push_back(DefaultInsertEffects());
-        state.trackInsertBypass.push_back(DefaultInsertBypass());
-        state.trackInsertParams.push_back(DefaultInsertParams());
-        state.audio.push_back(std::move(audio));
+        {
+            TrackData t{};
+            t.name = audio.displayName;
+            t.busIndex = 1;
+            state.project.tracks.push_back(std::move(t));
+        }
+        state.project.audio.push_back(std::move(audio));
 
-        const float lengthBeats = static_cast<float>(state.audio.back().frames) / SamplesPerBeat(state);
-        state.clips.push_back(ClipItem{
+        const float lengthBeats = static_cast<float>(state.project.audio.back().frames) / SamplesPerBeat(state);
+        state.project.clips.push_back(ClipItem{
             trackIndex,
             audioIndex,
             0.0f,
             std::max(0.25f, lengthBeats),
             clipColors[trackIndex % 4],
-            state.tracks.back(),
+            state.project.tracks.back().name,
         });
         LeaveCriticalSection(&state.audioStateLock);
     }
 
-    if (!state.clips.empty()) {
+    if (!state.project.clips.empty()) {
         float endBeat = 0.0f;
         EnterCriticalSection(&state.audioStateLock);
-        for (const ClipItem& clip : state.clips) {
+        for (const ClipItem& clip : state.project.clips) {
             endBeat = std::max(endBeat, clip.startBeat + clip.lengthBeats);
         }
         LeaveCriticalSection(&state.audioStateLock);
@@ -3829,7 +3716,7 @@ DWORD WINAPI WasapiRenderThreadProc(LPVOID param) {
         if (state->audioBackend == AudioBackend::WasapiExclusive) {
             const int requestedSR = (state->preferredSampleRate > 0)
                 ? state->preferredSampleRate
-                : state->projectSampleRate;
+                : state->project.projectSampleRate;
 
             if (requestedSR > 0) {
                 const size_t fmtBytes = sizeof(WAVEFORMATEX) + static_cast<size_t>(mixFmt->cbSize);
@@ -4044,8 +3931,8 @@ DWORD WINAPI WasapiRecordThreadProc(LPVOID param) {
         state->recordInputChannels = outCh;
         state->lastOpenedInputSampleRate = sr;
         state->lastOpenedInputChannels = outCh;
-        if (state->projectSampleRate <= 0 && sr > 0) {
-            state->projectSampleRate = sr;
+        if (state->project.projectSampleRate <= 0 && sr > 0) {
+            state->project.projectSampleRate = sr;
         }
 
         if (FAILED(audioClient->Start())) {
@@ -4324,7 +4211,7 @@ void StopRecording(UiState& state, bool commitTake) {
 
             LoadedAudio take{};
             take.sourcePath = L"[recording]";
-            take.displayName = L"Take " + std::to_wstring(static_cast<int>(state.audio.size()) + 1);
+            take.displayName = L"Take " + std::to_wstring(static_cast<int>(state.project.audio.size()) + 1);
             take.sampleRate = static_cast<int>(state.waveInFormat.nSamplesPerSec);
             take.frames = frames;
             take.stereo = std::move(stereo);
@@ -4335,21 +4222,21 @@ void StopRecording(UiState& state, bool commitTake) {
 
             const COLORREF clipColors[4] = {kPalette.clip1, kPalette.clip2, kPalette.clip3, kPalette.clip4};
             EnterCriticalSection(&state.audioStateLock);
-            const int audioIndex = static_cast<int>(state.audio.size());
-            state.audio.push_back(std::move(take));
+            const int audioIndex = static_cast<int>(state.project.audio.size());
+            state.project.audio.push_back(std::move(take));
 
             const float samplesPerBeat = SamplesPerBeat(state);
             const float startBeat = static_cast<float>(state.recordStartFrame) / std::max(1.0f, samplesPerBeat);
             const float lengthBeats = static_cast<float>(frames) / std::max(1.0f, samplesPerBeat);
 
-            if (state.recordTrackIndex >= 0 && state.recordTrackIndex < static_cast<int>(state.tracks.size())) {
-                state.clips.push_back(ClipItem{
+            if (state.recordTrackIndex >= 0 && state.recordTrackIndex < static_cast<int>(state.project.tracks.size())) {
+                state.project.clips.push_back(ClipItem{
                     state.recordTrackIndex,
                     audioIndex,
                     startBeat,
                     std::max(0.25f, lengthBeats),
                     clipColors[state.recordTrackIndex % 4],
-                    state.tracks[static_cast<size_t>(state.recordTrackIndex)] + L" Rec",
+                    state.project.tracks[static_cast<size_t>(state.recordTrackIndex)].name + L" Rec",
                 });
                 state.projectModified = true;
                 if (state.hwnd) UpdateWindowTitle(state.hwnd, state);
@@ -4380,8 +4267,8 @@ bool StartRecording(HWND hwnd, UiState& state) {
     }
 
     int armedTrack = -1;
-    for (size_t i = 0; i < state.trackRecordArm.size(); ++i) {
-        if (state.trackRecordArm[i]) {
+    for (size_t i = 0; i < state.project.tracks.size(); ++i) {
+        if (state.project.tracks[i].recordArm) {
             armedTrack = static_cast<int>(i);
             break;
         }
@@ -4392,9 +4279,9 @@ bool StartRecording(HWND hwnd, UiState& state) {
     }
 
     const bool wasPlaying = state.playing;
-    const bool hasTimelineAudio = !state.clips.empty() || !state.audio.empty();
+    const bool hasTimelineAudio = !state.project.clips.empty() || !state.project.audio.empty();
 
-    if (!state.playing && (!state.clips.empty() || state.metronomeRecord || state.countInEnabled)) {
+    if (!state.playing && (!state.project.clips.empty() || state.metronomeRecord || state.countInEnabled)) {
         if (!StartPlayback(hwnd, state)) {
             return false;
         }
@@ -4410,8 +4297,8 @@ bool StartRecording(HWND hwnd, UiState& state) {
     if (state.preferredSampleRate > 0) {
         sampleRates.push_back(state.preferredSampleRate);
     }
-    if (state.projectSampleRate > 0) {
-        sampleRates.push_back(state.projectSampleRate);
+    if (state.project.projectSampleRate > 0) {
+        sampleRates.push_back(state.project.projectSampleRate);
     }
     if (state.lastOpenedInputSampleRate > 0 &&
         std::find(sampleRates.begin(), sampleRates.end(), state.lastOpenedInputSampleRate) == sampleRates.end()) {
@@ -4472,12 +4359,12 @@ bool StartRecording(HWND hwnd, UiState& state) {
 
     if (chosenSampleRate > 0) {
         state.lastOpenedInputSampleRate = chosenSampleRate;
-        if (state.projectSampleRate <= 0) {
-            state.projectSampleRate = chosenSampleRate;
+        if (state.project.projectSampleRate <= 0) {
+            state.project.projectSampleRate = chosenSampleRate;
         }
     }
 
-    if (!state.playing && (!state.clips.empty() || state.metronomeRecord)) {
+    if (!state.playing && (!state.project.clips.empty() || state.metronomeRecord)) {
         if (!StartPlayback(hwnd, state)) {
             waveInClose(state.waveIn);
             state.waveIn = nullptr;
@@ -4557,7 +4444,7 @@ bool StartPlayback(HWND hwnd, UiState& state) {
         return false;
     }
 
-    if (state.clips.empty() && !state.metronomePlay && !state.metronomeRecord && !state.countInEnabled) {
+    if (state.project.clips.empty() && !state.metronomePlay && !state.metronomeRecord && !state.countInEnabled) {
         MessageBoxW(hwnd, L"Import at least one supported WAV file first.", L"No audio to play", MB_OK | MB_ICONINFORMATION);
         return false;
     }
@@ -4592,17 +4479,17 @@ bool StartPlayback(HWND hwnd, UiState& state) {
             if (state.wasapiOutInitState.load() == 1) {
                 state.playbackStartTick = GetTickCount64();
                 const int devSR = state.activeDeviceSampleRate;
-                const bool hasTimelineAudio = !state.clips.empty() || !state.audio.empty();
-                if (hasTimelineAudio && state.projectSampleRate > 0 && devSR > 0 && state.projectSampleRate != devSR) {
+                const bool hasTimelineAudio = !state.project.clips.empty() || !state.project.audio.empty();
+                if (hasTimelineAudio && state.project.projectSampleRate > 0 && devSR > 0 && state.project.projectSampleRate != devSR) {
                     std::wstringstream mismatch;
                     mismatch
-                        << L"The selected device does not support " << state.projectSampleRate << L" Hz.\n\n"
+                        << L"The selected device does not support " << state.project.projectSampleRate << L" Hz.\n\n"
                         << L"Yes: Switch project to " << devSR << L" Hz\n"
                         << L"No: Use device at " << devSR << L" Hz and resample project audio in real time\n"
                         << L"Cancel: Abort playback (choose a different device from Audio menu)";
                     const int choice = MessageBoxW(hwnd, mismatch.str().c_str(), L"Sample Rate Mismatch", MB_YESNOCANCEL | MB_ICONWARNING);
                     if (choice == IDYES) {
-                        state.projectSampleRate = devSR;
+                        state.project.projectSampleRate = devSR;
                     } else if (choice == IDCANCEL) {
                         StopPlayback(state, false);
                         return false;
@@ -4629,8 +4516,8 @@ bool StartPlayback(HWND hwnd, UiState& state) {
     int mmeSampleRate = 0;
     if (state.preferredSampleRate > 0) {
         mmeSampleRate = state.preferredSampleRate;
-    } else if (state.projectSampleRate > 0) {
-        mmeSampleRate = state.projectSampleRate;
+    } else if (state.project.projectSampleRate > 0) {
+        mmeSampleRate = state.project.projectSampleRate;
     } else if (state.lastOpenedOutputSampleRate > 0) {
         mmeSampleRate = state.lastOpenedOutputSampleRate;
     }
@@ -4714,11 +4601,11 @@ bool StartPlayback(HWND hwnd, UiState& state) {
 
 std::uint64_t GetRenderedPlaybackFrame(const UiState& state) {
     auto clockFrame = [&state]() -> std::uint64_t {
-        if (state.projectSampleRate <= 0 || state.playbackStartTick == 0) {
+        if (state.project.projectSampleRate <= 0 || state.playbackStartTick == 0) {
             return 0;
         }
         const ULONGLONG elapsedMs = GetTickCount64() - state.playbackStartTick;
-        return static_cast<std::uint64_t>((elapsedMs * static_cast<ULONGLONG>(state.projectSampleRate)) / 1000ULL);
+        return static_cast<std::uint64_t>((elapsedMs * static_cast<ULONGLONG>(state.project.projectSampleRate)) / 1000ULL);
     };
 
     const float samplesPerBeat = std::max(1.0f, SamplesPerBeat(state));
@@ -4726,7 +4613,7 @@ std::uint64_t GetRenderedPlaybackFrame(const UiState& state) {
         std::llround(static_cast<double>(std::max(0.0f, state.playbackStartBeat)) * static_cast<double>(samplesPerBeat)));
 
     // Return absolute project frames. Audio generation may queue ahead, so clamp to elapsed transport time.
-    if (state.playingViaWasapi || state.waveOut == nullptr || state.projectSampleRate <= 0) {
+    if (state.playingViaWasapi || state.waveOut == nullptr || state.project.projectSampleRate <= 0) {
         const std::uint64_t cursor = state.playbackFrameCursor.load();
         const std::uint64_t clock  = clockFrame();
         return (clock > 0) ? std::min(cursor, startFrame + clock) : cursor;
@@ -4745,12 +4632,12 @@ std::uint64_t GetRenderedPlaybackFrame(const UiState& state) {
             const std::uint64_t channels = std::max<std::uint64_t>(1, state.waveFormat.nChannels);
             deviceFrame = rawSamples / channels;
         } else if (mm.wType == TIME_MS) {
-            deviceFrame = static_cast<std::uint64_t>((static_cast<ULONGLONG>(mm.u.ms) * static_cast<ULONGLONG>(state.projectSampleRate)) / 1000ULL);
+            deviceFrame = static_cast<std::uint64_t>((static_cast<ULONGLONG>(mm.u.ms) * static_cast<ULONGLONG>(state.project.projectSampleRate)) / 1000ULL);
         }
 
         if (deviceFrame > 0) {
             // Guard against bad driver/unit reporting that can run the playhead far ahead.
-            const std::uint64_t maxReasonableAhead = static_cast<std::uint64_t>(state.projectSampleRate);
+            const std::uint64_t maxReasonableAhead = static_cast<std::uint64_t>(state.project.projectSampleRate);
             if (clock > 0 && deviceFrame > clock + maxReasonableAhead) {
                 return startFrame + clock;
             }
@@ -4801,9 +4688,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_CREATE: {
         auto* initial = new UiState();
         initial->hwnd = hwnd;
-        initial->busInsertEffects.assign(kBusCount, DefaultInsertEffects());
-        initial->busInsertBypass.assign(kBusCount, DefaultInsertBypass());
-        initial->busInsertParams.assign(kBusCount, DefaultInsertParams());
         RefreshInputDevices(*initial);
         RefreshOutputDevices(*initial);
         InitializeCriticalSection(&initial->audioStateLock);
@@ -4970,7 +4854,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 return 0;
             }
 
-            if (state->selectedClipIndex >= 0 && state->selectedClipIndex < static_cast<int>(state->clips.size())) {
+            if (state->selectedClipIndex >= 0 && state->selectedClipIndex < static_cast<int>(state->project.clips.size())) {
                 DeleteSelectedClip(*state);
                 state->projectModified = true;
                 UpdateWindowTitle(hwnd, *state);
@@ -4978,7 +4862,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 return 0;
             }
 
-            if (state->selectedTrackIndex >= 0 && state->selectedTrackIndex < static_cast<int>(state->tracks.size())) {
+            if (state->selectedTrackIndex >= 0 && state->selectedTrackIndex < static_cast<int>(state->project.tracks.size())) {
                 DeleteTrackAt(*state, state->selectedTrackIndex);
                 state->projectModified = true;
                 UpdateWindowTitle(hwnd, *state);
@@ -5084,13 +4968,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             if (PtInRect(&state->bpmDownRect, pt)) {
                 const bool coarse = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-                state->bpm = std::max(40, state->bpm - (coarse ? 5 : 1));
+                state->project.bpm = static_cast<float>(std::max(40, static_cast<int>(state->project.bpm) - (coarse ? 5 : 1)));
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
             if (PtInRect(&state->bpmUpRect, pt)) {
                 const bool coarse = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-                state->bpm = std::min(260, state->bpm + (coarse ? 5 : 1));
+                state->project.bpm = static_cast<float>(std::min(260, static_cast<int>(state->project.bpm) + (coarse ? 5 : 1)));
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
@@ -5120,23 +5004,23 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     InsertBypassArray* pBypass  = nullptr;
                     InsertParamsArray* pParams  = nullptr;
                     if (state->fxInspectorIsTrack) {
-                        if (idx < static_cast<int>(state->trackInsertSlots.size()))
-                            pSlots = &state->trackInsertSlots[static_cast<size_t>(idx)];
-                        if (idx < static_cast<int>(state->trackInsertEffects.size()))
-                            pEffects = &state->trackInsertEffects[static_cast<size_t>(idx)];
-                        if (idx < static_cast<int>(state->trackInsertBypass.size()))
-                            pBypass = &state->trackInsertBypass[static_cast<size_t>(idx)];
-                        if (idx < static_cast<int>(state->trackInsertParams.size()))
-                            pParams = &state->trackInsertParams[static_cast<size_t>(idx)];
+                        if (idx < static_cast<int>(state->project.tracks.size()))
+                            pSlots = &state->project.tracks[static_cast<size_t>(idx)].insertSlots;
+                        if (idx < static_cast<int>(state->project.tracks.size()))
+                            pEffects = &state->project.tracks[static_cast<size_t>(idx)].insertEffects;
+                        if (idx < static_cast<int>(state->project.tracks.size()))
+                            pBypass = &state->project.tracks[static_cast<size_t>(idx)].insertBypass;
+                        if (idx < static_cast<int>(state->project.tracks.size()))
+                            pParams = &state->project.tracks[static_cast<size_t>(idx)].insertParams;
                     } else {
-                        if (idx < static_cast<int>(state->busInsertSlots.size()))
-                            pSlots = &state->busInsertSlots[static_cast<size_t>(idx)];
-                        if (idx < static_cast<int>(state->busInsertEffects.size()))
-                            pEffects = &state->busInsertEffects[static_cast<size_t>(idx)];
-                        if (idx < static_cast<int>(state->busInsertBypass.size()))
-                            pBypass = &state->busInsertBypass[static_cast<size_t>(idx)];
-                        if (idx < static_cast<int>(state->busInsertParams.size()))
-                            pParams = &state->busInsertParams[static_cast<size_t>(idx)];
+                        if (idx < static_cast<int>(state->project.buses.size()))
+                            pSlots = &state->project.buses[static_cast<size_t>(idx)].insertSlots;
+                        if (idx < static_cast<int>(state->project.buses.size()))
+                            pEffects = &state->project.buses[static_cast<size_t>(idx)].insertEffects;
+                        if (idx < static_cast<int>(state->project.buses.size()))
+                            pBypass = &state->project.buses[static_cast<size_t>(idx)].insertBypass;
+                        if (idx < static_cast<int>(state->project.buses.size()))
+                            pParams = &state->project.buses[static_cast<size_t>(idx)].insertParams;
                     }
 
                     const int slotCount = pSlots ? std::clamp(*pSlots, 0, kMaxInsertSlots) : 0;
@@ -5274,9 +5158,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 return 0;
             }
 
-            if (PtInRect(&layout.leftPanel, pt) && pt.y > layout.leftPanel.top + kRulerHeight && !state->tracks.empty()) {
+            if (PtInRect(&layout.leftPanel, pt) && pt.y > layout.leftPanel.top + kRulerHeight && !state->project.tracks.empty()) {
                 const int trackIndex = TrackIndexFromY(layout.arrange, *state, pt.y);
-                if (trackIndex >= 0 && trackIndex < static_cast<int>(state->trackGainDb.size())) {
+                if (trackIndex >= 0 && trackIndex < static_cast<int>(state->project.tracks.size())) {
                     state->selectedTrackIndex = trackIndex;
                     state->selectedClipIndex = -1;
 
@@ -5287,9 +5171,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     GetTrackRoutingRects(layout.leftPanel, trackIndex, &busRect, &panKnobRect, &panValRect, &fxRect);
                     if (PtInRect(&busRect, pt)) {
                         EnterCriticalSection(&state->audioStateLock);
-                        if (trackIndex < static_cast<int>(state->trackBusIndex.size())) {
+                        if (trackIndex < static_cast<int>(state->project.tracks.size())) {
                             const int cur = TrackBusIndexAt(*state, trackIndex);
-                            state->trackBusIndex[static_cast<size_t>(trackIndex)] = (cur + 1) % kBusCount;
+                            state->project.tracks[static_cast<size_t>(trackIndex)].busIndex = (cur + 1) % kBusCount;
                             state->projectModified = true;
                             UpdateWindowTitle(hwnd, *state);
                         }
@@ -5309,18 +5193,18 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         if (PtInRect(&panValRect, pt) && (GetKeyState(VK_LBUTTON) & 0x8000)) {
                             // Double-click on value label resets to center
                             EnterCriticalSection(&state->audioStateLock);
-                            if (trackIndex < static_cast<int>(state->trackPan.size()))
-                                state->trackPan[static_cast<size_t>(trackIndex)] = 0.0f;
+                            if (trackIndex < static_cast<int>(state->project.tracks.size()))
+                                state->project.tracks[static_cast<size_t>(trackIndex)].pan = 0.0f;
                             state->projectModified = true;
                             UpdateWindowTitle(hwnd, *state);
                             LeaveCriticalSection(&state->audioStateLock);
-                        } else if (trackIndex < static_cast<int>(state->trackPan.size())) {
+                        } else if (trackIndex < static_cast<int>(state->project.tracks.size())) {
                             // Start drag
                             state->draggingPan    = true;
                             state->dragPanIsBus   = false;
                             state->dragPanIndex   = trackIndex;
                             state->dragPanStartY  = pt.y;
-                            state->dragPanStartVal = state->trackPan[static_cast<size_t>(trackIndex)];
+                            state->dragPanStartVal = state->project.tracks[static_cast<size_t>(trackIndex)].pan;
                             SetCapture(hwnd);
                         }
                         InvalidateRect(hwnd, nullptr, FALSE);
@@ -5333,8 +5217,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     GetTrackButtonRects(layout.leftPanel, trackIndex, &muteRect, &soloRect, &recRect);
                     if (PtInRect(&muteRect, pt)) {
                         EnterCriticalSection(&state->audioStateLock);
-                        if (trackIndex < static_cast<int>(state->trackMute.size())) {
-                            state->trackMute[static_cast<size_t>(trackIndex)] = !state->trackMute[static_cast<size_t>(trackIndex)];
+                        if (trackIndex < static_cast<int>(state->project.tracks.size())) {
+                            state->project.tracks[static_cast<size_t>(trackIndex)].mute = !state->project.tracks[static_cast<size_t>(trackIndex)].mute;
                         }
                         LeaveCriticalSection(&state->audioStateLock);
                         InvalidateRect(hwnd, nullptr, FALSE);
@@ -5342,8 +5226,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     }
                     if (PtInRect(&recRect, pt)) {
                         EnterCriticalSection(&state->audioStateLock);
-                        if (trackIndex < static_cast<int>(state->trackRecordArm.size())) {
-                            state->trackRecordArm[static_cast<size_t>(trackIndex)] = !state->trackRecordArm[static_cast<size_t>(trackIndex)];
+                        if (trackIndex < static_cast<int>(state->project.tracks.size())) {
+                            state->project.tracks[static_cast<size_t>(trackIndex)].recordArm = !state->project.tracks[static_cast<size_t>(trackIndex)].recordArm;
                         }
                         LeaveCriticalSection(&state->audioStateLock);
                         InvalidateRect(hwnd, nullptr, FALSE);
@@ -5351,8 +5235,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     }
                     if (PtInRect(&soloRect, pt)) {
                         EnterCriticalSection(&state->audioStateLock);
-                        if (trackIndex < static_cast<int>(state->trackSolo.size())) {
-                            state->trackSolo[static_cast<size_t>(trackIndex)] = !state->trackSolo[static_cast<size_t>(trackIndex)];
+                        if (trackIndex < static_cast<int>(state->project.tracks.size())) {
+                            state->project.tracks[static_cast<size_t>(trackIndex)].solo = !state->project.tracks[static_cast<size_t>(trackIndex)].solo;
                         }
                         LeaveCriticalSection(&state->audioStateLock);
                         InvalidateRect(hwnd, nullptr, FALSE);
@@ -5370,7 +5254,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         state->dragFaderStartY = pt.y;
                         EnterCriticalSection(&state->audioStateLock);
                         state->dragFaderStartDb = GainFromFaderY(rail, pt.y);
-                        state->trackGainDb[static_cast<size_t>(trackIndex)] = state->dragFaderStartDb;
+                        state->project.tracks[static_cast<size_t>(trackIndex)].gainDb = state->dragFaderStartDb;
                         LeaveCriticalSection(&state->audioStateLock);
                         SetCapture(hwnd);
                         InvalidateRect(hwnd, nullptr, FALSE);
@@ -5394,23 +5278,23 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         }
 
                         EnterCriticalSection(&state->audioStateLock);
-                        if (PtInRect(&muteRect, pt) && b < static_cast<int>(state->busMute.size())) {
-                            state->busMute[static_cast<size_t>(b)] = !state->busMute[static_cast<size_t>(b)];
-                        } else if (PtInRect(&gainDownRect, pt) && b < static_cast<int>(state->busGainDb.size())) {
-                            state->busGainDb[static_cast<size_t>(b)] = std::max(kFaderMinDb, state->busGainDb[static_cast<size_t>(b)] - 1.0f);
-                        } else if (PtInRect(&gainUpRect, pt) && b < static_cast<int>(state->busGainDb.size())) {
-                            state->busGainDb[static_cast<size_t>(b)] = std::min(kFaderMaxDb, state->busGainDb[static_cast<size_t>(b)] + 1.0f);
-                        } else if ((PtInRect(&panKnobRect, pt) || PtInRect(&panValRect, pt)) && b < static_cast<int>(state->busPan.size())) {
+                        if (PtInRect(&muteRect, pt) && b < static_cast<int>(state->project.buses.size())) {
+                            state->project.buses[static_cast<size_t>(b)].mute = !state->project.buses[static_cast<size_t>(b)].mute;
+                        } else if (PtInRect(&gainDownRect, pt) && b < static_cast<int>(state->project.buses.size())) {
+                            state->project.buses[static_cast<size_t>(b)].gainDb = std::max(kFaderMinDb, state->project.buses[static_cast<size_t>(b)].gainDb - 1.0f);
+                        } else if (PtInRect(&gainUpRect, pt) && b < static_cast<int>(state->project.buses.size())) {
+                            state->project.buses[static_cast<size_t>(b)].gainDb = std::min(kFaderMaxDb, state->project.buses[static_cast<size_t>(b)].gainDb + 1.0f);
+                        } else if ((PtInRect(&panKnobRect, pt) || PtInRect(&panValRect, pt)) && b < static_cast<int>(state->project.buses.size())) {
                             LeaveCriticalSection(&state->audioStateLock);
                             state->draggingPan    = true;
                             state->dragPanIsBus   = true;
                             state->dragPanIndex   = b;
                             state->dragPanStartY  = pt.y;
-                            state->dragPanStartVal = state->busPan[static_cast<size_t>(b)];
+                            state->dragPanStartVal = state->project.buses[static_cast<size_t>(b)].pan;
                             SetCapture(hwnd);
                             InvalidateRect(hwnd, nullptr, FALSE);
                             return 0;
-                        } else if (PtInRect(&fxRect, pt) && b < static_cast<int>(state->busInsertSlots.size())) {
+                        } else if (PtInRect(&fxRect, pt) && b < static_cast<int>(state->project.buses.size())) {
                             // Open insert-chain inspector for this bus
                             LeaveCriticalSection(&state->audioStateLock);
                             state->fxInspectorOpen    = true;
@@ -5431,18 +5315,18 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
             if (PtInRect(&layout.arrange, pt)) {
                 state->selectedClipIndex = -1;
-                for (int i = static_cast<int>(state->clips.size()) - 1; i >= 0; --i) {
+                for (int i = static_cast<int>(state->project.clips.size()) - 1; i >= 0; --i) {
                     RECT r{};
-                    if (!ClipRectForDraw(layout.arrange, *state, state->clips[static_cast<size_t>(i)], &r)) {
+                    if (!ClipRectForDraw(layout.arrange, *state, state->project.clips[static_cast<size_t>(i)], &r)) {
                         continue;
                     }
                     if (PtInRect(&r, pt)) {
                         state->selectedClipIndex = i;
-                        state->selectedTrackIndex = state->clips[static_cast<size_t>(i)].trackIndex;
+                        state->selectedTrackIndex = state->project.clips[static_cast<size_t>(i)].trackIndex;
 
                         constexpr int kEdgeThresh = 7;
-                        const int fullLeft  = BeatToX(layout.arrange, *state, state->clips[static_cast<size_t>(i)].startBeat);
-                        const int fullRight = BeatToX(layout.arrange, *state, state->clips[static_cast<size_t>(i)].startBeat + state->clips[static_cast<size_t>(i)].lengthBeats);
+                        const int fullLeft  = BeatToX(layout.arrange, *state, state->project.clips[static_cast<size_t>(i)].startBeat);
+                        const int fullRight = BeatToX(layout.arrange, *state, state->project.clips[static_cast<size_t>(i)].startBeat + state->project.clips[static_cast<size_t>(i)].lengthBeats);
                         const bool nearLeft  = (pt.x - fullLeft)  <= kEdgeThresh && (pt.x - fullLeft)  >= 0;
                         const bool nearRight = (fullRight - pt.x)  <= kEdgeThresh && (fullRight - pt.x) >= 0;
 
@@ -5451,9 +5335,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                             state->trimmingClip         = true;
                             state->trimClipIndex        = i;
                             state->trimIsLeft           = nearLeft;
-                            state->trimOrigStart        = state->clips[static_cast<size_t>(i)].startBeat;
-                            state->trimOrigLen          = state->clips[static_cast<size_t>(i)].lengthBeats;
-                            state->trimOrigSourceOffset = state->clips[static_cast<size_t>(i)].sourceOffsetFrames;
+                            state->trimOrigStart        = state->project.clips[static_cast<size_t>(i)].startBeat;
+                            state->trimOrigLen          = state->project.clips[static_cast<size_t>(i)].lengthBeats;
+                            state->trimOrigSourceOffset = state->project.clips[static_cast<size_t>(i)].sourceOffsetFrames;
                             PushUndo(*state);
                             SetCapture(hwnd);
                         } else {
@@ -5461,7 +5345,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                             PushUndo(*state);
                             state->draggingClip = true;
                             state->dragClipIndex = i;
-                            state->dragOffsetBeats = XToBeat(layout.arrange, *state, pt.x) - state->clips[static_cast<size_t>(i)].startBeat;
+                            state->dragOffsetBeats = XToBeat(layout.arrange, *state, pt.x) - state->project.clips[static_cast<size_t>(i)].startBeat;
                             SetCapture(hwnd);
                         }
                         break;
@@ -5493,11 +5377,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             AppendMenuW(menu, MF_STRING, kCmdTrackNew, L"New Track");
 
             int trackIndex = -1;
-            if (pt.y > layout.leftPanel.top + kRulerHeight && !state->tracks.empty()) {
+            if (pt.y > layout.leftPanel.top + kRulerHeight && !state->project.tracks.empty()) {
                 trackIndex = TrackIndexFromY(layout.arrange, *state, pt.y);
             }
-            if (trackIndex >= 0 && trackIndex < static_cast<int>(state->trackRecordArm.size())) {
-                const bool armed = state->trackRecordArm[static_cast<size_t>(trackIndex)];
+            if (trackIndex >= 0 && trackIndex < static_cast<int>(state->project.tracks.size())) {
+                const bool armed = state->project.tracks[static_cast<size_t>(trackIndex)].recordArm;
                 AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
                 AppendMenuW(menu, MF_STRING, kCmdTrackNew + 1000, armed ? L"Disarm Track" : L"Arm Track");
             }
@@ -5512,9 +5396,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 state->projectModified = true;
                 UpdateWindowTitle(hwnd, *state);
                 InvalidateRect(hwnd, nullptr, FALSE);
-            } else if (cmd == kCmdTrackNew + 1000 && trackIndex >= 0 && trackIndex < static_cast<int>(state->trackRecordArm.size())) {
+            } else if (cmd == kCmdTrackNew + 1000 && trackIndex >= 0 && trackIndex < static_cast<int>(state->project.tracks.size())) {
                 EnterCriticalSection(&state->audioStateLock);
-                state->trackRecordArm[static_cast<size_t>(trackIndex)] = !state->trackRecordArm[static_cast<size_t>(trackIndex)];
+                state->project.tracks[static_cast<size_t>(trackIndex)].recordArm = !state->project.tracks[static_cast<size_t>(trackIndex)].recordArm;
                 LeaveCriticalSection(&state->audioStateLock);
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
@@ -5536,12 +5420,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
 
         if (state->trimmingClip && state->trimClipIndex >= 0 &&
-            state->trimClipIndex < static_cast<int>(state->clips.size())) {
+            state->trimClipIndex < static_cast<int>(state->project.clips.size())) {
             RECT client{};
             GetClientRect(hwnd, &client);
             const LayoutRects layout = ComputeLayout(client);
             const float mouseBeat = SnapBeat(std::max(0.0f, XToBeat(layout.arrange, *state, GET_X_LPARAM(lParam))));
-            ClipItem& clip = state->clips[static_cast<size_t>(state->trimClipIndex)];
+            ClipItem& clip = state->project.clips[static_cast<size_t>(state->trimClipIndex)];
             if (state->trimIsLeft) {
                 const float newStart = std::min(mouseBeat, state->trimOrigStart + state->trimOrigLen - 0.25f);
                 const float delta = newStart - state->trimOrigStart;
@@ -5577,7 +5461,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 newDb = GainFromFaderY(rail, mouseY);
             }
             EnterCriticalSection(&state->audioStateLock);
-            state->trackGainDb[static_cast<size_t>(state->dragFaderTrack)] = newDb;
+            state->project.tracks[static_cast<size_t>(state->dragFaderTrack)].gainDb = newDb;
             LeaveCriticalSection(&state->audioStateLock);
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
@@ -5593,11 +5477,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             const float newPan = std::clamp(state->dragPanStartVal - dy * sensitivity, -1.0f, 1.0f);
             EnterCriticalSection(&state->audioStateLock);
             if (state->dragPanIsBus) {
-                if (state->dragPanIndex < static_cast<int>(state->busPan.size()))
-                    state->busPan[static_cast<size_t>(state->dragPanIndex)] = newPan;
+                if (state->dragPanIndex < static_cast<int>(state->project.buses.size()))
+                    state->project.buses[static_cast<size_t>(state->dragPanIndex)].pan = newPan;
             } else {
-                if (state->dragPanIndex < static_cast<int>(state->trackPan.size()))
-                    state->trackPan[static_cast<size_t>(state->dragPanIndex)] = newPan;
+                if (state->dragPanIndex < static_cast<int>(state->project.tracks.size()))
+                    state->project.tracks[static_cast<size_t>(state->dragPanIndex)].pan = newPan;
             }
             LeaveCriticalSection(&state->audioStateLock);
             InvalidateRect(hwnd, nullptr, FALSE);
@@ -5613,11 +5497,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             const int inspIdx = state->fxInspectorIndex;
             InsertParamsArray* pPA = nullptr;
             if (state->fxInspectorIsTrack) {
-                if (inspIdx >= 0 && inspIdx < static_cast<int>(state->trackInsertParams.size()))
-                    pPA = &state->trackInsertParams[static_cast<size_t>(inspIdx)];
+                if (inspIdx >= 0 && inspIdx < static_cast<int>(state->project.tracks.size()))
+                    pPA = &state->project.tracks[static_cast<size_t>(inspIdx)].insertParams;
             } else {
-                if (inspIdx >= 0 && inspIdx < static_cast<int>(state->busInsertParams.size()))
-                    pPA = &state->busInsertParams[static_cast<size_t>(inspIdx)];
+                if (inspIdx >= 0 && inspIdx < static_cast<int>(state->project.buses.size()))
+                    pPA = &state->project.buses[static_cast<size_t>(inspIdx)].insertParams;
             }
             if (pPA && slotIdx >= 0 && slotIdx < kMaxInsertSlots) {
                 InsertParams& P = (*pPA)[static_cast<size_t>(slotIdx)];
@@ -5680,7 +5564,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             newStart = std::max(0.0f, SnapBeat(newStart));
 
             EnterCriticalSection(&state->audioStateLock);
-            ClipItem& clip = state->clips[static_cast<size_t>(state->dragClipIndex)];
+            ClipItem& clip = state->project.clips[static_cast<size_t>(state->dragClipIndex)];
             clip.startBeat = newStart;
             clip.trackIndex = TrackIndexFromY(layout.arrange, *state, mouseY);
             LeaveCriticalSection(&state->audioStateLock);

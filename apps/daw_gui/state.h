@@ -250,7 +250,6 @@ enum class AudioBackend {
 struct UiState {
     bool playing {false};
     bool recording {false};
-    int bpm {120};
     float playheadBeat {0.0f};
     float viewStartBeat {0.0f};
     float viewBeatsVisible {32.0f};
@@ -268,7 +267,6 @@ struct UiState {
     float dragPanStartVal {0.0f};
     int selectedClipIndex {-1};
     int selectedTrackIndex {-1};
-    int projectSampleRate {0};
     float playbackEndBeat {0.0f};
     ULONGLONG playbackStartTick {0};
     float playbackStartBeat {0.0f};
@@ -324,25 +322,6 @@ struct UiState {
     UINT selectedOutputDeviceId {WAVE_MAPPER};
     std::wstring selectedOutputDeviceName {L"Default Output"};
 
-    std::vector<std::wstring> tracks;
-    std::vector<float> trackGainDb;
-    std::vector<bool> trackMute;
-    std::vector<bool> trackSolo;
-    std::vector<bool> trackRecordArm;
-    std::vector<int> trackBusIndex;
-    std::vector<float> trackPan;
-    std::vector<int> trackInsertSlots;
-    std::vector<InsertEffectArray> trackInsertEffects;
-    std::vector<InsertBypassArray> trackInsertBypass;
-    std::vector<InsertParamsArray> trackInsertParams;   // per-slot knob values
-    std::vector<float> busGainDb {0.0f, 0.0f, 0.0f, 0.0f};
-    std::vector<bool> busMute {false, false, false, false};
-    std::vector<float> busPan {0.0f, 0.0f, 0.0f, 0.0f};
-    std::vector<int> busInsertSlots {0, 0, 0, 0};
-    std::vector<InsertEffectArray> busInsertEffects;
-    std::vector<InsertBypassArray> busInsertBypass;
-    std::vector<InsertParamsArray> busInsertParams;     // per-slot knob values
-
     // Insert chain inspector panel
     bool fxInspectorOpen   {false};
     bool fxInspectorIsTrack{true};
@@ -354,9 +333,6 @@ struct UiState {
     int   paramKnobParamId  {-1};  // encoded: slotIndex*100 + paramIndex
     int   paramKnobDragStartY{0};
     float paramKnobDragStartVal{0.0f};
-
-    std::vector<LoadedAudio> audio;
-    std::vector<ClipItem> clips;
 
     // Project persistence
     std::wstring projectFilePath;  // empty = unsaved
