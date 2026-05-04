@@ -3,6 +3,7 @@ add_executable(daw_gui WIN32
     draw.cpp
     io/wav_io.cpp
     io/project_io.cpp
+    ai/automix_bridge.cpp
     dsp/chain.cpp
     ui/layout.cpp
     core/timeline_edit.cpp
