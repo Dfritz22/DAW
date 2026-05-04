@@ -263,7 +263,47 @@ void DecodeInsertBypassCsv(const std::string& csv, int slotCount, InsertBypassAr
 
 static AudioBackend AudioBackendFromJson(const std::string& value);
 
-bool SaveProject(const std::wstring& path, const UiState& state) {
+bool SaveProject(const std::wstring& path, UiState& state) {
+    // Sync legacy UiState fields to ProjectData before saving
+    state.project.bpm = static_cast<float>(state.bpm);
+    state.project.projectSampleRate = state.projectSampleRate;
+    state.project.audio = state.audio;
+    state.project.clips = state.clips;
+    
+    // Reconstruct ProjectData tracks from legacy track vectors
+    state.project.tracks.clear();
+    for (size_t i = 0; i < state.tracks.size(); ++i) {
+        TrackData track{};
+        track.name = state.tracks[i];
+        track.gainDb = (i < state.trackGainDb.size()) ? state.trackGainDb[i] : 0.0f;
+        track.mute = (i < state.trackMute.size()) ? state.trackMute[i] : false;
+        track.solo = (i < state.trackSolo.size()) ? state.trackSolo[i] : false;
+        track.recordArm = (i < state.trackRecordArm.size()) ? state.trackRecordArm[i] : false;
+        track.busIndex = (i < state.trackBusIndex.size()) ? state.trackBusIndex[i] : 1;
+        track.pan = (i < state.trackPan.size()) ? state.trackPan[i] : 0.0f;
+        track.insertSlots = (i < state.trackInsertSlots.size()) ? state.trackInsertSlots[i] : 0;
+        if (i < state.trackInsertEffects.size()) track.insertEffects = state.trackInsertEffects[i];
+        if (i < state.trackInsertBypass.size()) track.insertBypass = state.trackInsertBypass[i];
+        if (i < state.trackInsertParams.size()) track.insertParams = state.trackInsertParams[i];
+        state.project.tracks.push_back(track);
+    }
+    
+    // Reconstruct ProjectData buses from legacy bus vectors
+    for (int b = 0; b < kBusCount; ++b) {
+        if (b >= static_cast<int>(state.project.buses.size())) {
+            state.project.buses.push_back(BusData{});
+        }
+        auto& bus = state.project.buses[static_cast<size_t>(b)];
+        bus.name = Utf8ToWstr(WstrToUtf8(BusName(b)));
+        bus.gainDb = BusGainDbAt(state, b);
+        bus.mute = BusMuteAt(state, b);
+        bus.pan = BusPanAt(state, b);
+        bus.insertSlots = (b < static_cast<int>(state.busInsertSlots.size())) ? state.busInsertSlots[static_cast<size_t>(b)] : 0;
+        if (b < static_cast<int>(state.busInsertEffects.size())) bus.insertEffects = state.busInsertEffects[static_cast<size_t>(b)];
+        if (b < static_cast<int>(state.busInsertBypass.size())) bus.insertBypass = state.busInsertBypass[static_cast<size_t>(b)];
+        if (b < static_cast<int>(state.busInsertParams.size())) bus.insertParams = state.busInsertParams[static_cast<size_t>(b)];
+    }
+
     const auto backendJson = [&]() -> const char* {
         switch (state.audioBackend) {
         case AudioBackend::MME:
@@ -281,8 +321,8 @@ bool SaveProject(const std::wstring& path, const UiState& state) {
     std::ostringstream js;
     js << "{\n";
     js << "  \"version\": 1,\n";
-    js << "  \"bpm\": " << state.bpm << ",\n";
-    js << "  \"sample_rate\": " << state.projectSampleRate << ",\n";
+    js << "  \"bpm\": " << state.project.bpm << ",\n";
+    js << "  \"sample_rate\": " << state.project.projectSampleRate << ",\n";
     js << "  \"audio_backend\": \"" << backendJson() << "\",\n";
     js << "  \"audio_preferred_sample_rate\": " << state.preferredSampleRate << ",\n";
     js << "  \"audio_preferred_buffer_frames\": " << state.preferredBufferFrames << ",\n";
@@ -294,27 +334,17 @@ bool SaveProject(const std::wstring& path, const UiState& state) {
     // Fixed buses
     js << "  \"buses\": [\n";
     for (int b = 0; b < kBusCount; ++b) {
-        const float gain = BusGainDbAt(state, b);
-        const bool mute = BusMuteAt(state, b);
-        const float pan = BusPanAt(state, b);
-        const int inserts = (b < static_cast<int>(state.busInsertSlots.size()))
-            ? std::clamp(state.busInsertSlots[static_cast<size_t>(b)], 0, 8)
-            : 0;
-        const InsertEffectArray defaultEffects = DefaultInsertEffects();
-        const InsertBypassArray defaultBypass = DefaultInsertBypass();
-        const InsertParamsArray defaultParams = DefaultInsertParams();
-        const InsertEffectArray& busEffects = (b < static_cast<int>(state.busInsertEffects.size())) ? state.busInsertEffects[static_cast<size_t>(b)] : defaultEffects;
-        const InsertBypassArray& busBypass = (b < static_cast<int>(state.busInsertBypass.size())) ? state.busInsertBypass[static_cast<size_t>(b)] : defaultBypass;
-        const InsertParamsArray& busParams = (b < static_cast<int>(state.busInsertParams.size())) ? state.busInsertParams[static_cast<size_t>(b)] : defaultParams;
-        const std::string insertEffects = JsonEscape(EncodeInsertEffectsCsv(busEffects, inserts));
-        const std::string insertBypass = JsonEscape(EncodeInsertBypassCsv(busBypass, inserts));
-        const std::string insertParams = JsonEscape(EncodeInsertParamsCsv(busParams, inserts));
+        if (b >= static_cast<int>(state.project.buses.size())) break;
+        const BusData& bus = state.project.buses[static_cast<size_t>(b)];
+        const std::string insertEffects = JsonEscape(EncodeInsertEffectsCsv(bus.insertEffects, bus.insertSlots));
+        const std::string insertBypass = JsonEscape(EncodeInsertBypassCsv(bus.insertBypass, bus.insertSlots));
+        const std::string insertParams = JsonEscape(EncodeInsertParamsCsv(bus.insertParams, bus.insertSlots));
         js << "    {";
-        js << "\"name\":\"" << JsonEscape(WstrToUtf8(BusName(b))) << "\",";
-        js << "\"gain_db\":" << gain << ",";
-        js << "\"mute\":" << (mute ? "true" : "false") << ",";
-        js << "\"pan\":" << pan << ",";
-        js << "\"insert_slots\":" << inserts << ",";
+        js << "\"name\":\"" << JsonEscape(WstrToUtf8(bus.name)) << "\",";
+        js << "\"gain_db\":" << bus.gainDb << ",";
+        js << "\"mute\":" << (bus.mute ? "true" : "false") << ",";
+        js << "\"pan\":" << bus.pan << ",";
+        js << "\"insert_slots\":" << bus.insertSlots << ",";
         js << "\"insert_effects\":\"" << insertEffects << "\",";
         js << "\"insert_bypass\":\"" << insertBypass << "\",";
         js << "\"insert_params\":\"" << insertParams << "\"";
@@ -326,56 +356,44 @@ bool SaveProject(const std::wstring& path, const UiState& state) {
 
     // Tracks
     js << "  \"tracks\": [\n";
-    for (size_t i = 0; i < state.tracks.size(); ++i) {
-        const std::string name = JsonEscape(WstrToUtf8(state.tracks[i]));
-        const float gain = i < state.trackGainDb.size()   ? state.trackGainDb[i]  : 0.0f;
-        const bool  mute = i < state.trackMute.size()     ? state.trackMute[i]    : false;
-        const bool  solo = i < state.trackSolo.size()     ? state.trackSolo[i]    : false;
-        const bool  arm  = i < state.trackRecordArm.size()? state.trackRecordArm[i]: false;
-        const int busIndex = i < state.trackBusIndex.size() ? state.trackBusIndex[i] : 1;
-        const float pan = i < state.trackPan.size() ? state.trackPan[i] : 0.0f;
-        const int inserts = i < state.trackInsertSlots.size() ? std::clamp(state.trackInsertSlots[i], 0, 8) : 0;
-        const InsertEffectArray defaultEffects = DefaultInsertEffects();
-        const InsertBypassArray defaultBypass = DefaultInsertBypass();
-        const InsertParamsArray defaultParams = DefaultInsertParams();
-        const InsertEffectArray& trackEffects = (i < state.trackInsertEffects.size()) ? state.trackInsertEffects[i] : defaultEffects;
-        const InsertBypassArray& trackBypass = (i < state.trackInsertBypass.size()) ? state.trackInsertBypass[i] : defaultBypass;
-        const InsertParamsArray& trackParams = (i < state.trackInsertParams.size()) ? state.trackInsertParams[i] : defaultParams;
-        const std::string insertEffects = JsonEscape(EncodeInsertEffectsCsv(trackEffects, inserts));
-        const std::string insertBypass = JsonEscape(EncodeInsertBypassCsv(trackBypass, inserts));
-        const std::string insertParams = JsonEscape(EncodeInsertParamsCsv(trackParams, inserts));
+    for (size_t i = 0; i < state.project.tracks.size(); ++i) {
+        const TrackData& track = state.project.tracks[i];
+        const std::string name = JsonEscape(WstrToUtf8(track.name));
+        const std::string insertEffects = JsonEscape(EncodeInsertEffectsCsv(track.insertEffects, track.insertSlots));
+        const std::string insertBypass = JsonEscape(EncodeInsertBypassCsv(track.insertBypass, track.insertSlots));
+        const std::string insertParams = JsonEscape(EncodeInsertParamsCsv(track.insertParams, track.insertSlots));
         js << "    {";
         js << "\"name\":\"" << name << "\",";
-        js << "\"gain_db\":" << gain << ",";
-        js << "\"mute\":" << (mute ? "true" : "false") << ",";
-        js << "\"solo\":" << (solo ? "true" : "false") << ",";
-        js << "\"record_arm\":" << (arm  ? "true" : "false") << ",";
-        js << "\"bus_index\":" << busIndex << ",";
-        js << "\"pan\":" << pan << ",";
-        js << "\"insert_slots\":" << inserts << ",";
+        js << "\"gain_db\":" << track.gainDb << ",";
+        js << "\"mute\":" << (track.mute ? "true" : "false") << ",";
+        js << "\"solo\":" << (track.solo ? "true" : "false") << ",";
+        js << "\"record_arm\":" << (track.recordArm ? "true" : "false") << ",";
+        js << "\"bus_index\":" << track.busIndex << ",";
+        js << "\"pan\":" << track.pan << ",";
+        js << "\"insert_slots\":" << track.insertSlots << ",";
         js << "\"insert_effects\":\"" << insertEffects << "\",";
         js << "\"insert_bypass\":\"" << insertBypass << "\",";
         js << "\"insert_params\":\"" << insertParams << "\"";
         js << "}";
-        if (i + 1 < state.tracks.size()) js << ",";
+        if (i + 1 < state.project.tracks.size()) js << ",";
         js << "\n";
     }
     js << "  ],\n";
 
     // Audio files (deduplicated source paths)
     js << "  \"audio_files\": [\n";
-    for (size_t i = 0; i < state.audio.size(); ++i) {
-        const std::string src = JsonEscape(WstrToUtf8(state.audio[i].sourcePath));
+    for (size_t i = 0; i < state.project.audio.size(); ++i) {
+        const std::string src = JsonEscape(WstrToUtf8(state.project.audio[i].sourcePath));
         js << "    \"" << src << "\"";
-        if (i + 1 < state.audio.size()) js << ",";
+        if (i + 1 < state.project.audio.size()) js << ",";
         js << "\n";
     }
     js << "  ],\n";
 
     // Clips
     js << "  \"clips\": [\n";
-    for (size_t i = 0; i < state.clips.size(); ++i) {
-        const ClipItem& c = state.clips[i];
+    for (size_t i = 0; i < state.project.clips.size(); ++i) {
+        const ClipItem& c = state.project.clips[i];
         const std::string cname = JsonEscape(WstrToUtf8(c.name));
         js << "    {";
         js << "\"track_index\":" << c.trackIndex << ",";
@@ -385,7 +403,7 @@ bool SaveProject(const std::wstring& path, const UiState& state) {
         js << "\"source_offset_frames\":" << c.sourceOffsetFrames << ",";
         js << "\"name\":\"" << cname << "\"";
         js << "}";
-        if (i + 1 < state.clips.size()) js << ",";
+        if (i + 1 < state.project.clips.size()) js << ",";
         js << "\n";
     }
     js << "  ]\n";
@@ -424,25 +442,10 @@ bool LoadProject(const std::wstring& path, UiState& state) {
     if (json.empty()) return false;
 
     // Clear current session
-    state.tracks.clear();
-    state.trackGainDb.clear();
-    state.trackMute.clear();
-    state.trackSolo.clear();
-    state.trackRecordArm.clear();
-    state.trackBusIndex.clear();
-    state.trackPan.clear();
-    state.trackInsertSlots.clear();
-    state.trackInsertEffects.clear();
-    state.trackInsertBypass.clear();
-    state.busGainDb = {0.0f, 0.0f, 0.0f, 0.0f};
-    state.busMute = {false, false, false, false};
-    state.busPan = {0.0f, 0.0f, 0.0f, 0.0f};
-    state.busInsertSlots = {0, 0, 0, 0};
-    state.busInsertEffects.assign(kBusCount, DefaultInsertEffects());
-    state.busInsertBypass.assign(kBusCount, DefaultInsertBypass());
-    state.busInsertParams.assign(kBusCount, DefaultInsertParams());
-    state.audio.clear();
-    state.clips.clear();
+    state.project.tracks.clear();
+    state.project.buses.assign(kBusCount, BusData{});
+    state.project.audio.clear();
+    state.project.clips.clear();
     state.selectedTrackIndex = -1;
     state.selectedClipIndex  = -1;
     state.playheadBeat  = 0.0f;
@@ -451,8 +454,8 @@ bool LoadProject(const std::wstring& path, UiState& state) {
     // Top-level scalars
     double dval = 0.0;
     std::string sval;
-    if (JsonReadDouble(json, "bpm", &dval))                state.bpm               = static_cast<int>(dval);
-    if (JsonReadDouble(json, "sample_rate", &dval))        state.projectSampleRate  = static_cast<int>(dval);
+    if (JsonReadDouble(json, "bpm", &dval))                state.project.bpm               = static_cast<float>(dval);
+    if (JsonReadDouble(json, "sample_rate", &dval))        state.project.projectSampleRate  = static_cast<int>(dval);
     if (JsonReadString(json, "audio_backend", &sval))      state.audioBackend       = AudioBackendFromJson(sval);
     if (JsonReadDouble(json, "audio_preferred_sample_rate", &dval)) state.preferredSampleRate = std::max(0, static_cast<int>(dval));
     if (JsonReadDouble(json, "audio_preferred_buffer_frames", &dval)) state.preferredBufferFrames = std::max(64, static_cast<int>(dval));
@@ -503,27 +506,25 @@ bool LoadProject(const std::wstring& path, UiState& state) {
                 numVal("pan", pan);
                 numVal("insert_slots", inserts);
                 const bool mute = boolVal("mute");
+                std::string busName;
                 std::string insertEffectsCsv;
                 std::string insertBypassCsv;
                 std::string insertParamsCsv;
+                strVal("name", busName);
                 strVal("insert_effects", insertEffectsCsv);
                 strVal("insert_bypass", insertBypassCsv);
                 strVal("insert_params", insertParamsCsv);
 
-                state.busGainDb[static_cast<size_t>(busIdx)] = static_cast<float>(gain);
-                state.busPan[static_cast<size_t>(busIdx)] = static_cast<float>(pan);
-                state.busMute[static_cast<size_t>(busIdx)] = mute;
+                BusData& bus = state.project.buses[static_cast<size_t>(busIdx)];
+                bus.name = Utf8ToWstr(busName);
+                bus.gainDb = static_cast<float>(gain);
+                bus.pan = static_cast<float>(pan);
+                bus.mute = mute;
                 const int slotCount = std::clamp(static_cast<int>(inserts), 0, 8);
-                state.busInsertSlots[static_cast<size_t>(busIdx)] = slotCount;
-                if (busIdx < static_cast<int>(state.busInsertEffects.size())) {
-                    DecodeInsertEffectsCsv(insertEffectsCsv, slotCount, &state.busInsertEffects[static_cast<size_t>(busIdx)]);
-                }
-                if (busIdx < static_cast<int>(state.busInsertBypass.size())) {
-                    DecodeInsertBypassCsv(insertBypassCsv, slotCount, &state.busInsertBypass[static_cast<size_t>(busIdx)]);
-                }
-                if (busIdx < static_cast<int>(state.busInsertParams.size())) {
-                    DecodeInsertParamsCsv(insertParamsCsv, slotCount, &state.busInsertParams[static_cast<size_t>(busIdx)]);
-                }
+                bus.insertSlots = slotCount;
+                DecodeInsertEffectsCsv(insertEffectsCsv, slotCount, &bus.insertEffects);
+                DecodeInsertBypassCsv(insertBypassCsv, slotCount, &bus.insertBypass);
+                DecodeInsertParamsCsv(insertParamsCsv, slotCount, &bus.insertParams);
 
                 cur = obClose + 1;
                 ++busIdx;
@@ -577,24 +578,20 @@ bool LoadProject(const std::wstring& path, UiState& state) {
                 const bool solo = boolVal("solo");
                 const bool arm  = boolVal("record_arm");
 
-                state.tracks.push_back(Utf8ToWstr(tname));
-                state.trackGainDb.push_back(static_cast<float>(gain));
-                state.trackMute.push_back(mute);
-                state.trackSolo.push_back(solo);
-                state.trackRecordArm.push_back(arm);
-                state.trackBusIndex.push_back(std::clamp(static_cast<int>(busIndex), 0, kBusCount - 1));
-                state.trackPan.push_back(std::clamp(static_cast<float>(pan), -1.0f, 1.0f));
+                TrackData track{};
+                track.name = Utf8ToWstr(tname);
+                track.gainDb = static_cast<float>(gain);
+                track.mute = mute;
+                track.solo = solo;
+                track.recordArm = arm;
+                track.busIndex = std::clamp(static_cast<int>(busIndex), 0, kBusCount - 1);
+                track.pan = std::clamp(static_cast<float>(pan), -1.0f, 1.0f);
                 const int slotCount = std::clamp(static_cast<int>(inserts), 0, 8);
-                state.trackInsertSlots.push_back(slotCount);
-                InsertEffectArray effects = DefaultInsertEffects();
-                InsertBypassArray bypass = DefaultInsertBypass();
-                InsertParamsArray params = DefaultInsertParams();
-                DecodeInsertEffectsCsv(insertEffectsCsv, slotCount, &effects);
-                DecodeInsertBypassCsv(insertBypassCsv, slotCount, &bypass);
-                DecodeInsertParamsCsv(insertParamsCsv, slotCount, &params);
-                state.trackInsertEffects.push_back(effects);
-                state.trackInsertBypass.push_back(bypass);
-                state.trackInsertParams.push_back(params);
+                track.insertSlots = slotCount;
+                DecodeInsertEffectsCsv(insertEffectsCsv, slotCount, &track.insertEffects);
+                DecodeInsertBypassCsv(insertBypassCsv, slotCount, &track.insertBypass);
+                DecodeInsertParamsCsv(insertParamsCsv, slotCount, &track.insertParams);
+                state.project.tracks.push_back(track);
 
                 cur = obClose + 1;
             }
@@ -617,14 +614,14 @@ bool LoadProject(const std::wstring& path, UiState& state) {
                 LoadedAudio audio{};
                 std::wstring err;
                 if (std::filesystem::exists(srcPath) && LoadWavStereo(srcPath, &audio, &err)) {
-                    if (state.projectSampleRate == 0) state.projectSampleRate = audio.sampleRate;
-                    state.audio.push_back(std::move(audio));
+                    if (state.project.projectSampleRate == 0) state.project.projectSampleRate = audio.sampleRate;
+                    state.project.audio.push_back(std::move(audio));
                 } else {
                     // Push placeholder so clip audio_index references stay valid
                     LoadedAudio placeholder{};
                     placeholder.sourcePath = srcPath;
                     placeholder.displayName = std::filesystem::path(srcPath).filename().wstring() + L" [missing]";
-                    state.audio.push_back(std::move(placeholder));
+                    state.project.audio.push_back(std::move(placeholder));
                 }
                 cur = q2 + 1;
             }
@@ -685,7 +682,7 @@ bool LoadProject(const std::wstring& path, UiState& state) {
                 clip.color = (clip.trackIndex >= 0)
                     ? kClipColors[static_cast<size_t>(clip.trackIndex) % 4]
                     : kClipColors[0];
-                state.clips.push_back(clip);
+                state.project.clips.push_back(clip);
 
                 cur = obClose + 1;
             }
@@ -694,6 +691,54 @@ bool LoadProject(const std::wstring& path, UiState& state) {
 
     state.projectFilePath = path;
     state.projectModified = false;
+
+    // Sync ProjectData back to legacy UiState fields for backward compatibility
+    state.bpm = static_cast<int>(state.project.bpm);
+    state.projectSampleRate = state.project.projectSampleRate;
+    state.audio = state.project.audio;
+    state.clips = state.project.clips;
+    state.tracks.clear();
+    state.trackGainDb.clear();
+    state.trackMute.clear();
+    state.trackSolo.clear();
+    state.trackRecordArm.clear();
+    state.trackBusIndex.clear();
+    state.trackPan.clear();
+    state.trackInsertSlots.clear();
+    state.trackInsertEffects.clear();
+    state.trackInsertBypass.clear();
+    state.trackInsertParams.clear();
+    for (const auto& track : state.project.tracks) {
+        state.tracks.push_back(track.name);
+        state.trackGainDb.push_back(track.gainDb);
+        state.trackMute.push_back(track.mute);
+        state.trackSolo.push_back(track.solo);
+        state.trackRecordArm.push_back(track.recordArm);
+        state.trackBusIndex.push_back(track.busIndex);
+        state.trackPan.push_back(track.pan);
+        state.trackInsertSlots.push_back(track.insertSlots);
+        state.trackInsertEffects.push_back(track.insertEffects);
+        state.trackInsertBypass.push_back(track.insertBypass);
+        state.trackInsertParams.push_back(track.insertParams);
+    }
+    state.busGainDb.clear();
+    state.busMute.clear();
+    state.busPan.clear();
+    state.busInsertSlots.clear();
+    state.busInsertEffects.clear();
+    state.busInsertBypass.clear();
+    state.busInsertParams.clear();
+    for (int i = 0; i < kBusCount && i < static_cast<int>(state.project.buses.size()); ++i) {
+        const auto& bus = state.project.buses[static_cast<size_t>(i)];
+        state.busGainDb.push_back(bus.gainDb);
+        state.busMute.push_back(bus.mute);
+        state.busPan.push_back(bus.pan);
+        state.busInsertSlots.push_back(bus.insertSlots);
+        state.busInsertEffects.push_back(bus.insertEffects);
+        state.busInsertBypass.push_back(bus.insertBypass);
+        state.busInsertParams.push_back(bus.insertParams);
+    }
+
     return true;
 }
 

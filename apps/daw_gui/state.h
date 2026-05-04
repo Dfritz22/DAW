@@ -245,6 +245,8 @@ enum class AudioBackend {
     Asio,
 };
 
+#include "core/ProjectData.h"
+
 struct UiState {
     bool playing {false};
     bool recording {false};
@@ -418,6 +420,9 @@ struct UiState {
     std::wstring lastRecordInitError;
     std::wstring lastPlaybackInitError;
     bool recordUsingWasapi {false};
+
+    // Persistent project data model
+    ProjectData project;
 };
 
 // ── Forward declarations ────────────────────────────────────────────────────
