@@ -562,7 +562,20 @@ bool StartWasapiAudio(HWND hwnd, UiState& state) {
     return false;
 }
 
-bool TryStartWasapiRecording(HWND hwnd, UiState& state, int armedTrack, bool wasPlaying) {
+void StopWasapiAudio(UiState& state) {
+    state.audioStopRequested.store(true);
+
+    if (state.audioThread != nullptr) {
+        WaitForSingleObject(state.audioThread, INFINITE);
+        CloseHandle(state.audioThread);
+        state.audioThread = nullptr;
+    }
+
+    state.playingViaWasapi = false;
+    state.audioThreadRunning.store(false);
+}
+
+bool StartWasapiRecording(HWND hwnd, UiState& state, int armedTrack, bool wasPlaying) {
     state.recordedInputPcm.clear();
     state.monitorInputPcm.clear();
     state.monitorInputReadPos = 0;
@@ -622,4 +635,17 @@ bool TryStartWasapiRecording(HWND hwnd, UiState& state, int armedTrack, bool was
 
     state.recording = true;
     return true;
+}
+
+void StopWasapiRecording(UiState& state) {
+    state.recordStopRequested.store(true);
+
+    if (state.recordThread != nullptr) {
+        WaitForSingleObject(state.recordThread, INFINITE);
+        CloseHandle(state.recordThread);
+        state.recordThread = nullptr;
+    }
+
+    state.recordUsingWasapi = false;
+    state.recordInitState.store(0);
 }

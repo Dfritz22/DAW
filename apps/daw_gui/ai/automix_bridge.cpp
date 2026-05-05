@@ -6,8 +6,6 @@ std::wstring QuoteArg(const std::wstring& s);
 std::filesystem::path FindRepoRoot();
 bool RenderTrackToStereoLocked(const UiState& state, int trackIndex,
                                std::vector<float>* outStereo, int* outSampleRate);
-bool RenderProjectMixToStereoLocked(const UiState& state, int excludedTrackIndex,
-                                    std::vector<float>* outStereo, int* outSampleRate);
 InsertEffectArray DefaultInsertEffects();
 InsertBypassArray DefaultInsertBypass();
 InsertConfigArray DefaultInsertConfig();
@@ -562,7 +560,13 @@ bool AnalyzeSelectedTrackQuality(HWND hwnd, UiState& state) {
     int referenceSampleRate = 0;
     EnterCriticalSection(&state.audioStateLock);
     const bool hasAudio = RenderTrackToStereoLocked(state, trackIndex, &stereo, &sampleRate);
-    const bool hasReference = RenderProjectMixToStereoLocked(state, trackIndex, &referenceStereo, &referenceSampleRate);
+    bool hasReference = false;
+    if (trackIndex >= 0 && trackIndex < static_cast<int>(state.project.tracks.size())) {
+        const bool prevMute = state.project.tracks[static_cast<size_t>(trackIndex)].mute;
+        state.project.tracks[static_cast<size_t>(trackIndex)].mute = true;
+        hasReference = RenderFullMixToStereoLocked(state, &referenceStereo, &referenceSampleRate);
+        state.project.tracks[static_cast<size_t>(trackIndex)].mute = prevMute;
+    }
     const std::wstring trackName = state.project.tracks[static_cast<size_t>(trackIndex)].name;
     LeaveCriticalSection(&state.audioStateLock);
 

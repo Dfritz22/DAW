@@ -6,6 +6,7 @@ add_executable(daw_gui WIN32
     ai/automix_bridge.cpp
     dsp/chain.cpp
     ui/layout.cpp
+    core/timeline.cpp
     core/timeline_edit.cpp
     audio/engine_utils.cpp
     audio/engine.cpp

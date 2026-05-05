@@ -1,6 +1,7 @@
 #pragma once
 #include "state.h"
 #include "ui/layout.h"
+#include "core/timeline.h"
 
 // ── Inspector panel layout constants (used by draw.cpp and WndProc) ──
 constexpr int kInspHeaderH = 26;

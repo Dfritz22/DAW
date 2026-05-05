@@ -130,6 +130,14 @@ static DWORD WINAPI RecordThreadProc(LPVOID param) {
 // GetRenderedPlaybackFrame are defined in device_common.cpp.
 
 void StopMmeAudio(UiState& state) {
+    state.audioStopRequested.store(true);
+
+    if (state.audioThread != nullptr) {
+        WaitForSingleObject(state.audioThread, INFINITE);
+        CloseHandle(state.audioThread);
+        state.audioThread = nullptr;
+    }
+
     if (state.waveOut != nullptr) {
         waveOutReset(state.waveOut);
         for (size_t i = 0; i < state.waveHeaders.size(); ++i) {
@@ -230,6 +238,14 @@ bool StartMmeAudio(HWND hwnd, UiState& state) {
 }
 
 void StopMmeRecording(UiState& state) {
+    state.recordStopRequested.store(true);
+
+    if (state.recordThread != nullptr) {
+        WaitForSingleObject(state.recordThread, INFINITE);
+        CloseHandle(state.recordThread);
+        state.recordThread = nullptr;
+    }
+
     if (state.waveIn != nullptr) {
         waveInStop(state.waveIn);
         waveInReset(state.waveIn);
@@ -239,6 +255,9 @@ void StopMmeRecording(UiState& state) {
         waveInClose(state.waveIn);
         state.waveIn = nullptr;
     }
+
+    state.waveInHeaders.clear();
+    state.waveInData.clear();
 }
 
 bool StartMmeRecording(HWND hwnd, UiState& state, int armedTrack, bool wasPlaying) {

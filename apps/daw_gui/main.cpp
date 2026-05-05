@@ -2,6 +2,7 @@
 #include "io/wav_io.h"
 #include "io/project_io.h"
 #include "dsp/chain.h"
+#include "core/timeline.h"
 #include "core/timeline_edit.h"
 #include "ai/automix_bridge.h"
 #include "audio/engine.h"
@@ -634,64 +635,6 @@ std::filesystem::path FindRepoRoot() {
 }
 
 
-bool RenderProjectMixToStereoLocked(const UiState& state, int excludedTrackIndex, std::vector<float>* outStereo, int* outSampleRate) {
-    if (state.project.projectSampleRate <= 0 || state.project.clips.empty()) {
-        return false;
-    }
-
-    std::uint64_t startFrame = std::numeric_limits<std::uint64_t>::max();
-    std::uint64_t endFrame = 0;
-    const float spb = SamplesPerBeat(state);
-
-    for (const ClipItem& clip : state.project.clips) {
-        if (clip.trackIndex == excludedTrackIndex || clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.project.audio.size())) {
-            continue;
-        }
-        const std::uint64_t clipStart = static_cast<std::uint64_t>(std::llround(std::max(0.0f, clip.startBeat) * spb));
-        startFrame = std::min(startFrame, clipStart);
-        endFrame = std::max(endFrame, clipStart + static_cast<std::uint64_t>(std::llround(clip.lengthBeats * spb)));
-    }
-
-    if (endFrame <= startFrame || startFrame == std::numeric_limits<std::uint64_t>::max()) {
-        return false;
-    }
-
-    const std::uint64_t totalFrames = endFrame - startFrame;
-    std::vector<float> stereo(static_cast<size_t>(totalFrames) * 2, 0.0f);
-
-    for (const ClipItem& clip : state.project.clips) {
-        if (clip.trackIndex == excludedTrackIndex || clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.project.audio.size())) {
-            continue;
-        }
-        const LoadedAudio& a = state.project.audio[static_cast<size_t>(clip.audioIndex)];
-        const std::uint64_t clipStartAbs = static_cast<std::uint64_t>(std::llround(std::max(0.0f, clip.startBeat) * spb));
-        if (clipStartAbs < startFrame) {
-            continue;
-        }
-        const std::uint64_t writeStart = clipStartAbs - startFrame;
-        const std::uint64_t clipFrames = static_cast<std::uint64_t>(std::llround(clip.lengthBeats * spb));
-
-        for (std::uint64_t f = 0; f < clipFrames && (writeStart + f) < totalFrames; ++f) {
-            float l = 0.0f;
-            float r = 0.0f;
-            if (!ReadClipSampleAtProjectFrame(a, f, state.project.projectSampleRate, clip.sourceOffsetFrames, &l, &r)) {
-                continue;
-            }
-            const size_t dst = static_cast<size_t>(writeStart + f) * 2;
-            stereo[dst] += l;
-            stereo[dst + 1] += r;
-        }
-    }
-
-    for (float& s : stereo) {
-        s = std::clamp(s, -1.0f, 1.0f);
-    }
-
-    *outStereo = std::move(stereo);
-    *outSampleRate = state.project.projectSampleRate;
-    return true;
-}
-
 static std::wstring PickSingleWavFile(HWND hwnd, const wchar_t* title) {
     wchar_t filePath[MAX_PATH] = {};
     OPENFILENAMEW ofn{};
@@ -1248,27 +1191,12 @@ void ImportWavFiles(HWND hwnd, UiState& state) {
 // These functions coordinate both the MME and WASAPI backends.
 
 void StopPlayback(UiState& state, bool rewind) {
-    state.audioStopRequested.store(true);
-
-    if (state.audioThread != nullptr) {
-        WaitForSingleObject(state.audioThread, INFINITE);
-        CloseHandle(state.audioThread);
-        state.audioThread = nullptr;
+    if (state.playingViaWasapi) {
+        StopWasapiAudio(state);
+    } else {
+        StopMmeAudio(state);
     }
 
-    state.playingViaWasapi = false;
-
-    if (state.waveOut != nullptr) {
-        waveOutReset(state.waveOut);
-        for (size_t i = 0; i < state.waveHeaders.size(); ++i) {
-            waveOutUnprepareHeader(state.waveOut, &state.waveHeaders[i], sizeof(WAVEHDR));
-        }
-        waveOutClose(state.waveOut);
-        state.waveOut = nullptr;
-    }
-
-    state.waveHeaders.clear();
-    state.waveData.clear();
     state.playing = false;
     state.audioThreadRunning.store(false);
     if (rewind) {
@@ -1278,26 +1206,14 @@ void StopPlayback(UiState& state, bool rewind) {
 }
 
 void StopRecording(UiState& state, bool commitTake) {
-    if (!state.recording && state.waveIn == nullptr) {
+    if (!state.recording && state.recordThread == nullptr) {
         return;
     }
 
-    state.recordStopRequested.store(true);
-
-    if (state.recordThread != nullptr) {
-        WaitForSingleObject(state.recordThread, INFINITE);
-        CloseHandle(state.recordThread);
-        state.recordThread = nullptr;
-    }
-
-    if (state.waveIn != nullptr) {
-        waveInStop(state.waveIn);
-        waveInReset(state.waveIn);
-        for (size_t i = 0; i < state.waveInHeaders.size(); ++i) {
-            waveInUnprepareHeader(state.waveIn, &state.waveInHeaders[i], sizeof(WAVEHDR));
-        }
-        waveInClose(state.waveIn);
-        state.waveIn = nullptr;
+    if (state.recordUsingWasapi) {
+        StopWasapiRecording(state);
+    } else {
+        StopMmeRecording(state);
     }
 
     if (commitTake && state.recordTrackIndex >= 0 && !state.recordedInputPcm.empty()) {
@@ -1308,8 +1224,11 @@ void StopRecording(UiState& state, bool commitTake) {
             ? (nowTick - state.recordCaptureStartTickMs)
             : 0ULL;
         const int elapsedMs = static_cast<int>(std::min<ULONGLONG>(elapsedMsUll, static_cast<ULONGLONG>(std::numeric_limits<int>::max())));
-        const double expectedFrames = (elapsedMs > 0 && state.waveInFormat.nSamplesPerSec > 0)
-            ? (static_cast<double>(elapsedMs) * static_cast<double>(state.waveInFormat.nSamplesPerSec) / 1000.0)
+        const int captureSampleRate = (state.lastOpenedInputSampleRate > 0)
+            ? state.lastOpenedInputSampleRate
+            : state.project.projectSampleRate;
+        const double expectedFrames = (elapsedMs > 0 && captureSampleRate > 0)
+            ? (static_cast<double>(elapsedMs) * static_cast<double>(captureSampleRate) / 1000.0)
             : 0.0;
         const double observedRatio = (expectedFrames > 1.0)
             ? (static_cast<double>(totalFrames) / expectedFrames)
@@ -1353,7 +1272,7 @@ void StopRecording(UiState& state, bool commitTake) {
             LoadedAudio take{};
             take.sourcePath = L"[recording]";
             take.displayName = L"Take " + std::to_wstring(static_cast<int>(state.project.audio.size()) + 1);
-            take.sampleRate = static_cast<int>(state.waveInFormat.nSamplesPerSec);
+            take.sampleRate = captureSampleRate;
             take.frames = frames;
             take.stereo = std::move(stereo);
 
@@ -1386,8 +1305,6 @@ void StopRecording(UiState& state, bool commitTake) {
         }
     }
 
-    state.waveInHeaders.clear();
-    state.waveInData.clear();
     state.recordedInputPcm.clear();
     state.monitorInputPcm.clear();
     state.monitorInputReadPos = 0;
@@ -1428,7 +1345,7 @@ bool StartRecording(HWND hwnd, UiState& state) {
     }
 
     if (IsWasapiBackend(state.audioBackend)) {
-        if (TryStartWasapiRecording(hwnd, state, armedTrack, wasPlaying)) {
+        if (StartWasapiRecording(hwnd, state, armedTrack, wasPlaying)) {
             return true;
         }
     }
