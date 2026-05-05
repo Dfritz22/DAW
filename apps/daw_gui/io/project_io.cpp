@@ -1,6 +1,7 @@
 #include "project_io.h"
 
 #include "wav_io.h"
+#include "../audio/device_common.h"
 
 void UpdateWindowTitle(HWND hwnd, const UiState& state);
 InsertEffectArray DefaultInsertEffects();
@@ -235,13 +236,6 @@ static void DecodeInsertBypassCsv(const std::string& csv, int slotCount, InsertB
     }
 }
 
-static AudioBackend AudioBackendFromJson(const std::string& value) {
-    if (value == "mme") return AudioBackend::MME;
-    if (value == "wasapi_exclusive") return AudioBackend::WasapiExclusive;
-    if (value == "asio") return AudioBackend::Asio;
-    return AudioBackend::WasapiShared;
-}
-
 bool SaveProject(const std::wstring& path, UiState& state) {
 
     // Materialize recorded in-memory takes so they survive save/load round-trips.
@@ -271,26 +265,12 @@ bool SaveProject(const std::wstring& path, UiState& state) {
         }
     }
 
-    const auto backendJson = [&]() -> const char* {
-        switch (state.audioBackend) {
-        case AudioBackend::MME:
-            return "mme";
-        case AudioBackend::WasapiExclusive:
-            return "wasapi_exclusive";
-        case AudioBackend::Asio:
-            return "asio";
-        case AudioBackend::WasapiShared:
-        default:
-            return "wasapi_shared";
-        }
-    };
-
     std::ostringstream js;
     js << "{\n";
     js << "  \"version\": 1,\n";
     js << "  \"bpm\": " << state.project.bpm << ",\n";
     js << "  \"sample_rate\": " << state.project.projectSampleRate << ",\n";
-    js << "  \"audio_backend\": \"" << backendJson() << "\",\n";
+    js << "  \"audio_backend\": \"" << AudioBackendToJson(state.audioBackend) << "\",\n";
     js << "  \"audio_preferred_sample_rate\": " << state.preferredSampleRate << ",\n";
     js << "  \"audio_preferred_buffer_frames\": " << state.preferredBufferFrames << ",\n";
     js << "  \"audio_input_device_name\": \"" << JsonEscape(WstrToUtf8(state.selectedInputDeviceName)) << "\",\n";
