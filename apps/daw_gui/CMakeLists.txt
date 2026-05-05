@@ -11,6 +11,7 @@ add_executable(daw_gui WIN32
     audio/engine.cpp
     audio/device_mme.cpp
     audio/device_wasapi.cpp
+    audio/device_common.cpp
 )
 
 target_link_libraries(daw_gui

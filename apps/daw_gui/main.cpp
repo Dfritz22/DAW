@@ -7,6 +7,7 @@
 #include "audio/engine.h"
 #include "audio/device_mme.h"
 #include "audio/device_wasapi.h"
+#include "audio/device_common.h"
 
 void UpdateWindowTitle(HWND hwnd, const UiState& state) {
     std::wstring name = state.projectFilePath.empty()

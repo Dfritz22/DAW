@@ -1,6 +1,6 @@
 #include "device_wasapi.h"
 #include "engine.h"
-#include "device_mme.h"  // GetRenderedPlaybackFrame
+#include "device_common.h"  // GetRenderedPlaybackFrame
 
 // ── Forward declarations for orchestration functions in main.cpp ─────────────
 void StopPlayback(UiState& state, bool rewind);
