@@ -16,7 +16,6 @@ void  GetBusControlRects(const RECT& leftPanel, const UiState& state, int busInd
                          RECT* rowRect, RECT* muteRect, RECT* gainDownRect, RECT* gainUpRect,
                          RECT* panKnobRect, RECT* panValRect, RECT* fxRect);
 
-bool  IsTrackAudible(const UiState& state, int trackIndex);
 int   FaderKnobTopFromGain(const RECT& rail, float gainDb);
 float GainFromFaderY(const RECT& rail, int mouseY);
 

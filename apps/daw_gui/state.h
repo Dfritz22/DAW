@@ -218,14 +218,8 @@ struct InsertDspState {
     float dee_sc_y2[2]{0.0f,0.0f};
 };
 
-struct InsertParams {
-    InsertConfig config;
-    InsertDspState state;
-};
-
 using InsertConfigArray = std::array<InsertConfig, kMaxInsertSlots>;
 using InsertDspStateArray = std::array<InsertDspState, kMaxInsertSlots>;
-using InsertParamsArray = InsertConfigArray;
 
 struct LayoutRects {
     RECT topBar;
@@ -258,6 +252,10 @@ enum class AudioBackend {
     WasapiExclusive,
     Asio,
 };
+
+inline bool IsWasapiBackend(AudioBackend backend) {
+    return backend == AudioBackend::WasapiShared || backend == AudioBackend::WasapiExclusive;
+}
 
 #include "core/ProjectData.h"
 

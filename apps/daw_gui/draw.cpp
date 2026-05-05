@@ -295,12 +295,12 @@ void DrawInsertInspector(HDC hdc, const RECT& client, const UiState& state) {
         const InsertEffectArray* pEff = nullptr;
         if (state.fxInspectorIsTrack) {
             if (idx < static_cast<int>(state.project.tracks.size()))
-                pParams = &state.project.tracks[static_cast<size_t>(idx)].insertParams;
+                pParams = &state.project.tracks[static_cast<size_t>(idx)].insertConfig;
             if (idx < static_cast<int>(state.project.tracks.size()))
                 pEff = &state.project.tracks[static_cast<size_t>(idx)].insertEffects;
         } else {
             if (idx < static_cast<int>(state.project.buses.size()))
-                pParams = &state.project.buses[static_cast<size_t>(idx)].insertParams;
+                pParams = &state.project.buses[static_cast<size_t>(idx)].insertConfig;
             if (idx < static_cast<int>(state.project.buses.size()))
                 pEff = &state.project.buses[static_cast<size_t>(idx)].insertEffects;
         }

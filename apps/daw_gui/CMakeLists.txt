@@ -7,6 +7,10 @@ add_executable(daw_gui WIN32
     dsp/chain.cpp
     ui/layout.cpp
     core/timeline_edit.cpp
+    audio/engine_utils.cpp
+    audio/engine.cpp
+    audio/device_mme.cpp
+    audio/device_wasapi.cpp
 )
 
 target_link_libraries(daw_gui

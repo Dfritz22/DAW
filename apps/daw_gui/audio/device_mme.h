@@ -1,0 +1,33 @@
+#pragma once
+#include "../state.h"
+
+// ── MME audio device backend ─────────────────────────────────────────────────
+// All waveIn / waveOut operations live here. No UI headers are included.
+
+// ── Device enumeration ────────────────────────────────────────────────────────
+void RefreshInputDevices(UiState& state);
+void RefreshOutputDevices(UiState& state);
+
+// ── Diagnostics ───────────────────────────────────────────────────────────────
+// Builds a diagnostic string using waveIn/waveOut format queries.
+std::wstring BuildAudioDiagnosticsReport(const UiState& state);
+
+// ── Playback position (handles both MME waveOut and WASAPI cursor path) ───────
+std::uint64_t GetRenderedPlaybackFrame(const UiState& state);
+
+// ── MME output ────────────────────────────────────────────────────────────────
+// Opens waveOut, prepares headers, starts the internal AudioThreadProc thread.
+// On success returns true and state.audioThread / state.waveOut are set.
+// On failure returns false; state.waveOut stays nullptr.
+bool StartMmeAudio(HWND hwnd, UiState& state);
+
+// Stops and closes waveOut; clears state.waveHeaders / waveData / waveOut.
+void StopMmeAudio(UiState& state);
+
+// ── MME input ─────────────────────────────────────────────────────────────────
+// Opens waveIn, prepares headers, starts the internal RecordThreadProc thread.
+// armedTrack and wasPlaying are provided by the orchestration layer in main.cpp.
+bool StartMmeRecording(HWND hwnd, UiState& state, int armedTrack, bool wasPlaying);
+
+// Stops and closes waveIn. Does NOT commit captured audio (caller handles that).
+void StopMmeRecording(UiState& state);

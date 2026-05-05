@@ -20,7 +20,7 @@ constexpr int PROJECT_BUS_COUNT = 4;
 
 using ProjectInsertEffectArray = std::array<std::uint8_t, PROJECT_MAX_INSERT_SLOTS>;
 using ProjectInsertBypassArray = std::array<bool, PROJECT_MAX_INSERT_SLOTS>;
-using ProjectInsertParamsArray = std::array<InsertConfig, PROJECT_MAX_INSERT_SLOTS>;
+using ProjectInsertConfigArray = std::array<InsertConfig, PROJECT_MAX_INSERT_SLOTS>;
 
 struct TrackData {
     std::wstring name;
@@ -33,7 +33,7 @@ struct TrackData {
     int insertSlots {0};
     ProjectInsertEffectArray insertEffects;
     ProjectInsertBypassArray insertBypass;
-    ProjectInsertParamsArray insertParams;
+    ProjectInsertConfigArray insertConfig;
 };
 
 struct BusData {
@@ -44,7 +44,7 @@ struct BusData {
     int insertSlots {0};
     ProjectInsertEffectArray insertEffects;
     ProjectInsertBypassArray insertBypass;
-    ProjectInsertParamsArray insertParams;
+    ProjectInsertConfigArray insertConfig;
 };
 
 struct ProjectData {

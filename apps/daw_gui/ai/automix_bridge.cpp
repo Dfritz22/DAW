@@ -10,7 +10,7 @@ bool RenderProjectMixToStereoLocked(const UiState& state, int excludedTrackIndex
                                     std::vector<float>* outStereo, int* outSampleRate);
 InsertEffectArray DefaultInsertEffects();
 InsertBypassArray DefaultInsertBypass();
-InsertConfigArray DefaultInsertParams();
+InsertConfigArray DefaultInsertConfig();
 
 // ── File-private helpers ──────────────────────────────────────────────────
 
@@ -408,7 +408,7 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
                 trackIndex < static_cast<int>(state.project.tracks.size())) {
                 InsertEffectArray fx = DefaultInsertEffects();
                 InsertBypassArray by = DefaultInsertBypass();
-                InsertParamsArray pp = DefaultInsertParams();
+                InsertConfigArray pp = DefaultInsertConfig();
                 int slots = 0;
 
                 const bool hasEq =
@@ -418,7 +418,7 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
                     std::fabs(s.presenceDb) > 0.05f ||
                     std::fabs(s.airDb) > 0.05f;
                 if (hasEq) {
-                    InsertConfig p = DefaultInsertParams()[0];
+                    InsertConfig p = DefaultInsertConfig()[0];
                     p.eq[0].type = (s.highpassHz > 5.0f) ? kEqHighPass : kEqLowShelf;
                     p.eq[0].freq_hz = std::clamp(s.highpassHz > 5.0f ? s.highpassHz : 120.0f, 20.0f, 20000.0f);
                     p.eq[0].gain_db = (s.highpassHz > 5.0f) ? 0.0f : std::clamp(s.lowShelfDb, -18.0f, 18.0f);
@@ -443,7 +443,7 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
                 }
 
                 if (s.compRatio > 1.05f) {
-                    InsertConfig p = DefaultInsertParams()[0];
+                    InsertConfig p = DefaultInsertConfig()[0];
                     p.cmp_threshold_db = std::clamp(s.compThresholdDb, -60.0f, 0.0f);
                     p.cmp_ratio = std::clamp(s.compRatio, 1.0f, 20.0f);
                     p.cmp_makeup_db = std::clamp(s.compMakeupDb, 0.0f, 24.0f);
@@ -454,7 +454,7 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
                 }
 
                 if (s.deesserDb < -0.05f) {
-                    InsertConfig p = DefaultInsertParams()[0];
+                    InsertConfig p = DefaultInsertConfig()[0];
                     p.dee_threshold_db = std::clamp(-22.0f + s.deesserDb * 2.0f, -40.0f, 0.0f);
                     p.dee_freq_hz = 7000.0f;
                     p.dee_bandwidth_hz = 3500.0f;
@@ -463,14 +463,14 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
                 }
 
                 if (s.saturationBlend > 0.01f && s.saturationDriveDb > 0.01f) {
-                    InsertConfig p = DefaultInsertParams()[0];
+                    InsertConfig p = DefaultInsertConfig()[0];
                     p.sat_drive = std::clamp(s.saturationDriveDb / 8.0f, 0.0f, 1.0f);
                     p.sat_mix = std::clamp(s.saturationBlend, 0.0f, 1.0f);
                     AutoMixAppendInsert(&fx, &by, &pp, &slots, kFxSAT, p);
                 }
 
                 if (s.delayMix > 0.01f && s.delayTimeMs > 1.0f) {
-                    InsertConfig p = DefaultInsertParams()[0];
+                    InsertConfig p = DefaultInsertConfig()[0];
                     p.dly_time_ms = std::clamp(s.delayTimeMs, 10.0f, 2000.0f);
                     p.dly_feedback = std::clamp(s.delayFeedback, 0.0f, 0.95f);
                     p.dly_mix = std::clamp(s.delayMix, 0.0f, 1.0f);
@@ -478,7 +478,7 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
                 }
 
                 if (s.reverbMix > 0.01f) {
-                    InsertConfig p = DefaultInsertParams()[0];
+                    InsertConfig p = DefaultInsertConfig()[0];
                     p.rev_mix = std::clamp(s.reverbMix, 0.0f, 1.0f);
                     p.rev_room_size = std::clamp((s.reverbDecayS - 0.2f) / 2.3f, 0.0f, 1.0f);
                     p.rev_damping = std::clamp(0.35f + s.reverbPreDelayMs / 80.0f, 0.0f, 1.0f);
@@ -487,7 +487,7 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
 
                 state.project.tracks[static_cast<size_t>(trackIndex)].insertEffects = fx;
                 state.project.tracks[static_cast<size_t>(trackIndex)].insertBypass = by;
-                state.project.tracks[static_cast<size_t>(trackIndex)].insertParams = pp;
+                state.project.tracks[static_cast<size_t>(trackIndex)].insertConfig = pp;
                 state.project.tracks[static_cast<size_t>(trackIndex)].insertSlots = slots;
                 if (slots > 0) ++appliedFx;
             }
@@ -508,10 +508,10 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
         state.project.buses.size() > 3) {
         InsertEffectArray fx = DefaultInsertEffects();
         InsertBypassArray by = DefaultInsertBypass();
-        InsertParamsArray pp = DefaultInsertParams();
+        InsertConfigArray pp = DefaultInsertConfig();
         int slots = 0;
 
-        InsertConfig p = DefaultInsertParams()[0];
+        InsertConfig p = DefaultInsertConfig()[0];
         p.cmp_threshold_db = std::clamp(master.compThresholdDb, -60.0f, 0.0f);
         p.cmp_ratio = std::clamp(master.compRatio, 1.0f, 20.0f);
         p.cmp_makeup_db = std::clamp(master.compMakeupDb, 0.0f, 24.0f);
@@ -522,7 +522,7 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
 
         state.project.buses[3].insertEffects = fx;
         state.project.buses[3].insertBypass = by;
-        state.project.buses[3].insertParams = pp;
+        state.project.buses[3].insertConfig = pp;
         state.project.buses[3].insertSlots = slots;
     }
 

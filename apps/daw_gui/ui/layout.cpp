@@ -75,35 +75,6 @@ void GetBusControlRects(const RECT& leftPanel, const UiState& state, int busInde
 
 // ── Track audibility / fader math ────────────────────────────────────────────
 
-bool IsTrackAudible(const UiState& state, int trackIndex) {
-    if (trackIndex < 0 || trackIndex >= static_cast<int>(state.project.tracks.size())) {
-        return false;
-    }
-
-    const bool muted =
-        trackIndex < static_cast<int>(state.project.tracks.size()) &&
-        state.project.tracks[static_cast<size_t>(trackIndex)].mute;
-    const bool soloed =
-        trackIndex < static_cast<int>(state.project.tracks.size()) &&
-        state.project.tracks[static_cast<size_t>(trackIndex)].solo;
-
-    bool anySolo = false;
-    for (size_t i = 0; i < state.project.tracks.size(); ++i) {
-        if (state.project.tracks[i].solo) {
-            anySolo = true;
-            break;
-        }
-    }
-
-    if (muted) {
-        return false;
-    }
-    if (anySolo && !soloed) {
-        return false;
-    }
-    return true;
-}
-
 int FaderKnobTopFromGain(const RECT& rail, float gainDb) {
     const float t = (std::clamp(gainDb, kFaderMinDb, kFaderMaxDb) - kFaderMinDb) / (kFaderMaxDb - kFaderMinDb);
     const int railHeight = static_cast<int>(rail.bottom - rail.top);

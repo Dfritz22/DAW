@@ -24,8 +24,8 @@ static InsertBypassArray DefaultInsertBypassLocal() {
     return bypass;
 }
 
-static InsertParamsArray DefaultInsertParamsLocal() {
-    InsertParamsArray arr;
+static InsertConfigArray DefaultInsertConfigLocal() {
+    InsertConfigArray arr;
     return arr;
 }
 
@@ -133,7 +133,7 @@ int AddNewTrack(UiState& state) {
     newTrack.busIndex = 1;
     newTrack.insertEffects = DefaultInsertEffectsLocal();
     newTrack.insertBypass  = DefaultInsertBypassLocal();
-    newTrack.insertParams  = DefaultInsertParamsLocal();
+    newTrack.insertConfig  = DefaultInsertConfigLocal();
     state.project.tracks.push_back(std::move(newTrack));
     return index;
 }

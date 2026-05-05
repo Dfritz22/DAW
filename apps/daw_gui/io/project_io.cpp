@@ -5,7 +5,7 @@
 void UpdateWindowTitle(HWND hwnd, const UiState& state);
 InsertEffectArray DefaultInsertEffects();
 InsertBypassArray DefaultInsertBypass();
-InsertConfigArray DefaultInsertParams();
+InsertConfigArray DefaultInsertConfig();
 
 // ── JSON project serialization ───────────────────────────────────────────────
 // Minimal hand-written JSON - no external dependency required.
@@ -68,8 +68,8 @@ static std::string JsonUnescape(const std::string& s) {
 
 // Encode all params for all slots as a flat pipe-delimited CSV string.
 // Format: slot0_val0,val1,...valN|slot1_val0,...|...
-// The float layout per slot is fixed and must match DecodeInsertParamsCsv.
-static std::string EncodeInsertParamsCsv(const InsertConfigArray& params, int slotCount) {
+// The float layout per slot is fixed and must match DecodeInsertConfigCsv.
+static std::string EncodeInsertConfigCsv(const InsertConfigArray& params, int slotCount) {
     std::ostringstream out;
     out << std::fixed;
     out.precision(4);
@@ -105,9 +105,9 @@ static std::string EncodeInsertParamsCsv(const InsertConfigArray& params, int sl
     return out.str();
 }
 
-static void DecodeInsertParamsCsv(const std::string& csv, int slotCount, InsertConfigArray* params) {
+static void DecodeInsertConfigCsv(const std::string& csv, int slotCount, InsertConfigArray* params) {
     if (!params) return;
-    *params = DefaultInsertParams();
+    *params = DefaultInsertConfig();
     if (csv.empty()) return;
     const int count = std::clamp(slotCount, 0, kMaxInsertSlots);
     // Split by '|' into per-slot strings
@@ -305,7 +305,7 @@ bool SaveProject(const std::wstring& path, UiState& state) {
         const BusData& bus = state.project.buses[static_cast<size_t>(b)];
         const std::string insertEffects = JsonEscape(EncodeInsertEffectsCsv(bus.insertEffects, bus.insertSlots));
         const std::string insertBypass = JsonEscape(EncodeInsertBypassCsv(bus.insertBypass, bus.insertSlots));
-        const std::string insertParams = JsonEscape(EncodeInsertParamsCsv(bus.insertParams, bus.insertSlots));
+        const std::string insertConfig = JsonEscape(EncodeInsertConfigCsv(bus.insertConfig, bus.insertSlots));
         js << "    {";
         js << "\"name\":\"" << JsonEscape(WstrToUtf8(bus.name)) << "\",";
         js << "\"gain_db\":" << bus.gainDb << ",";
@@ -314,7 +314,7 @@ bool SaveProject(const std::wstring& path, UiState& state) {
         js << "\"insert_slots\":" << bus.insertSlots << ",";
         js << "\"insert_effects\":\"" << insertEffects << "\",";
         js << "\"insert_bypass\":\"" << insertBypass << "\",";
-        js << "\"insert_params\":\"" << insertParams << "\"";
+        js << "\"insert_params\":\"" << insertConfig << "\"";
         js << "}";
         if (b + 1 < kBusCount) js << ",";
         js << "\n";
@@ -328,7 +328,7 @@ bool SaveProject(const std::wstring& path, UiState& state) {
         const std::string name = JsonEscape(WstrToUtf8(track.name));
         const std::string insertEffects = JsonEscape(EncodeInsertEffectsCsv(track.insertEffects, track.insertSlots));
         const std::string insertBypass = JsonEscape(EncodeInsertBypassCsv(track.insertBypass, track.insertSlots));
-        const std::string insertParams = JsonEscape(EncodeInsertParamsCsv(track.insertParams, track.insertSlots));
+        const std::string insertConfig = JsonEscape(EncodeInsertConfigCsv(track.insertConfig, track.insertSlots));
         js << "    {";
         js << "\"name\":\"" << name << "\",";
         js << "\"gain_db\":" << track.gainDb << ",";
@@ -340,7 +340,7 @@ bool SaveProject(const std::wstring& path, UiState& state) {
         js << "\"insert_slots\":" << track.insertSlots << ",";
         js << "\"insert_effects\":\"" << insertEffects << "\",";
         js << "\"insert_bypass\":\"" << insertBypass << "\",";
-        js << "\"insert_params\":\"" << insertParams << "\"";
+        js << "\"insert_params\":\"" << insertConfig << "\"";
         js << "}";
         if (i + 1 < state.project.tracks.size()) js << ",";
         js << "\n";
@@ -476,11 +476,11 @@ bool LoadProject(const std::wstring& path, UiState& state) {
                 std::string busName;
                 std::string insertEffectsCsv;
                 std::string insertBypassCsv;
-                std::string insertParamsCsv;
+                std::string insertConfigCsv;
                 strVal("name", busName);
                 strVal("insert_effects", insertEffectsCsv);
                 strVal("insert_bypass", insertBypassCsv);
-                strVal("insert_params", insertParamsCsv);
+                strVal("insert_params", insertConfigCsv);
 
                 BusData& bus = state.project.buses[static_cast<size_t>(busIdx)];
                 bus.name = Utf8ToWstr(busName);
@@ -491,7 +491,7 @@ bool LoadProject(const std::wstring& path, UiState& state) {
                 bus.insertSlots = slotCount;
                 DecodeInsertEffectsCsv(insertEffectsCsv, slotCount, &bus.insertEffects);
                 DecodeInsertBypassCsv(insertBypassCsv, slotCount, &bus.insertBypass);
-                DecodeInsertParamsCsv(insertParamsCsv, slotCount, &bus.insertParams);
+                DecodeInsertConfigCsv(insertConfigCsv, slotCount, &bus.insertConfig);
 
                 cur = obClose + 1;
                 ++busIdx;
@@ -540,7 +540,7 @@ bool LoadProject(const std::wstring& path, UiState& state) {
                 double inserts = 0.0; numVal("insert_slots", inserts);
                 std::string insertEffectsCsv; strVal("insert_effects", insertEffectsCsv);
                 std::string insertBypassCsv; strVal("insert_bypass", insertBypassCsv);
-                std::string insertParamsCsv; strVal("insert_params", insertParamsCsv);
+                std::string insertConfigCsv; strVal("insert_params", insertConfigCsv);
                 const bool mute = boolVal("mute");
                 const bool solo = boolVal("solo");
                 const bool arm  = boolVal("record_arm");
@@ -557,7 +557,7 @@ bool LoadProject(const std::wstring& path, UiState& state) {
                 track.insertSlots = slotCount;
                 DecodeInsertEffectsCsv(insertEffectsCsv, slotCount, &track.insertEffects);
                 DecodeInsertBypassCsv(insertBypassCsv, slotCount, &track.insertBypass);
-                DecodeInsertParamsCsv(insertParamsCsv, slotCount, &track.insertParams);
+                DecodeInsertConfigCsv(insertConfigCsv, slotCount, &track.insertConfig);
                 state.project.tracks.push_back(track);
 
                 cur = obClose + 1;
