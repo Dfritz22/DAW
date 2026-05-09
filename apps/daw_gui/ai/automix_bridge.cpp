@@ -1,14 +1,14 @@
 #include "automix_bridge.h"
+#include "core/internal_app_services.h"
 #include "io/wav_io.h"
 
-// ── Forward declarations for helpers defined in main.cpp ──────────────────
-std::wstring QuoteArg(const std::wstring& s);
-std::filesystem::path FindRepoRoot();
 bool RenderTrackToStereoLocked(const UiState& state, int trackIndex,
                                std::vector<float>* outStereo, int* outSampleRate);
-InsertEffectArray DefaultInsertEffects();
-InsertBypassArray DefaultInsertBypass();
-InsertConfigArray DefaultInsertConfig();
+using daw::internal::core::DefaultInsertBypass;
+using daw::internal::core::DefaultInsertConfig;
+using daw::internal::core::DefaultInsertEffects;
+using daw::internal::core::FindRepoRoot;
+using daw::internal::core::QuoteArg;
 
 // ── File-private helpers ──────────────────────────────────────────────────
 

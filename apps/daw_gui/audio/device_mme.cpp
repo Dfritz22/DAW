@@ -13,6 +13,8 @@ bool StartPlayback(HWND hwnd, UiState& state);
 void StopPlayback(UiState& state, bool rewind);
 void StopRecording(UiState& state, bool commitTake);
 
+namespace daw::internal::audio {
+
 // ── MME playback thread ───────────────────────────────────────────────────────
 
 static DWORD WINAPI AudioThreadProc(LPVOID param) {
@@ -113,6 +115,10 @@ static DWORD WINAPI RecordThreadProc(LPVOID param) {
 
     return 0;
 }
+
+} // namespace daw::internal::audio
+
+using namespace daw::internal::audio;
 
 // ── Public API ────────────────────────────────────────────────────────────────
 

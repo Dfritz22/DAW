@@ -1,12 +1,12 @@
 #include "timeline_edit.h"
+#include "core/internal_app_services.h"
 #include "core/state.h"
 #include "core/timeline.h"
 #include <algorithm>
 
 static constexpr int kMaxUndoLevels = 50;
 
-// Forward declaration of UpdateWindowTitle from main.cpp
-void UpdateWindowTitle(HWND hwnd, const UiState& state);
+using daw::internal::core::UpdateWindowTitle;
 
 static InsertEffectArray DefaultInsertEffectsLocal() {
     InsertEffectArray effects{};

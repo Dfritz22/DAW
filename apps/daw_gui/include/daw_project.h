@@ -1,6 +1,11 @@
 #pragma once
 
-#include "core/state.h"
+#include <string>
+
+struct HWND__;
+using HWND = HWND__*;
+
+struct UiState;
 
 bool SaveProject(const std::wstring& path, UiState& state);
 bool LoadProject(const std::wstring& path, UiState& state);

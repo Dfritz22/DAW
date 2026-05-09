@@ -1,13 +1,34 @@
 #include "project_io.h"
 
+#include "core/internal_app_services.h"
 #include "core/state.h"
 #include "wav_io.h"
-#include "audio/device_common.h"
 
-void UpdateWindowTitle(HWND hwnd, const UiState& state);
-InsertEffectArray DefaultInsertEffects();
-InsertBypassArray DefaultInsertBypass();
-InsertConfigArray DefaultInsertConfig();
+using daw::internal::core::DefaultInsertBypass;
+using daw::internal::core::DefaultInsertConfig;
+using daw::internal::core::DefaultInsertEffects;
+using daw::internal::core::UpdateWindowTitle;
+
+namespace daw::internal::io {
+
+static std::string AudioBackendToJson(AudioBackend backend) {
+    switch (backend) {
+    case AudioBackend::MME:             return "mme";
+    case AudioBackend::WasapiShared:    return "wasapi_shared";
+    case AudioBackend::WasapiExclusive: return "wasapi_exclusive";
+    case AudioBackend::Asio:            return "asio";
+    default:                            return "wasapi_shared";
+    }
+}
+
+static AudioBackend AudioBackendFromJson(const std::string& value) {
+    if (value == "mme")              return AudioBackend::MME;
+    if (value == "wasapi_exclusive") return AudioBackend::WasapiExclusive;
+    if (value == "asio")             return AudioBackend::Asio;
+    return AudioBackend::WasapiShared;
+}
+
+} // namespace daw::internal::io
 
 // ── JSON project serialization ───────────────────────────────────────────────
 // Minimal hand-written JSON - no external dependency required.
@@ -271,7 +292,7 @@ bool IoSaveProject(const std::wstring& path, UiState& state) {
     js << "  \"version\": 1,\n";
     js << "  \"bpm\": " << state.project.bpm << ",\n";
     js << "  \"sample_rate\": " << state.project.projectSampleRate << ",\n";
-    js << "  \"audio_backend\": \"" << DeviceAudioBackendToJson(state.audioBackend) << "\",\n";
+    js << "  \"audio_backend\": \"" << daw::internal::io::AudioBackendToJson(state.audioBackend) << "\",\n";
     js << "  \"audio_preferred_sample_rate\": " << state.preferredSampleRate << ",\n";
     js << "  \"audio_preferred_buffer_frames\": " << state.preferredBufferFrames << ",\n";
     js << "  \"audio_input_device_name\": \"" << JsonEscape(WstrToUtf8(state.selectedInputDeviceName)) << "\",\n";
@@ -404,7 +425,7 @@ bool IoLoadProject(const std::wstring& path, UiState& state) {
     std::string sval;
     if (JsonReadDouble(json, "bpm", &dval))                state.project.bpm               = static_cast<float>(dval);
     if (JsonReadDouble(json, "sample_rate", &dval))        state.project.projectSampleRate  = static_cast<int>(dval);
-    if (JsonReadString(json, "audio_backend", &sval))      state.audioBackend       = DeviceAudioBackendFromJson(sval);
+    if (JsonReadString(json, "audio_backend", &sval))      state.audioBackend       = daw::internal::io::AudioBackendFromJson(sval);
     if (JsonReadDouble(json, "audio_preferred_sample_rate", &dval)) state.preferredSampleRate = std::max(0, static_cast<int>(dval));
     if (JsonReadDouble(json, "audio_preferred_buffer_frames", &dval)) state.preferredBufferFrames = std::max(64, static_cast<int>(dval));
     if (JsonReadString(json, "audio_input_device_name", &sval)) state.selectedInputDeviceName = Utf8ToWstr(sval);

@@ -9,6 +9,7 @@ add_executable(daw_gui WIN32
     ui/layout.cpp
     core/timeline.cpp
     core/timeline_edit.cpp
+    core/internal_app_services.cpp
     audio/engine_utils.cpp
     audio/engine.cpp
     audio/device_mme.cpp

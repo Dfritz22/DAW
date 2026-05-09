@@ -1,11 +1,15 @@
 #pragma once
+#ifdef DAW_PUBLIC_API
+#error "This header is internal-only."
+#endif
+
 #include <vector>
 #include <string>
 #include <cstdint>
 #include <array>
+#include "dsp/insert_types.h"
 
 // Forward declarations of types from state.h (avoid circular includes)
-struct InsertConfig;
 struct LoadedAudio;
 struct ClipItem;
 
@@ -15,7 +19,7 @@ struct ClipItem;
 // and audio device state (backend, sample rate preference, device names, etc.)
 
 // Note: These match the constants in state.h but we can't include it to avoid circular dependency
-constexpr int PROJECT_MAX_INSERT_SLOTS = 8;
+constexpr int PROJECT_MAX_INSERT_SLOTS = kMaxInsertSlots;
 constexpr int PROJECT_BUS_COUNT = 4;
 
 using ProjectInsertEffectArray = std::array<std::uint8_t, PROJECT_MAX_INSERT_SLOTS>;

@@ -1,4 +1,8 @@
 #pragma once
+#ifdef DAW_PUBLIC_API
+#error "This header is internal-only."
+#endif
+
 #define NOMINMAX
 #include <windows.h>
 #include <windowsx.h>
@@ -27,6 +31,7 @@
 
 #include "daw_core/Engine.hpp"
 #include "core/automation_types.h"
+#include "dsp/insert_types.h"
 
 #pragma comment(lib, "Comdlg32.lib")
 #pragma comment(lib, "Winmm.lib")
@@ -101,126 +106,6 @@ constexpr int kFaderKnobHeight = 8;
 constexpr float kFaderMinDb = -60.0f;
 constexpr float kFaderMaxDb = 6.0f;
 constexpr int kBusCount = 4;
-constexpr int kMaxInsertSlots = 8;
-constexpr int kInsertEffectTypeCount = 8;
-constexpr int kEqBandCount = 4;
-
-// Effect type indices (must match InsertEffectName order)
-constexpr int kFxEQ   = 0;
-constexpr int kFxCMP  = 1;
-constexpr int kFxSAT  = 2;
-constexpr int kFxDLY  = 3;
-constexpr int kFxREV  = 4;
-constexpr int kFxGATE = 5;
-constexpr int kFxDEE  = 6;
-constexpr int kFxLIM  = 7;
-
-using InsertEffectArray = std::array<std::uint8_t, kMaxInsertSlots>;
-using InsertBypassArray = std::array<bool, kMaxInsertSlots>;
-
-// EQ band filter types
-constexpr int kEqPeak      = 0;
-constexpr int kEqLowShelf  = 1;
-constexpr int kEqHighShelf = 2;
-constexpr int kEqLowPass   = 3;
-constexpr int kEqHighPass  = 4;
-
-struct EqBand {
-    float freq_hz {1000.0f};  // 20 - 20000
-    float gain_db {0.0f};     // -24 - +24 (ignored for LP/HP)
-    float q       {0.707f};   // 0.1 - 10
-    int   type    {kEqPeak};  // kEqPeak / kEqLowShelf / ...
-};
-
-struct EqBandDspState {
-    float bq_x1[2]{0.0f, 0.0f};
-    float bq_x2[2]{0.0f, 0.0f};
-    float bq_y1[2]{0.0f, 0.0f};
-    float bq_y2[2]{0.0f, 0.0f};
-};
-
-// All per-slot parameter values. The active fields depend on the effect type
-// stored in the parallel InsertEffectArray. Unused fields are simply ignored.
-struct InsertConfig {
-    // ---- EQ (kEqBandCount parametric bands) ----
-    EqBand eq[kEqBandCount] = {
-        {80.0f,    0.0f, 0.707f, kEqLowShelf },
-        {300.0f,   0.0f, 1.0f,   kEqPeak     },
-        {3000.0f,  0.0f, 1.0f,   kEqPeak     },
-        {10000.0f, 0.0f, 0.707f, kEqHighShelf},
-    };
-
-    // ---- Compressor ----
-    float cmp_threshold_db {-18.0f}; // -60 - 0
-    float cmp_ratio        {4.0f};   // 1 - 20
-    float cmp_attack_ms    {10.0f};  // 0.1 - 300
-    float cmp_release_ms   {100.0f}; // 10 - 3000
-    float cmp_knee_db      {3.0f};   // 0 - 12
-    float cmp_makeup_db    {0.0f};   // 0 - 24
-
-    // ---- Saturation ----
-    float sat_drive {0.3f};  // 0 - 1
-    float sat_mix   {0.5f};  // 0 - 1
-
-    // ---- Delay ----
-    float dly_time_ms   {250.0f}; // 1 - 2000
-    float dly_feedback  {0.3f};   // 0 - 0.95
-    float dly_mix       {0.25f};  // 0 - 1
-
-    // ---- Reverb ----
-    float rev_room_size {0.5f};  // 0 - 1
-    float rev_damping   {0.5f};  // 0 - 1
-    float rev_mix       {0.25f}; // 0 - 1
-
-    // ---- Gate ----
-    float gate_threshold_db {-40.0f}; // -80 - 0
-    float gate_attack_ms    {5.0f};   // 0.1 - 100
-    float gate_release_ms   {100.0f}; // 10 - 2000
-    float gate_hold_ms      {50.0f};  // 0 - 500
-
-    // ---- De-esser ----
-    float dee_threshold_db  {-20.0f}; // -60 - 0
-    float dee_freq_hz       {7000.0f};// 2000 - 16000
-    float dee_bandwidth_hz  {3000.0f};// 500 - 8000
-    float dee_reduction_db  {6.0f};   // 1 - 20
-
-    // ---- Limiter ----
-    float lim_ceiling_db  {-0.3f}; // -12 - 0
-    float lim_release_ms  {50.0f}; // 5 - 500
-};
-
-struct InsertDspState {
-    // EQ band filter persistent state
-    EqBandDspState eq[kEqBandCount];
-
-    // --- Persistent DSP state (internal processing state, not user params) ---
-    // Delay line
-    std::vector<float> dly_bufL, dly_bufR;
-    int   dly_wpos{0};
-    int   dly_lastFrames{-1};
-    // Reverb (Schroeder: 4 comb + 2 allpass, mono)
-    std::vector<float> rev_combBuf[4];
-    std::vector<float> rev_apBuf[2];
-    int   rev_combPos[4]{0,0,0,0};
-    int   rev_apPos[2]{0,0};
-    float rev_combFilt[4]{0.0f,0.0f,0.0f,0.0f};
-    int   rev_lastCombLen[4]{-1,-1,-1,-1};
-    // Envelope followers
-    float cmp_env{0.0f};
-    float gate_env{0.0f};
-    float gate_holdTimer{0.0f};
-    float gate_gainState{0.0f};
-    float dee_env{0.0f};
-    float lim_env{0.0f};
-    // De-esser sidechain biquad state
-    float dee_sc_x1[2]{0.0f,0.0f};
-    float dee_sc_x2[2]{0.0f,0.0f};
-    float dee_sc_y1[2]{0.0f,0.0f};
-    float dee_sc_y2[2]{0.0f,0.0f};
-};
-
-using InsertConfigArray = std::array<InsertConfig, kMaxInsertSlots>;
-using InsertDspStateArray = std::array<InsertDspState, kMaxInsertSlots>;
 
 struct LayoutRects {
     RECT topBar;

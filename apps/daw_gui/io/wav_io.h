@@ -1,4 +1,9 @@
 #pragma once
+
+#ifdef DAW_PUBLIC_API
+#error "This header is internal-only."
+#endif
+
 #include <string>
 #include <vector>
 

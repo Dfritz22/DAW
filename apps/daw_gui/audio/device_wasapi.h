@@ -1,4 +1,8 @@
 #pragma once
+#ifdef DAW_PUBLIC_API
+#error "This header is internal-only."
+#endif
+
 #include "core/state.h"
 
 // ── WASAPI audio device backend ───────────────────────────────────────────────

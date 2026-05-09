@@ -1,7 +1,7 @@
 #include "ui/draw.h"
 #include "ui/layout.h"
 
-namespace {
+namespace daw::internal::ui {
 
 static const wchar_t* InsertEffectName(int effectType) {
     static const wchar_t* kNames[kInsertEffectTypeCount] = {
@@ -87,7 +87,9 @@ static void DrawMenuTab(HDC hdc, const RECT& rect, const wchar_t* label) {
     DrawTextW(hdc, label, -1, const_cast<RECT*>(&rect), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 }
 
-} // namespace
+} // namespace daw::internal::ui
+
+using namespace daw::internal::ui;
 
 void UiDrawTopBar(HDC hdc, const RECT& client, UiState& state) {
     RECT top{client.left, client.top, client.right, client.top + kTopBarHeight};

@@ -9,6 +9,8 @@
 // ── Forward declarations for orchestration functions in main.cpp ─────────────
 void StopPlayback(UiState& state, bool rewind);
 
+namespace daw::internal::audio {
+
 // ── Endpoint helpers ──────────────────────────────────────────────────────────
 
 static IMMDevice* FindWasapiCaptureEndpoint(const std::wstring& preferredName) {
@@ -487,6 +489,10 @@ static DWORD WINAPI WasapiRecordThreadProc(LPVOID param) {
     if (coInitOk) CoUninitialize();
     return 0;
 }
+
+} // namespace daw::internal::audio
+
+using namespace daw::internal::audio;
 
 // ── Public API ────────────────────────────────────────────────────────────────
 

@@ -1,6 +1,11 @@
 #pragma once
+
+#ifdef DAW_PUBLIC_API
+#error "This header is internal-only."
+#endif
+
+#include "core/state.h"
 #include "daw_automation.h"
-#include "daw_project.h"
 #include "daw_timeline.h"
 
 // ── Layout / coordinate math ─────────────────────────────────────────────────

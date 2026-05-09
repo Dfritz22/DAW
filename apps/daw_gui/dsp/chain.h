@@ -1,6 +1,11 @@
 #pragma once
+
+#ifdef DAW_PUBLIC_API
+#error "This header is internal-only."
+#endif
+
 #include <vector>
-#include "core/state.h"
+#include "dsp/insert_types.h"
 
 // DSP insert chain processing.
 // All types (InsertParams, EqBand, InsertEffectArray, etc.) are defined in state.h.
