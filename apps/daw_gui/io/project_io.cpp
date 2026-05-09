@@ -705,3 +705,23 @@ bool IoDoOpen(HWND hwnd, UiState& state) {
     UpdateWindowTitle(hwnd, state);
     return true;
 }
+
+bool SaveProject(const std::wstring& path, UiState& state) {
+    return IoSaveProject(path, state);
+}
+
+bool LoadProject(const std::wstring& path, UiState& state) {
+    return IoLoadProject(path, state);
+}
+
+bool DoSaveAs(HWND hwnd, UiState& state) {
+    return IoDoSaveAs(hwnd, state);
+}
+
+bool DoSave(HWND hwnd, UiState& state) {
+    return IoDoSave(hwnd, state);
+}
+
+bool DoOpen(HWND hwnd, UiState& state) {
+    return IoDoOpen(hwnd, state);
+}

@@ -2,6 +2,8 @@
 #include "core/state.h"
 #include "core/automation.h"
 #include "core/timeline.h"
+#include "audio/device_mme.h"
+#include "audio/device_wasapi.h"
 
 // ── Backend labels ────────────────────────────────────────────────────────────
 
@@ -260,4 +262,38 @@ std::uint64_t DeviceGetRenderedPlaybackFrame(const UiState& state) {
         return startFrame + clock;
     }
     return state.playbackFrameCursor.load();
+}
+
+bool DeviceStartPlaybackBackend(HWND hwnd, UiState& state) {
+    if (IsWasapiBackend(state.audioBackend)) {
+        if (DeviceStartWasapiAudio(hwnd, state)) {
+            return true;
+        }
+    }
+    return DeviceStartMmeAudio(hwnd, state);
+}
+
+void DeviceStopPlaybackBackend(UiState& state) {
+    if (state.playingViaWasapi) {
+        DeviceStopWasapiAudio(state);
+        return;
+    }
+    DeviceStopMmeAudio(state);
+}
+
+bool DeviceStartRecordingBackend(HWND hwnd, UiState& state, int armedTrack, bool wasPlaying) {
+    if (IsWasapiBackend(state.audioBackend)) {
+        if (DeviceStartWasapiRecording(hwnd, state, armedTrack, wasPlaying)) {
+            return true;
+        }
+    }
+    return DeviceStartMmeRecording(hwnd, state, armedTrack, wasPlaying);
+}
+
+void DeviceStopRecordingBackend(UiState& state) {
+    if (state.recordUsingWasapi) {
+        DeviceStopWasapiRecording(state);
+        return;
+    }
+    DeviceStopMmeRecording(state);
 }

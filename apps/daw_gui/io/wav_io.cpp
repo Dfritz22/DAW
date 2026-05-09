@@ -198,3 +198,11 @@ bool IoWriteWavPcm16Stereo(const std::wstring& path, const std::vector<float>& s
 
     return true;
 }
+
+bool LoadWavStereo(const std::wstring& path, LoadedAudio* out, std::wstring* error) {
+    return IoLoadWavStereo(path, out, error);
+}
+
+bool WriteWavPcm16Stereo(const std::wstring& path, const std::vector<float>& stereo, int sampleRate) {
+    return IoWriteWavPcm16Stereo(path, stereo, sampleRate);
+}

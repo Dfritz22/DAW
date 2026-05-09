@@ -19,3 +19,15 @@ float TimelineBeatsFromFrames(const UiState& state, std::uint64_t frame) {
     const float spb = std::max(1.0f, TimelineSamplesPerBeat(state));
     return static_cast<float>(frame) / spb;
 }
+
+float SamplesPerBeat(const UiState& state) {
+    return TimelineSamplesPerBeat(state);
+}
+
+std::uint64_t FramesFromBeats(const UiState& state, float beat) {
+    return TimelineFramesFromBeats(state, beat);
+}
+
+float BeatsFromFrames(const UiState& state, std::uint64_t frame) {
+    return TimelineBeatsFromFrames(state, frame);
+}

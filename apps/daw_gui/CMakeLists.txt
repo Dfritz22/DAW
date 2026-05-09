@@ -24,6 +24,7 @@ target_link_libraries(daw_gui
 target_include_directories(daw_gui
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 target_compile_definitions(daw_gui PRIVATE UNICODE _UNICODE)

@@ -1,5 +1,7 @@
 #pragma once
-#include "core/state.h"
+#include "daw_automation.h"
+#include "daw_project.h"
+#include "daw_timeline.h"
 
 // ── Inspector panel layout constants (used by draw.cpp and WndProc) ──
 constexpr int kUiDrawInspHeaderH = 26;

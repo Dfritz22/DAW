@@ -1,5 +1,7 @@
 #pragma once
-#include "core/state.h"
+#include "daw_automation.h"
+#include "daw_project.h"
+#include "daw_timeline.h"
 
 // ── Layout / coordinate math ─────────────────────────────────────────────────
 // Defined in ui/layout.cpp; used by draw.cpp and WndProc in main.cpp.

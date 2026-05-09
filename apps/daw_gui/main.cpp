@@ -1,17 +1,7 @@
+#include "daw_sdk.h"
 #include "ui/draw.h"
 #include "ui/layout.h"
-#include "io/wav_io.h"
-#include "io/project_io.h"
-#include "dsp/chain.h"
-#include "core/automation.h"
-#include "core/timeline.h"
-#include "core/timeline_edit.h"
 #include "ai/automix_bridge.h"
-#include "audio/engine.h"
-#include "audio/engine_utils.h"
-#include "audio/device_mme.h"
-#include "audio/device_wasapi.h"
-#include "audio/device_common.h"
 
 void UpdateWindowTitle(HWND hwnd, const UiState& state) {
     std::wstring name = state.projectFilePath.empty()
@@ -501,12 +491,12 @@ void ShowTopMenu(HWND hwnd, UiState& state, int menuKind, const RECT& menuRect) 
     const UINT cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY, p.x, p.y, 0, hwnd, nullptr);
 
     if (cmd == kCmdFileOpen) {
-        IoDoOpen(hwnd, state);
-        EnsureInsertDspStateStorage(state);
+        DoOpen(hwnd, state);
+        if (state.trackInsertDspState.size() != state.project.tracks.size()) state.trackInsertDspState.resize(state.project.tracks.size());
     } else if (cmd == kCmdFileSave) {
-        IoDoSave(hwnd, state);
+        DoSave(hwnd, state);
     } else if (cmd == kCmdFileSaveAs) {
-        IoDoSaveAs(hwnd, state);
+        DoSaveAs(hwnd, state);
     } else if (cmd == kCmdFileImportWav) {
         ImportWavFiles(hwnd, state);
         state.projectModified = true;
@@ -720,7 +710,7 @@ static bool ChooseAutoMasterSettings(HWND hwnd, float* outTargetLufs, float* out
 static bool ReplaceProjectWithSingleWav(UiState& state, const std::wstring& wavPath, std::wstring* outError) {
     LoadedAudio audio{};
     std::wstring error;
-    if (!IoLoadWavStereo(wavPath, &audio, &error)) {
+    if (!LoadWavStereo(wavPath, &audio, &error)) {
         if (outError) *outError = error;
         return false;
     }
@@ -743,7 +733,7 @@ static bool ReplaceProjectWithSingleWav(UiState& state, const std::wstring& wavP
     }
         state.project.audio.push_back(std::move(audio));
 
-        const float lengthBeats = TimelineBeatsFromFrames(state, state.project.audio.back().frames);
+        const float lengthBeats = BeatsFromFrames(state, state.project.audio.back().frames);
         state.project.clips.push_back(ClipItem{
             0,
             0,
@@ -913,7 +903,7 @@ bool DoMixReadiness(HWND hwnd, UiState& state) {
         LeaveCriticalSection(&state.audioStateLock);
         if (!ok || stereo.empty()) continue;
         const std::wstring wavPath = std::wstring(stemsDir) + L"\\" + kBusWavNames[b] + L".wav";
-        if (IoWriteWavPcm16Stereo(wavPath, stereo, sr)) ++exported;
+        if (WriteWavPcm16Stereo(wavPath, stereo, sr)) ++exported;
     }
 
     if (exported == 0) {
@@ -1079,7 +1069,7 @@ bool DoExportMix(HWND hwnd, UiState& state) {
         return false;
     }
 
-    if (!IoWriteWavPcm16Stereo(filePath, stereo, sampleRate)) {
+    if (!WriteWavPcm16Stereo(filePath, stereo, sampleRate)) {
         MessageBoxW(hwnd, L"Could not write WAV file. Check the output path.", L"Export Mix", MB_OK | MB_ICONERROR);
         return false;
     }
@@ -1138,7 +1128,7 @@ void ImportWavFiles(HWND hwnd, UiState& state) {
     for (const std::wstring& path : files) {
         LoadedAudio audio{};
         std::wstring error;
-        if (!IoLoadWavStereo(path, &audio, &error)) {
+        if (!LoadWavStereo(path, &audio, &error)) {
             skipped += std::filesystem::path(path).filename().wstring() + L": " + error + L"\n";
             continue;
         }
@@ -1162,7 +1152,7 @@ void ImportWavFiles(HWND hwnd, UiState& state) {
         }
         state.project.audio.push_back(std::move(audio));
 
-        const float lengthBeats = TimelineBeatsFromFrames(state, state.project.audio.back().frames);
+        const float lengthBeats = BeatsFromFrames(state, state.project.audio.back().frames);
         state.project.clips.push_back(ClipItem{
             trackIndex,
             audioIndex,
@@ -1194,11 +1184,7 @@ void ImportWavFiles(HWND hwnd, UiState& state) {
 // These functions coordinate both the MME and WASAPI backends.
 
 void StopPlayback(UiState& state, bool rewind) {
-    if (state.playingViaWasapi) {
-        DeviceStopWasapiAudio(state);
-    } else {
-        DeviceStopMmeAudio(state);
-    }
+    DeviceStopPlaybackBackend(state);
 
     state.playing = false;
     state.audioThreadRunning.store(false);
@@ -1213,11 +1199,7 @@ void StopRecording(UiState& state, bool commitTake) {
         return;
     }
 
-    if (state.recordUsingWasapi) {
-        DeviceStopWasapiRecording(state);
-    } else {
-        DeviceStopMmeRecording(state);
-    }
+    DeviceStopRecordingBackend(state);
 
     if (commitTake && state.recordTrackIndex >= 0 && !state.recordedInputPcm.empty()) {
         const int channels = std::max(1, state.recordInputChannels);
@@ -1288,8 +1270,8 @@ void StopRecording(UiState& state, bool commitTake) {
             const int audioIndex = static_cast<int>(state.project.audio.size());
             state.project.audio.push_back(std::move(take));
 
-            const float startBeat = TimelineBeatsFromFrames(state, state.recordStartFrame);
-            const float lengthBeats = TimelineBeatsFromFrames(state, frames);
+            const float startBeat = BeatsFromFrames(state, state.recordStartFrame);
+            const float lengthBeats = BeatsFromFrames(state, frames);
 
             if (state.recordTrackIndex >= 0 && state.recordTrackIndex < static_cast<int>(state.project.tracks.size())) {
                 state.project.clips.push_back(ClipItem{
@@ -1346,13 +1328,7 @@ bool StartRecording(HWND hwnd, UiState& state) {
         }
     }
 
-    if (IsWasapiBackend(state.audioBackend)) {
-        if (DeviceStartWasapiRecording(hwnd, state, armedTrack, wasPlaying)) {
-            return true;
-        }
-    }
-
-    return DeviceStartMmeRecording(hwnd, state, armedTrack, wasPlaying);
+    return DeviceStartRecordingBackend(hwnd, state, armedTrack, wasPlaying);
 }
 
 bool StartPlayback(HWND hwnd, UiState& state) {
@@ -1371,13 +1347,7 @@ bool StartPlayback(HWND hwnd, UiState& state) {
 
     StopPlayback(state, false);
 
-    if (IsWasapiBackend(state.audioBackend)) {
-        if (DeviceStartWasapiAudio(hwnd, state)) {
-            return true;
-        }
-    }
-
-    return DeviceStartMmeAudio(hwnd, state);
+    return DeviceStartPlaybackBackend(hwnd, state);
 }
 
 
@@ -1431,7 +1401,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_TIMER:
         if (state != nullptr && wParam == kPlaybackTimerId && state->playing) {
             const std::uint64_t absoluteFrame = DeviceGetRenderedPlaybackFrame(*state);
-            state->playheadBeat = TimelineBeatsFromFrames(*state, absoluteFrame);
+            state->playheadBeat = BeatsFromFrames(*state, absoluteFrame);
 
             const float viewRight = state->viewStartBeat + state->viewBeatsVisible;
             if (state->playheadBeat > viewRight - 1.0f) {
@@ -1470,16 +1440,16 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         if (wParam == 'O' && (GetKeyState(VK_CONTROL) & 0x8000)) {
-            IoDoOpen(hwnd, *state);
-            EnsureInsertDspStateStorage(*state);
+            DoOpen(hwnd, *state);
+            if (state->trackInsertDspState.size() != state->project.tracks.size()) state->trackInsertDspState.resize(state->project.tracks.size());
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
         if (wParam == 'S' && (GetKeyState(VK_CONTROL) & 0x8000)) {
             if (GetKeyState(VK_SHIFT) & 0x8000) {
-                IoDoSaveAs(hwnd, *state);
+                DoSaveAs(hwnd, *state);
             } else {
-                IoDoSave(hwnd, *state);
+                DoSave(hwnd, *state);
             }
             return 0;
         }
@@ -1872,7 +1842,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     if (PtInRect(&busRect, pt)) {
                         EnterCriticalSection(&state->audioStateLock);
                         if (trackIndex < static_cast<int>(state->project.tracks.size())) {
-                            const int cur = AutomationTrackBusIndexAt(*state, trackIndex);
+                            const int cur = TrackBusIndexAt(*state, trackIndex);
                             state->project.tracks[static_cast<size_t>(trackIndex)].busIndex = (cur + 1) % kBusCount;
                             state->projectModified = true;
                             UpdateWindowTitle(hwnd, *state);
@@ -2131,7 +2101,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 const float delta = newStart - state->trimOrigStart;
                 clip.startBeat   = std::max(0.0f, state->trimOrigStart + delta);
                 clip.lengthBeats = std::max(0.25f, state->trimOrigLen   - delta);
-                const float spb = TimelineSamplesPerBeat(*state);
+                const float spb = SamplesPerBeat(*state);
                 const std::int64_t offsetDelta = static_cast<std::int64_t>(delta * spb);
                 const std::int64_t newOff = static_cast<std::int64_t>(state->trimOrigSourceOffset) + offsetDelta;
                 clip.sourceOffsetFrames = static_cast<std::uint64_t>(std::max<std::int64_t>(0, newOff));
@@ -2486,9 +2456,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdSho
         auto* initialState = reinterpret_cast<UiState*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
         if (initialState != nullptr) {
             EnterCriticalSection(&initialState->audioStateLock);
-            IoLoadProject(startupProjectPath, *initialState);
+            LoadProject(startupProjectPath, *initialState);
             LeaveCriticalSection(&initialState->audioStateLock);
-            EnsureInsertDspStateStorage(*initialState);
+            if (initialState->trackInsertDspState.size() != initialState->project.tracks.size()) initialState->trackInsertDspState.resize(initialState->project.tracks.size());
             UpdateWindowTitle(hwnd, *initialState);
         }
     }

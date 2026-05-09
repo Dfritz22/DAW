@@ -1,6 +1,4 @@
 #include "ui/draw.h"
-#include "core/automation.h"
-#include "core/timeline.h"
 #include "ui/layout.h"
 
 namespace {
@@ -459,10 +457,10 @@ void UiDrawLeftTrackPanel(HDC hdc, const RECT& rect, const UiState& state) {
         Fill(hdc, busRect, RGB(49, 54, 61));
         StrokeRect(hdc, busRect, RGB(82, 88, 97));
         SetTextColor(hdc, RGB(220, 224, 230));
-        DrawTextW(hdc, BusName(AutomationTrackBusIndexAt(state, static_cast<int>(i))), -1, &busRect,
+        DrawTextW(hdc, BusName(TrackBusIndexAt(state, static_cast<int>(i))), -1, &busRect,
                   DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
-        const float trPan = AutomationTrackPanAt(state, static_cast<int>(i));
+        const float trPan = TrackPanAt(state, static_cast<int>(i));
         DrawPanKnob(hdc, panKnobRect, trPan, static_cast<int>(i) == state.selectedTrackIndex);
         Fill(hdc, panValRect, RGB(40, 44, 49));
         StrokeRect(hdc, panValRect, RGB(82, 88, 97));
@@ -516,7 +514,7 @@ void UiDrawLeftTrackPanel(HDC hdc, const RECT& rect, const UiState& state) {
         DrawTextW(hdc, L"S", -1, &soloRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         DrawTextW(hdc, L"R", -1, &recRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-        const float gainDb = AutomationTrackGainDbAt(state, static_cast<int>(i));
+        const float gainDb = TrackGainDbAt(state, static_cast<int>(i));
         wchar_t dbText[32] = {};
         swprintf_s(dbText, L"%+.1f dB", gainDb);
         RECT gainRect{row.right - 106, row.top + 34, row.right - 56, row.bottom - 12};
@@ -781,7 +779,7 @@ void UiDrawArrangeLanes(HDC hdc, const RECT& rect, const UiState& state) {
         if (state.project.clips[i].audioIndex >= 0 && state.project.clips[i].audioIndex < static_cast<int>(state.project.audio.size()) && waveRect.right > waveRect.left && waveRect.bottom > waveRect.top) {
             const LoadedAudio& audio = state.project.audio[static_cast<size_t>(state.project.clips[i].audioIndex)];
             const std::uint64_t totalFrames = static_cast<std::uint64_t>(audio.frames);
-            const float spb = TimelineSamplesPerBeat(state);
+            const float spb = SamplesPerBeat(state);
             const std::uint64_t srcOffset = state.project.clips[i].sourceOffsetFrames;
             const std::uint64_t clipLenFrames = std::min(
                 static_cast<std::uint64_t>(state.project.clips[i].lengthBeats * spb),

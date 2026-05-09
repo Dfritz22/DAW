@@ -86,3 +86,27 @@ int AutomationTrackBusIndexAt(const UiState& state, int trackIndex, float beat) 
         0,
         kBusCount - 1);
 }
+
+float TrackGainDbAt(const UiState& state, int trackIndex, float beat) {
+    return AutomationTrackGainDbAt(state, trackIndex, beat);
+}
+
+float TrackPanAt(const UiState& state, int trackIndex, float beat) {
+    return AutomationTrackPanAt(state, trackIndex, beat);
+}
+
+int TrackBusIndexAt(const UiState& state, int trackIndex, float beat) {
+    return AutomationTrackBusIndexAt(state, trackIndex, beat);
+}
+
+float TrackGainDbAt(const UiState& state, int trackIndex) {
+    return AutomationTrackGainDbAt(state, trackIndex, 0.0f);
+}
+
+float TrackPanAt(const UiState& state, int trackIndex) {
+    return AutomationTrackPanAt(state, trackIndex, 0.0f);
+}
+
+int TrackBusIndexAt(const UiState& state, int trackIndex) {
+    return AutomationTrackBusIndexAt(state, trackIndex, 0.0f);
+}

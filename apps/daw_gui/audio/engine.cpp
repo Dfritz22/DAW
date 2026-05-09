@@ -8,6 +8,15 @@
 
 // ── Engine function definitions ───────────────────────────────────────────────
 
+bool EngineInit(UiState& state) {
+    (void)state;
+    return true;
+}
+
+void EngineShutdown(UiState& state) {
+    (void)state;
+}
+
 bool EngineFillRealtimeBufferLocked(UiState& state, std::int16_t* outInterleaved, int frames, bool* reachedEnd) {
     if (state.project.projectSampleRate <= 0) {
         std::fill(outInterleaved, outInterleaved + (frames * 2), 0);
