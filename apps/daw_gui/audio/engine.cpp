@@ -1,5 +1,6 @@
 #include "engine.h"
 #include "../dsp/chain.h"
+#include "../core/automation.h"
 #include "../core/timeline.h"
 
 // ── Engine function definitions ───────────────────────────────────────────────

@@ -1,6 +1,7 @@
 #include "device_mme.h"
 #include "device_common.h"
 #include "engine.h"
+#include "../core/automation.h"
 #include "../core/timeline.h"
 
 // ── Forward declarations for orchestration functions in main.cpp ─────────────

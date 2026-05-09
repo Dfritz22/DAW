@@ -1,6 +1,7 @@
 #include "device_wasapi.h"
 #include "engine.h"
 #include "device_common.h"  // GetRenderedPlaybackFrame
+#include "../core/automation.h"
 #include "../core/timeline.h"
 
 // ── Forward declarations for orchestration functions in main.cpp ─────────────

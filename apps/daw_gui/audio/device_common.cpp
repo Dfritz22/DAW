@@ -1,4 +1,5 @@
 #include "device_common.h"
+#include "../core/automation.h"
 #include "../core/timeline.h"
 
 // ── Backend labels ────────────────────────────────────────────────────────────

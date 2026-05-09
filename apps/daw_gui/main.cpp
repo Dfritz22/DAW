@@ -2,6 +2,7 @@
 #include "io/wav_io.h"
 #include "io/project_io.h"
 #include "dsp/chain.h"
+#include "core/automation.h"
 #include "core/timeline.h"
 #include "core/timeline_edit.h"
 #include "ai/automix_bridge.h"

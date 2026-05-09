@@ -5,6 +5,7 @@ add_executable(daw_gui WIN32
     io/project_io.cpp
     ai/automix_bridge.cpp
     dsp/chain.cpp
+    core/automation.cpp
     ui/layout.cpp
     core/timeline.cpp
     core/timeline_edit.cpp
@@ -18,6 +19,11 @@ add_executable(daw_gui WIN32
 target_link_libraries(daw_gui
     PRIVATE
         daw_core
+)
+
+target_include_directories(daw_gui
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 target_compile_definitions(daw_gui PRIVATE UNICODE _UNICODE)

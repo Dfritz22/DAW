@@ -1,5 +1,6 @@
 #pragma once
 #include "state.h"
+#include "core/automation.h"
 #include "ui/layout.h"
 #include "core/timeline.h"
 
