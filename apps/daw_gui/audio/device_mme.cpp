@@ -1,6 +1,7 @@
 #include "device_mme.h"
 #include "device_common.h"
 #include "engine.h"
+#include "../core/timeline.h"
 
 // ── Forward declarations for orchestration functions in main.cpp ─────────────
 // These are defined in main.cpp and called by StartMmeAudio / StartMmeRecording
@@ -8,20 +9,6 @@
 bool StartPlayback(HWND hwnd, UiState& state);
 void StopPlayback(UiState& state, bool rewind);
 void StopRecording(UiState& state, bool commitTake);
-
-// ── File-private layout helper ────────────────────────────────────────────────
-// Exact duplicate of layout.cpp::SamplesPerBeat; internal linkage avoids ODR.
-namespace {
-
-float SamplesPerBeat(const UiState& state) {
-    int sr = state.project.projectSampleRate;
-    if (sr <= 0) sr = state.activeDeviceSampleRate;
-    if (sr <= 0) sr = state.preferredSampleRate;
-    if (sr <= 0) sr = 1;
-    return static_cast<float>(sr) * 60.0f / state.project.bpm;
-}
-
-} // namespace
 
 // ── MME playback thread ───────────────────────────────────────────────────────
 
@@ -214,15 +201,14 @@ bool StartMmeAudio(HWND hwnd, UiState& state) {
 
     EnterCriticalSection(&state.audioStateLock);
     const float startBeat = std::max(0.0f, state.playheadBeat);
-    const std::uint64_t startFrame = static_cast<std::uint64_t>(
-        std::llround(static_cast<double>(startBeat) * static_cast<double>(SamplesPerBeat(state))));
+    const std::uint64_t startFrame = FramesFromBeats(state, startBeat);
     state.playbackFrameCursor.store(startFrame);
     const std::uint64_t endFrame = ComputeProjectEndFrameLocked(state);
     LeaveCriticalSection(&state.audioStateLock);
 
     state.playbackStartTick = GetTickCount64();
     state.playbackStartBeat = startBeat;
-    state.playbackEndBeat = static_cast<float>(endFrame) / SamplesPerBeat(state);
+    state.playbackEndBeat = BeatsFromFrames(state, endFrame);
     state.playing = true;
     state.audioStopRequested.store(false);
     state.audioThreadRunning.store(true);
@@ -365,12 +351,12 @@ bool StartMmeRecording(HWND hwnd, UiState& state, int armedTrack, bool wasPlayin
     const float samplesPerBeat = std::max(1.0f, SamplesPerBeat(state));
     const std::uint64_t timelineStartFrame = state.playing
         ? GetRenderedPlaybackFrame(state)
-        : static_cast<std::uint64_t>(std::llround(static_cast<double>(std::max(0.0f, state.playheadBeat)) * static_cast<double>(samplesPerBeat)));
+        : FramesFromBeats(state, std::max(0.0f, state.playheadBeat));
 
     // Set preroll + tentative placement before starting capture.
     state.recordPrerollFrames = 0;
     if (!wasPlaying && state.countInEnabled) {
-        state.recordPrerollFrames = static_cast<std::uint64_t>(std::llround(4.0 * static_cast<double>(state.countInBars) * static_cast<double>(samplesPerBeat)));
+        state.recordPrerollFrames = FramesFromBeats(state, 4.0f * static_cast<float>(state.countInBars));
     }
     state.recordStartFrame = timelineStartFrame + state.recordPrerollFrames;
     state.countingIn = (state.recordPrerollFrames > 0);

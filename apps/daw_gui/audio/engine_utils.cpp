@@ -1,21 +1,5 @@
 #include "engine_utils.h"
-
-// ── File-private helpers (audio-domain copies of layout math) ────────────────
-// These are anonymous-namespace duplicates of the same functions that live in
-// ui/layout.cpp.  They exist so that engine_utils.cpp (and transitively
-// engine.cpp) never need to include ui/layout.h, keeping the dependency
-// direction main.cpp → audio/engine → engine_utils, never the reverse.
-namespace {
-
-float SamplesPerBeat(const UiState& state) {
-    int sr = state.project.projectSampleRate;
-    if (sr <= 0) sr = state.activeDeviceSampleRate;
-    if (sr <= 0) sr = state.preferredSampleRate;
-    if (sr <= 0) sr = 1;
-    return static_cast<float>(sr) * 60.0f / state.project.bpm;
-}
-
-} // namespace
+#include "../core/timeline.h"
 
 // ── Public definitions ────────────────────────────────────────────────────────
 
@@ -80,14 +64,13 @@ bool IsTrackAudible(const UiState& state, int trackIndex) {
 }
 
 std::uint64_t ComputeProjectEndFrameLocked(const UiState& state) {
-    const float samplesPerBeat = SamplesPerBeat(state);
     std::uint64_t maxFrame = 0;
     for (const ClipItem& clip : state.project.clips) {
         if (clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.project.audio.size())) {
             continue;
         }
-        const std::uint64_t clipStartTL   = static_cast<std::uint64_t>(std::llround(std::max(0.0f, clip.startBeat) * samplesPerBeat));
-        const std::uint64_t clipLenFrames = static_cast<std::uint64_t>(std::llround(clip.lengthBeats * samplesPerBeat));
+        const std::uint64_t clipStartTL   = FramesFromBeats(state, clip.startBeat);
+        const std::uint64_t clipLenFrames = FramesFromBeats(state, clip.lengthBeats);
         maxFrame = std::max(maxFrame, clipStartTL + clipLenFrames);
     }
     return maxFrame;

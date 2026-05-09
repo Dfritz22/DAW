@@ -740,7 +740,7 @@ static bool ReplaceProjectWithSingleWav(UiState& state, const std::wstring& wavP
     }
         state.project.audio.push_back(std::move(audio));
 
-        const float lengthBeats = static_cast<float>(state.project.audio.back().frames) / SamplesPerBeat(state);
+        const float lengthBeats = BeatsFromFrames(state, state.project.audio.back().frames);
         state.project.clips.push_back(ClipItem{
             0,
             0,
@@ -1159,7 +1159,7 @@ void ImportWavFiles(HWND hwnd, UiState& state) {
         }
         state.project.audio.push_back(std::move(audio));
 
-        const float lengthBeats = static_cast<float>(state.project.audio.back().frames) / SamplesPerBeat(state);
+        const float lengthBeats = BeatsFromFrames(state, state.project.audio.back().frames);
         state.project.clips.push_back(ClipItem{
             trackIndex,
             audioIndex,
@@ -1285,9 +1285,8 @@ void StopRecording(UiState& state, bool commitTake) {
             const int audioIndex = static_cast<int>(state.project.audio.size());
             state.project.audio.push_back(std::move(take));
 
-            const float samplesPerBeat = SamplesPerBeat(state);
-            const float startBeat = static_cast<float>(state.recordStartFrame) / std::max(1.0f, samplesPerBeat);
-            const float lengthBeats = static_cast<float>(frames) / std::max(1.0f, samplesPerBeat);
+            const float startBeat = BeatsFromFrames(state, state.recordStartFrame);
+            const float lengthBeats = BeatsFromFrames(state, frames);
 
             if (state.recordTrackIndex >= 0 && state.recordTrackIndex < static_cast<int>(state.project.tracks.size())) {
                 state.project.clips.push_back(ClipItem{
@@ -1428,9 +1427,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     case WM_TIMER:
         if (state != nullptr && wParam == kPlaybackTimerId && state->playing) {
-            const float samplesPerBeat = SamplesPerBeat(*state);
             const std::uint64_t absoluteFrame = GetRenderedPlaybackFrame(*state);
-            state->playheadBeat = static_cast<float>(absoluteFrame) / std::max(1.0f, samplesPerBeat);
+            state->playheadBeat = BeatsFromFrames(*state, absoluteFrame);
 
             const float viewRight = state->viewStartBeat + state->viewBeatsVisible;
             if (state->playheadBeat > viewRight - 1.0f) {

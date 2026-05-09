@@ -1,43 +1,6 @@
 #include "engine.h"
 #include "../dsp/chain.h"
-
-// ── File-private audio-domain copies of layout helpers ───────────────────────
-// engine.cpp must not include ui/layout.h (no dependency on the UI layer).
-// These anonymous-namespace functions are exact duplicates of the corresponding
-// functions in ui/layout.cpp; they have internal linkage so there is no ODR
-// conflict or linker collision.
-namespace {
-
-float SamplesPerBeat(const UiState& state) {
-    int sr = state.project.projectSampleRate;
-    if (sr <= 0) sr = state.activeDeviceSampleRate;
-    if (sr <= 0) sr = state.preferredSampleRate;
-    if (sr <= 0) sr = 1;
-    return static_cast<float>(sr) * 60.0f / state.project.bpm;
-}
-
-float TrackGainDbAt(const UiState& state, int trackIndex) {
-    if (trackIndex < 0 || trackIndex >= static_cast<int>(state.project.tracks.size())) {
-        return 0.0f;
-    }
-    return state.project.tracks[static_cast<size_t>(trackIndex)].gainDb;
-}
-
-int TrackBusIndexAt(const UiState& state, int trackIndex) {
-    if (trackIndex < 0 || trackIndex >= static_cast<int>(state.project.tracks.size())) {
-        return 1;
-    }
-    return std::clamp(state.project.tracks[static_cast<size_t>(trackIndex)].busIndex, 0, kBusCount - 1);
-}
-
-float TrackPanAt(const UiState& state, int trackIndex) {
-    if (trackIndex < 0 || trackIndex >= static_cast<int>(state.project.tracks.size())) {
-        return 0.0f;
-    }
-    return std::clamp(state.project.tracks[static_cast<size_t>(trackIndex)].pan, -1.0f, 1.0f);
-}
-
-} // namespace
+#include "../core/timeline.h"
 
 // ── Engine function definitions ───────────────────────────────────────────────
 

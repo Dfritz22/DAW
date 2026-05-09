@@ -1,18 +1,5 @@
 #include "device_common.h"
-
-// ── File-private layout helper ────────────────────────────────────────────────
-// Exact duplicate of layout.cpp::SamplesPerBeat; internal linkage avoids ODR.
-namespace {
-
-float SamplesPerBeat(const UiState& state) {
-    int sr = state.project.projectSampleRate;
-    if (sr <= 0) sr = state.activeDeviceSampleRate;
-    if (sr <= 0) sr = state.preferredSampleRate;
-    if (sr <= 0) sr = 1;
-    return static_cast<float>(sr) * 60.0f / state.project.bpm;
-}
-
-} // namespace
+#include "../core/timeline.h"
 
 // ── Backend labels ────────────────────────────────────────────────────────────
 
@@ -233,9 +220,7 @@ std::uint64_t GetRenderedPlaybackFrame(const UiState& state) {
         return static_cast<std::uint64_t>((elapsedMs * static_cast<ULONGLONG>(state.project.projectSampleRate)) / 1000ULL);
     };
 
-    const float samplesPerBeat = std::max(1.0f, SamplesPerBeat(state));
-    const std::uint64_t startFrame = static_cast<std::uint64_t>(
-        std::llround(static_cast<double>(std::max(0.0f, state.playbackStartBeat)) * static_cast<double>(samplesPerBeat)));
+    const std::uint64_t startFrame = FramesFromBeats(state, std::max(0.0f, state.playbackStartBeat));
 
     // Return absolute project frames. Audio generation may queue ahead, so clamp to elapsed transport time.
     if (state.playingViaWasapi || state.waveOut == nullptr || state.project.projectSampleRate <= 0) {

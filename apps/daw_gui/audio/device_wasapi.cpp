@@ -1,23 +1,10 @@
 #include "device_wasapi.h"
 #include "engine.h"
 #include "device_common.h"  // GetRenderedPlaybackFrame
+#include "../core/timeline.h"
 
 // ── Forward declarations for orchestration functions in main.cpp ─────────────
 void StopPlayback(UiState& state, bool rewind);
-
-// ── File-private layout helper ────────────────────────────────────────────────
-// Exact duplicate of layout.cpp::SamplesPerBeat; internal linkage avoids ODR.
-namespace {
-
-float SamplesPerBeat(const UiState& state) {
-    int sr = state.project.projectSampleRate;
-    if (sr <= 0) sr = state.activeDeviceSampleRate;
-    if (sr <= 0) sr = state.preferredSampleRate;
-    if (sr <= 0) sr = 1;
-    return static_cast<float>(sr) * 60.0f / state.project.bpm;
-}
-
-} // namespace
 
 // ── Endpoint helpers ──────────────────────────────────────────────────────────
 
@@ -503,15 +490,14 @@ static DWORD WINAPI WasapiRecordThreadProc(LPVOID param) {
 bool StartWasapiAudio(HWND hwnd, UiState& state) {
     EnterCriticalSection(&state.audioStateLock);
     const float startBeat  = std::max(0.0f, state.playheadBeat);
-    const std::uint64_t startFrame = static_cast<std::uint64_t>(
-        std::llround(static_cast<double>(startBeat) * static_cast<double>(SamplesPerBeat(state))));
+    const std::uint64_t startFrame = FramesFromBeats(state, startBeat);
     state.playbackFrameCursor.store(startFrame);
     const std::uint64_t endFrame = ComputeProjectEndFrameLocked(state);
     LeaveCriticalSection(&state.audioStateLock);
 
     state.playbackStartTick = 0;
     state.playbackStartBeat = startBeat;
-    state.playbackEndBeat   = static_cast<float>(endFrame) / SamplesPerBeat(state);
+    state.playbackEndBeat   = BeatsFromFrames(state, endFrame);
     state.playing           = true;
     state.playingViaWasapi  = true;
     state.audioStopRequested.store(false);
@@ -581,15 +567,14 @@ bool StartWasapiRecording(HWND hwnd, UiState& state, int armedTrack, bool wasPla
     state.monitorInputReadPos = 0;
     state.recordTrackIndex = armedTrack;
     state.recordCaptureStartTickMs = GetTickCount64();
-    const float samplesPerBeat = std::max(1.0f, SamplesPerBeat(state));
     const std::uint64_t timelineStartFrame = state.playing
         ? GetRenderedPlaybackFrame(state)
-        : static_cast<std::uint64_t>(std::llround(static_cast<double>(std::max(0.0f, state.playheadBeat)) * static_cast<double>(samplesPerBeat)));
+        : FramesFromBeats(state, std::max(0.0f, state.playheadBeat));
 
     // Compute preroll duration upfront so count-in click can play immediately.
     state.recordPrerollFrames = 0;
     if (!wasPlaying && state.countInEnabled) {
-        state.recordPrerollFrames = static_cast<std::uint64_t>(std::llround(4.0 * static_cast<double>(state.countInBars) * static_cast<double>(samplesPerBeat)));
+        state.recordPrerollFrames = FramesFromBeats(state, 4.0f * static_cast<float>(state.countInBars));
     }
     // Tentative placement: preroll end is deterministic regardless of init latency.
     state.recordStartFrame = timelineStartFrame + state.recordPrerollFrames;
