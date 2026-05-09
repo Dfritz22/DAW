@@ -8,7 +8,8 @@
 #include <string>
 
 enum class AudioBackend;
-struct UiState;
+struct CoreState;
+struct AudioRuntimeState;
 struct HWND__;
 using HWND = HWND__*;
 
@@ -22,19 +23,19 @@ std::string     DeviceAudioBackendToJson(AudioBackend backend);
 AudioBackend    DeviceAudioBackendFromJson(const std::string& value);
 
 // ── Device enumeration ────────────────────────────────────────────────────────
-void DeviceRefreshInputDevices(UiState& state);
-void DeviceRefreshOutputDevices(UiState& state);
+void DeviceRefreshInputDevices(AudioRuntimeState& audio);
+void DeviceRefreshOutputDevices(AudioRuntimeState& audio);
 
 // ── Diagnostics ───────────────────────────────────────────────────────────────
-std::wstring DeviceBuildAudioDiagnosticsReport(const UiState& state);
+std::wstring DeviceBuildAudioDiagnosticsReport(const CoreState& core, const AudioRuntimeState& audio);
 
 // ── Playback cursor ───────────────────────────────────────────────────────────
 // Returns the current absolute project-frame position of the playhead,
 // taking into account both WASAPI and MME waveOut timing paths.
-std::uint64_t DeviceGetRenderedPlaybackFrame(const UiState& state);
+std::uint64_t DeviceGetRenderedPlaybackFrame(const CoreState& core, const AudioRuntimeState& audio);
 
 // ── Backend-agnostic start/stop entry points for orchestration layers ───────
-bool DeviceStartPlaybackBackend(HWND hwnd, UiState& state);
-void DeviceStopPlaybackBackend(UiState& state);
-bool DeviceStartRecordingBackend(HWND hwnd, UiState& state, int armedTrack, bool wasPlaying);
-void DeviceStopRecordingBackend(UiState& state);
+bool DeviceStartPlaybackBackend(HWND hwnd, CoreState& core, AudioRuntimeState& audio, float playheadBeat);
+void DeviceStopPlaybackBackend(AudioRuntimeState& audio);
+bool DeviceStartRecordingBackend(HWND hwnd, CoreState& core, AudioRuntimeState& audio, int armedTrack, bool wasPlaying, float playheadBeat);
+void DeviceStopRecordingBackend(AudioRuntimeState& audio);

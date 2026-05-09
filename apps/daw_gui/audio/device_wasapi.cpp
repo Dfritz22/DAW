@@ -1,13 +1,19 @@
 #include "device_wasapi.h"
+
+#include "device_common.h"  // DeviceGetRenderedPlaybackFrame
 #include "engine.h"
 #include "engine_utils.h"
-#include "device_common.h"  // DeviceGetRenderedPlaybackFrame
-#include "core/state.h"
 #include "core/automation.h"
 #include "core/timeline.h"
 
-// ── Forward declarations for orchestration functions in main.cpp ─────────────
-void StopPlayback(UiState& state, bool rewind);
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <sstream>
+
+namespace {
+constexpr UINT kMsgPlaybackFinished = WM_APP + 1;
+}
 
 namespace daw::internal::audio {
 
@@ -122,21 +128,22 @@ static IMMDevice* FindWasapiOutputEndpoint(const std::wstring& preferredName) {
 // ── WASAPI render thread ──────────────────────────────────────────────────────
 
 static DWORD WINAPI WasapiRenderThreadProc(LPVOID param) {
-    auto* state = reinterpret_cast<UiState*>(param);
-    if (state == nullptr) return 0;
+    auto* audio = reinterpret_cast<AudioRuntimeState*>(param);
+    if (audio == nullptr || audio->coreContext == nullptr) return 0;
+    CoreState& core = *audio->coreContext;
 
-    state->lastPlaybackInitError.clear();
+    audio->lastPlaybackInitError.clear();
 
     HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     const bool coInitOk = SUCCEEDED(hr) || hr == RPC_E_CHANGED_MODE;
     if (!coInitOk) {
-        state->lastPlaybackInitError = L"WASAPI COM init failed";
-        state->wasapiOutInitState.store(-1);
-        state->audioThreadRunning.store(false);
+        audio->lastPlaybackInitError = L"WASAPI COM init failed";
+        audio->wasapiOutInitState.store(-1);
+        audio->audioThreadRunning.store(false);
         return 0;
     }
 
-    IMMDevice*          device       = FindWasapiOutputEndpoint(state->selectedOutputDeviceName);
+    IMMDevice*          device       = FindWasapiOutputEndpoint(audio->selectedOutputDeviceName);
     IAudioClient*       audioClient  = nullptr;
     IAudioRenderClient* renderClient = nullptr;
     WAVEFORMATEX*       mixFmt       = nullptr;
@@ -150,9 +157,9 @@ static DWORD WINAPI WasapiRenderThreadProc(LPVOID param) {
         if (mixFmt)       { CoTaskMemFree(mixFmt);   mixFmt = nullptr; }
         if (device)       { device->Release();       device = nullptr; }
         if (coInitOk) CoUninitialize();
-        state->lastPlaybackInitError = (msg != nullptr) ? msg : L"WASAPI initialization failed";
-        state->wasapiOutInitState.store(-1);
-        state->audioThreadRunning.store(false);
+        audio->lastPlaybackInitError = (msg != nullptr) ? msg : L"WASAPI initialization failed";
+        audio->wasapiOutInitState.store(-1);
+        audio->audioThreadRunning.store(false);
     };
 
     do {
@@ -168,10 +175,10 @@ static DWORD WINAPI WasapiRenderThreadProc(LPVOID param) {
         WAVEFORMATEX* openFmt = mixFmt;
         REFERENCE_TIME hnsBuffer = 0;
 
-        if (state->audioBackend == AudioBackend::WasapiExclusive) {
-            const int requestedSR = (state->preferredSampleRate > 0)
-                ? state->preferredSampleRate
-                : state->project.projectSampleRate;
+        if (audio->audioBackend == AudioBackend::WasapiExclusive) {
+            const int requestedSR = (audio->preferredSampleRate > 0)
+                ? audio->preferredSampleRate
+                : core.project.projectSampleRate;
 
             if (requestedSR > 0) {
                 const size_t fmtBytes = sizeof(WAVEFORMATEX) + static_cast<size_t>(mixFmt->cbSize);
@@ -200,12 +207,12 @@ static DWORD WINAPI WasapiRenderThreadProc(LPVOID param) {
             }
 
             if (fellBackToShared) {
-                state->lastPlaybackInitError = L"WASAPI exclusive failed; falling back to WASAPI shared mode.";
+                audio->lastPlaybackInitError = L"WASAPI exclusive failed; falling back to WASAPI shared mode.";
             }
         }
 
-        if (state->preferredBufferFrames > 0 && openFmt->nSamplesPerSec > 0) {
-            hnsBuffer = static_cast<REFERENCE_TIME>((10000000LL * static_cast<long long>(state->preferredBufferFrames)) / static_cast<long long>(openFmt->nSamplesPerSec));
+        if (audio->preferredBufferFrames > 0 && openFmt->nSamplesPerSec > 0) {
+            hnsBuffer = static_cast<REFERENCE_TIME>((10000000LL * static_cast<long long>(audio->preferredBufferFrames)) / static_cast<long long>(openFmt->nSamplesPerSec));
             hnsBuffer = std::max<REFERENCE_TIME>(hnsBuffer, 10000);
         }
 
@@ -213,7 +220,7 @@ static DWORD WINAPI WasapiRenderThreadProc(LPVOID param) {
         if (FAILED(hr)) {
             if (shareMode == AUDCLNT_SHAREMODE_EXCLUSIVE) {
                 fellBackToShared = true;
-                state->lastPlaybackInitError = L"WASAPI exclusive initialization failed; using WASAPI shared mode.";
+                audio->lastPlaybackInitError = L"WASAPI exclusive initialization failed; using WASAPI shared mode.";
                 hr = audioClient->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, hnsBuffer, 0, mixFmt, nullptr);
             }
             if (FAILED(hr)) {
@@ -226,15 +233,14 @@ static DWORD WINAPI WasapiRenderThreadProc(LPVOID param) {
         if (FAILED(hr) || renderClient == nullptr) { fail(L"GetService"); return 0; }
     } while (false);
 
-    // Store format metadata for diagnostics (copy to flat WAVEFORMATEX)
     {
         WAVEFORMATEX fmtCopy = *mixFmt;
-        EnterCriticalSection(&state->audioStateLock);
-        state->wasapiOutFormat              = fmtCopy;
-        state->lastOpenedOutputSampleRate   = static_cast<int>(fmtCopy.nSamplesPerSec);
-        state->lastOpenedOutputChannels     = static_cast<int>(fmtCopy.nChannels);
-        state->activeDeviceSampleRate       = static_cast<int>(fmtCopy.nSamplesPerSec);
-        LeaveCriticalSection(&state->audioStateLock);
+        EnterCriticalSection(&audio->audioStateLock);
+        audio->wasapiOutFormat              = fmtCopy;
+        audio->lastOpenedOutputSampleRate   = static_cast<int>(fmtCopy.nSamplesPerSec);
+        audio->lastOpenedOutputChannels     = static_cast<int>(fmtCopy.nChannels);
+        audio->activeDeviceSampleRate       = static_cast<int>(fmtCopy.nSamplesPerSec);
+        LeaveCriticalSection(&audio->audioStateLock);
     }
 
     const UINT32 nChannels   = mixFmt->nChannels;
@@ -250,27 +256,29 @@ static DWORD WINAPI WasapiRenderThreadProc(LPVOID param) {
         CoTaskMemFree(exclusiveFmt);
         exclusiveFmt = nullptr;
     }
-    CoTaskMemFree(mixFmt); mixFmt = nullptr;
-    device->Release();     device = nullptr;
+    CoTaskMemFree(mixFmt);
+    mixFmt = nullptr;
+    device->Release();
+    device = nullptr;
 
     UINT32 bufferFrameCount = 0;
     audioClient->GetBufferSize(&bufferFrameCount);
     if (bufferFrameCount == 0) { fail(L"GetBufferSize=0"); return 0; }
 
-    state->activeDeviceBufferFrames = static_cast<int>(bufferFrameCount);
+    audio->activeDeviceBufferFrames = static_cast<int>(bufferFrameCount);
 
     if (FAILED(audioClient->Start())) { fail(L"Start"); return 0; }
 
     if (!fellBackToShared) {
-        state->lastPlaybackInitError.clear();
+        audio->lastPlaybackInitError.clear();
     }
 
-    state->wasapiOutInitState.store(1);  // signal ready
+    audio->wasapiOutInitState.store(1);
 
     std::vector<std::int16_t> pcmBuf;
     bool draining = false;
 
-    while (!state->audioStopRequested.load()) {
+    while (!audio->audioStopRequested.load()) {
         UINT32 padding = 0;
         if (FAILED(audioClient->GetCurrentPadding(&padding))) break;
 
@@ -288,9 +296,9 @@ static DWORD WINAPI WasapiRenderThreadProc(LPVOID param) {
 
         pcmBuf.assign(static_cast<size_t>(available) * 2, 0);
         bool reachedEnd = false;
-        EnterCriticalSection(&state->audioStateLock);
-        EngineFillRealtimeForDeviceLocked(*state, pcmBuf.data(), static_cast<int>(available), static_cast<int>(state->wasapiOutFormat.nSamplesPerSec), &reachedEnd);
-        LeaveCriticalSection(&state->audioStateLock);
+        EnterCriticalSection(&audio->audioStateLock);
+        EngineFillRealtimeForDeviceLocked(core, *audio, pcmBuf.data(), static_cast<int>(available), static_cast<int>(audio->wasapiOutFormat.nSamplesPerSec), &reachedEnd);
+        LeaveCriticalSection(&audio->audioStateLock);
 
         BYTE* pData = nullptr;
         if (FAILED(renderClient->GetBuffer(available, &pData)) || pData == nullptr) break;
@@ -298,7 +306,7 @@ static DWORD WINAPI WasapiRenderThreadProc(LPVOID param) {
         if (isFloat) {
             auto* fOut = reinterpret_cast<float*>(pData);
             for (UINT32 i = 0; i < available; ++i) {
-                fOut[i * nChannels]     = static_cast<float>(pcmBuf[i * 2])     / 32767.0f;
+                fOut[i * nChannels]     = static_cast<float>(pcmBuf[i * 2]) / 32767.0f;
                 fOut[i * nChannels + 1] = static_cast<float>(pcmBuf[i * 2 + 1]) / 32767.0f;
                 for (UINT32 ch = 2; ch < nChannels; ++ch) fOut[i * nChannels + ch] = 0.0f;
             }
@@ -310,7 +318,7 @@ static DWORD WINAPI WasapiRenderThreadProc(LPVOID param) {
                 for (UINT32 ch = 2; ch < nChannels; ++ch) sOut[i * nChannels + ch] = 0;
             }
         } else {
-            std::memset(pData, 0, static_cast<size_t>(available) * state->wasapiOutFormat.nBlockAlign);
+            std::memset(pData, 0, static_cast<size_t>(available) * audio->wasapiOutFormat.nBlockAlign);
         }
 
         renderClient->ReleaseBuffer(available, 0);
@@ -322,10 +330,10 @@ static DWORD WINAPI WasapiRenderThreadProc(LPVOID param) {
     audioClient->Release();
 
     if (coInitOk) CoUninitialize();
-    state->audioThreadRunning.store(false);
+    audio->audioThreadRunning.store(false);
 
-    if (!state->audioStopRequested.load()) {
-        PostMessage(state->hwnd, kMsgPlaybackFinished, 0, 0);
+    if (!audio->audioStopRequested.load()) {
+        PostMessage(audio->hwnd, kMsgPlaybackFinished, 0, 0);
     }
     return 0;
 }
@@ -333,50 +341,51 @@ static DWORD WINAPI WasapiRenderThreadProc(LPVOID param) {
 // ── WASAPI capture thread ─────────────────────────────────────────────────────
 
 static DWORD WINAPI WasapiRecordThreadProc(LPVOID param) {
-    auto* state = reinterpret_cast<UiState*>(param);
-    if (state == nullptr) {
+    auto* audio = reinterpret_cast<AudioRuntimeState*>(param);
+    if (audio == nullptr || audio->coreContext == nullptr) {
         return 0;
     }
+    CoreState& core = *audio->coreContext;
 
     HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     const bool coInitOk = SUCCEEDED(hr) || hr == RPC_E_CHANGED_MODE;
     if (!coInitOk) {
-        state->lastRecordInitError = L"WASAPI COM init failed";
-        state->recordInitState.store(-1);
+        audio->lastRecordInitError = L"WASAPI COM init failed";
+        audio->recordInitState.store(-1);
         return 0;
     }
 
-    IMMDevice* device = FindWasapiCaptureEndpoint(state->selectedInputDeviceName);
+    IMMDevice* device = FindWasapiCaptureEndpoint(audio->selectedInputDeviceName);
     IAudioClient* audioClient = nullptr;
     IAudioCaptureClient* captureClient = nullptr;
     WAVEFORMATEX* mixFmt = nullptr;
 
     do {
         if (device == nullptr) {
-            state->lastRecordInitError = L"No WASAPI capture endpoint found";
+            audio->lastRecordInitError = L"No WASAPI capture endpoint found";
             break;
         }
         hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(&audioClient));
         if (FAILED(hr) || audioClient == nullptr) {
-            state->lastRecordInitError = L"WASAPI Activate(IAudioClient) failed";
+            audio->lastRecordInitError = L"WASAPI Activate(IAudioClient) failed";
             break;
         }
 
         hr = audioClient->GetMixFormat(&mixFmt);
         if (FAILED(hr) || mixFmt == nullptr) {
-            state->lastRecordInitError = L"WASAPI GetMixFormat failed";
+            audio->lastRecordInitError = L"WASAPI GetMixFormat failed";
             break;
         }
 
         hr = audioClient->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, 0, 0, mixFmt, nullptr);
         if (FAILED(hr)) {
-            state->lastRecordInitError = L"WASAPI Initialize(shared) failed";
+            audio->lastRecordInitError = L"WASAPI Initialize(shared) failed";
             break;
         }
 
         hr = audioClient->GetService(__uuidof(IAudioCaptureClient), reinterpret_cast<void**>(&captureClient));
         if (FAILED(hr) || captureClient == nullptr) {
-            state->lastRecordInitError = L"WASAPI GetService(IAudioCaptureClient) failed";
+            audio->lastRecordInitError = L"WASAPI GetService(IAudioCaptureClient) failed";
             break;
         }
 
@@ -384,22 +393,22 @@ static DWORD WINAPI WasapiRecordThreadProc(LPVOID param) {
         const int outCh = (mixCh >= 2) ? 2 : 1;
         const int sr = static_cast<int>(mixFmt->nSamplesPerSec);
 
-        state->waveInFormat = *mixFmt;
-        state->recordInputChannels = outCh;
-        state->lastOpenedInputSampleRate = sr;
-        state->lastOpenedInputChannels = outCh;
-        if (state->project.projectSampleRate <= 0 && sr > 0) {
-            state->project.projectSampleRate = sr;
+        audio->waveInFormat = *mixFmt;
+        audio->recordInputChannels = outCh;
+        audio->lastOpenedInputSampleRate = sr;
+        audio->lastOpenedInputChannels = outCh;
+        if (core.project.projectSampleRate <= 0 && sr > 0) {
+            core.project.projectSampleRate = sr;
         }
 
         if (FAILED(audioClient->Start())) {
-            state->lastRecordInitError = L"WASAPI capture start failed";
+            audio->lastRecordInitError = L"WASAPI capture start failed";
             break;
         }
 
-        state->recordInitState.store(1);
+        audio->recordInitState.store(1);
 
-        while (!state->recordStopRequested.load()) {
+        while (!audio->recordStopRequested.load()) {
             UINT32 packetFrames = 0;
             if (FAILED(captureClient->GetNextPacketSize(&packetFrames))) {
                 break;
@@ -435,10 +444,10 @@ static DWORD WINAPI WasapiRecordThreadProc(LPVOID param) {
                             const std::int16_t li = static_cast<std::int16_t>(std::lrint(std::clamp(l, -1.0f, 1.0f) * 32767.0f));
                             const std::int16_t ri = static_cast<std::int16_t>(std::lrint(std::clamp(r, -1.0f, 1.0f) * 32767.0f));
                             if (outCh == 1) {
-                                state->recordedInputPcm.push_back(li);
+                                audio->recordedInputPcm.push_back(li);
                             } else {
-                                state->recordedInputPcm.push_back(li);
-                                state->recordedInputPcm.push_back(ri);
+                                audio->recordedInputPcm.push_back(li);
+                                audio->recordedInputPcm.push_back(ri);
                             }
                         }
                     } else if (isPcm16) {
@@ -447,24 +456,24 @@ static DWORD WINAPI WasapiRecordThreadProc(LPVOID param) {
                             const std::int16_t li = s[static_cast<size_t>(i) * mixCh];
                             const std::int16_t ri = (mixCh > 1) ? s[static_cast<size_t>(i) * mixCh + 1] : li;
                             if (outCh == 1) {
-                                state->recordedInputPcm.push_back(li);
+                                audio->recordedInputPcm.push_back(li);
                             } else {
-                                state->recordedInputPcm.push_back(li);
-                                state->recordedInputPcm.push_back(ri);
+                                audio->recordedInputPcm.push_back(li);
+                                audio->recordedInputPcm.push_back(ri);
                             }
                         }
                     }
 
-                    if (state->inputMonitoring) {
-                        EnterCriticalSection(&state->audioStateLock);
-                        const size_t n = state->recordedInputPcm.size();
+                    if (audio->inputMonitoring) {
+                        EnterCriticalSection(&audio->audioStateLock);
+                        const size_t n = audio->recordedInputPcm.size();
                         const size_t appendCount = static_cast<size_t>(frames) * static_cast<size_t>(outCh);
                         if (appendCount <= n) {
-                            state->monitorInputPcm.insert(state->monitorInputPcm.end(),
-                                state->recordedInputPcm.end() - static_cast<std::vector<std::int16_t>::difference_type>(appendCount),
-                                state->recordedInputPcm.end());
+                            audio->monitorInputPcm.insert(audio->monitorInputPcm.end(),
+                                audio->recordedInputPcm.end() - static_cast<std::vector<std::int16_t>::difference_type>(appendCount),
+                                audio->recordedInputPcm.end());
                         }
-                        LeaveCriticalSection(&state->audioStateLock);
+                        LeaveCriticalSection(&audio->audioStateLock);
                     }
                 }
 
@@ -478,8 +487,8 @@ static DWORD WINAPI WasapiRecordThreadProc(LPVOID param) {
         audioClient->Stop();
     } while (false);
 
-    if (state->recordInitState.load() == 0) {
-        state->recordInitState.store(-1);
+    if (audio->recordInitState.load() == 0) {
+        audio->recordInitState.store(-1);
     }
 
     if (mixFmt != nullptr) CoTaskMemFree(mixFmt);
@@ -496,150 +505,152 @@ using namespace daw::internal::audio;
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-bool DeviceStartWasapiAudio(HWND hwnd, UiState& state) {
-    EnterCriticalSection(&state.audioStateLock);
-    const float startBeat  = std::max(0.0f, state.playheadBeat);
-    const std::uint64_t startFrame = TimelineFramesFromBeats(state, startBeat);
-    state.playbackFrameCursor.store(startFrame);
-    const std::uint64_t endFrame = ComputeProjectEndFrameLocked(state);
-    LeaveCriticalSection(&state.audioStateLock);
+bool DeviceStartWasapiAudio(HWND hwnd, CoreState& core, AudioRuntimeState& audio, float playheadBeat) {
+    audio.hwnd = hwnd;
+    audio.coreContext = &core;
 
-    state.playbackStartTick = 0;
-    state.playbackStartBeat = startBeat;
-    state.playbackEndBeat   = TimelineBeatsFromFrames(state, endFrame);
-    state.playing           = true;
-    state.playingViaWasapi  = true;
-    state.audioStopRequested.store(false);
-    state.wasapiOutInitState.store(0);
-    state.audioThreadRunning.store(true);
-    state.audioThread = CreateThread(nullptr, 0, WasapiRenderThreadProc, &state, 0, nullptr);
+    EnterCriticalSection(&audio.audioStateLock);
+    const float startBeat = std::max(0.0f, playheadBeat);
+    const std::uint64_t startFrame = TimelineFramesFromBeats(core, startBeat);
+    audio.playbackFrameCursor.store(startFrame);
+    const std::uint64_t endFrame = ComputeProjectEndFrameLocked(core);
+    LeaveCriticalSection(&audio.audioStateLock);
 
-    if (state.audioThread != nullptr) {
-        // Wait up to 600 ms for the thread to open the device
-        for (int i = 0; i < 60 && state.wasapiOutInitState.load() == 0; ++i) {
+    audio.playbackStartTick = 0;
+    audio.playbackStartBeat = startBeat;
+    audio.playbackEndBeat = TimelineBeatsFromFrames(core, endFrame);
+    audio.playing = true;
+    audio.playingViaWasapi = true;
+    audio.audioStopRequested.store(false);
+    audio.wasapiOutInitState.store(0);
+    audio.audioThreadRunning.store(true);
+    audio.audioThread = CreateThread(nullptr, 0, WasapiRenderThreadProc, &audio, 0, nullptr);
+
+    if (audio.audioThread != nullptr) {
+        for (int i = 0; i < 60 && audio.wasapiOutInitState.load() == 0; ++i) {
             Sleep(10);
         }
-        if (state.wasapiOutInitState.load() == 1) {
-            state.playbackStartTick = GetTickCount64();
-            const int devSR = state.activeDeviceSampleRate;
-            const bool hasTimelineAudio = !state.project.clips.empty() || !state.project.audio.empty();
-            if (hasTimelineAudio && state.project.projectSampleRate > 0 && devSR > 0 && state.project.projectSampleRate != devSR) {
+        if (audio.wasapiOutInitState.load() == 1) {
+            audio.playbackStartTick = GetTickCount64();
+            const int devSR = audio.activeDeviceSampleRate;
+            const bool hasTimelineAudio = !core.project.clips.empty() || !core.project.audio.empty();
+            if (hasTimelineAudio && core.project.projectSampleRate > 0 && devSR > 0 && core.project.projectSampleRate != devSR) {
                 std::wstringstream mismatch;
                 mismatch
-                    << L"The selected device does not support " << state.project.projectSampleRate << L" Hz.\n\n"
+                    << L"The selected device does not support " << core.project.projectSampleRate << L" Hz.\n\n"
                     << L"Yes: Switch project to " << devSR << L" Hz\n"
                     << L"No: Use device at " << devSR << L" Hz and resample project audio in real time\n"
                     << L"Cancel: Abort playback (choose a different device from Audio menu)";
                 const int choice = MessageBoxW(hwnd, mismatch.str().c_str(), L"Sample Rate Mismatch", MB_YESNOCANCEL | MB_ICONWARNING);
                 if (choice == IDYES) {
-                    state.project.projectSampleRate = devSR;
+                    core.project.projectSampleRate = devSR;
                 } else if (choice == IDCANCEL) {
-                    StopPlayback(state, false);
+                    DeviceStopWasapiAudio(audio);
+                    audio.playing = false;
                     return false;
                 }
             }
-            if (!state.lastPlaybackInitError.empty()) {
-                MessageBoxW(hwnd, state.lastPlaybackInitError.c_str(), L"Playback warning", MB_OK | MB_ICONWARNING);
+            if (!audio.lastPlaybackInitError.empty()) {
+                MessageBoxW(hwnd, audio.lastPlaybackInitError.c_str(), L"Playback warning", MB_OK | MB_ICONWARNING);
             }
-            return true;  // WASAPI output running
+            return true;
         }
-        // Thread failed to open device – signal MME fallback
-        state.audioStopRequested.store(true);
-        WaitForSingleObject(state.audioThread, INFINITE);
-        CloseHandle(state.audioThread);
-        state.audioThread = nullptr;
+
+        audio.audioStopRequested.store(true);
+        WaitForSingleObject(audio.audioThread, INFINITE);
+        CloseHandle(audio.audioThread);
+        audio.audioThread = nullptr;
     }
-    // Reset for MME fallback
-    state.playing          = false;
-    state.playingViaWasapi = false;
-    state.audioStopRequested.store(false);
-    state.audioThreadRunning.store(false);
+
+    audio.playing = false;
+    audio.playingViaWasapi = false;
+    audio.audioStopRequested.store(false);
+    audio.audioThreadRunning.store(false);
     return false;
 }
 
-void DeviceStopWasapiAudio(UiState& state) {
-    state.audioStopRequested.store(true);
+void DeviceStopWasapiAudio(AudioRuntimeState& audio) {
+    audio.audioStopRequested.store(true);
 
-    if (state.audioThread != nullptr) {
-        WaitForSingleObject(state.audioThread, INFINITE);
-        CloseHandle(state.audioThread);
-        state.audioThread = nullptr;
+    if (audio.audioThread != nullptr) {
+        WaitForSingleObject(audio.audioThread, INFINITE);
+        CloseHandle(audio.audioThread);
+        audio.audioThread = nullptr;
     }
 
-    state.playingViaWasapi = false;
-    state.audioThreadRunning.store(false);
+    audio.playingViaWasapi = false;
+    audio.audioThreadRunning.store(false);
 }
 
-bool DeviceStartWasapiRecording(HWND hwnd, UiState& state, int armedTrack, bool wasPlaying) {
-    state.recordedInputPcm.clear();
-    state.monitorInputPcm.clear();
-    state.monitorInputReadPos = 0;
-    state.recordTrackIndex = armedTrack;
-    state.recordCaptureStartTickMs = GetTickCount64();
-    const std::uint64_t timelineStartFrame = state.playing
-        ? DeviceGetRenderedPlaybackFrame(state)
-        : TimelineFramesFromBeats(state, std::max(0.0f, state.playheadBeat));
+bool DeviceStartWasapiRecording(HWND hwnd, CoreState& core, AudioRuntimeState& audio, int armedTrack, bool wasPlaying, float playheadBeat) {
+    audio.hwnd = hwnd;
+    audio.coreContext = &core;
 
-    // Compute preroll duration upfront so count-in click can play immediately.
-    state.recordPrerollFrames = 0;
-    if (!wasPlaying && state.countInEnabled) {
-        state.recordPrerollFrames = TimelineFramesFromBeats(state, 4.0f * static_cast<float>(state.countInBars));
+    audio.recordedInputPcm.clear();
+    audio.monitorInputPcm.clear();
+    audio.monitorInputReadPos = 0;
+    audio.recordTrackIndex = armedTrack;
+    audio.recordCaptureStartTickMs = GetTickCount64();
+    const std::uint64_t timelineStartFrame = audio.playing
+        ? DeviceGetRenderedPlaybackFrame(core, audio)
+        : TimelineFramesFromBeats(core, std::max(0.0f, playheadBeat));
+
+    audio.recordPrerollFrames = 0;
+    if (!wasPlaying && audio.countInEnabled) {
+        audio.recordPrerollFrames = TimelineFramesFromBeats(core, 4.0f * static_cast<float>(audio.countInBars));
     }
-    // Tentative placement: preroll end is deterministic regardless of init latency.
-    state.recordStartFrame = timelineStartFrame + state.recordPrerollFrames;
-    state.countingIn = (state.recordPrerollFrames > 0);
+    audio.recordStartFrame = timelineStartFrame + audio.recordPrerollFrames;
+    audio.countingIn = (audio.recordPrerollFrames > 0);
 
-    state.recordUsingWasapi = true;
-    state.recordStopRequested.store(false);
-    state.recordInitState.store(0);
-    state.lastRecordInitError.clear();
-    state.recordThread = CreateThread(nullptr, 0, WasapiRecordThreadProc, &state, 0, nullptr);
-    if (state.recordThread == nullptr) {
-        state.countingIn = false;
-        state.recordUsingWasapi = false;
+    audio.recordUsingWasapi = true;
+    audio.recordStopRequested.store(false);
+    audio.recordInitState.store(0);
+    audio.lastRecordInitError.clear();
+    audio.recordThread = CreateThread(nullptr, 0, WasapiRecordThreadProc, &audio, 0, nullptr);
+    if (audio.recordThread == nullptr) {
+        audio.countingIn = false;
+        audio.recordUsingWasapi = false;
         return false;
     }
 
-    for (int i = 0; i < 60 && state.recordInitState.load() == 0; ++i) {
+    for (int i = 0; i < 60 && audio.recordInitState.load() == 0; ++i) {
         Sleep(10);
     }
 
-    if (state.recordInitState.load() != 1) {
-        state.recordStopRequested.store(true);
-        WaitForSingleObject(state.recordThread, INFINITE);
-        CloseHandle(state.recordThread);
-        state.recordThread = nullptr;
-        state.countingIn = false;
-        state.recordUsingWasapi = false;
-        if (!state.lastRecordInitError.empty()) {
-            MessageBoxW(hwnd, (L"WASAPI capture failed: " + state.lastRecordInitError + L"\nFalling back to MME.").c_str(), L"Record", MB_OK | MB_ICONWARNING);
+    if (audio.recordInitState.load() != 1) {
+        audio.recordStopRequested.store(true);
+        WaitForSingleObject(audio.recordThread, INFINITE);
+        CloseHandle(audio.recordThread);
+        audio.recordThread = nullptr;
+        audio.countingIn = false;
+        audio.recordUsingWasapi = false;
+        if (!audio.lastRecordInitError.empty()) {
+            MessageBoxW(hwnd, (L"WASAPI capture failed: " + audio.lastRecordInitError + L"\nFalling back to MME.").c_str(), L"Record", MB_OK | MB_ICONWARNING);
         }
         return false;
     }
 
-    // Capture is now running. Refine skip based on actual capture-start position so
-    // clip placement is deterministic (same beat) across all takes.
     {
-        const std::uint64_t captureNow = state.playing ? DeviceGetRenderedPlaybackFrame(state) : 0;
-        const std::uint64_t scheduledStart = state.recordStartFrame;
+        const std::uint64_t captureNow = audio.playing ? DeviceGetRenderedPlaybackFrame(core, audio) : 0;
+        const std::uint64_t scheduledStart = audio.recordStartFrame;
         const std::uint64_t actualSkip = (captureNow < scheduledStart) ? (scheduledStart - captureNow) : 0;
-        state.recordPrerollFrames = actualSkip;          // strip only remaining preroll
-        state.recordStartFrame    = captureNow + actualSkip; // = max(captureNow, scheduledStart)
+        audio.recordPrerollFrames = actualSkip;
+        audio.recordStartFrame = captureNow + actualSkip;
     }
 
-    state.recording = true;
+    audio.recording = true;
     return true;
 }
 
-void DeviceStopWasapiRecording(UiState& state) {
-    state.recordStopRequested.store(true);
+void DeviceStopWasapiRecording(AudioRuntimeState& audio) {
+    audio.recordStopRequested.store(true);
 
-    if (state.recordThread != nullptr) {
-        WaitForSingleObject(state.recordThread, INFINITE);
-        CloseHandle(state.recordThread);
-        state.recordThread = nullptr;
+    if (audio.recordThread != nullptr) {
+        WaitForSingleObject(audio.recordThread, INFINITE);
+        CloseHandle(audio.recordThread);
+        audio.recordThread = nullptr;
     }
 
-    state.recordUsingWasapi = false;
-    state.recordInitState.store(0);
+    audio.recordUsingWasapi = false;
+    audio.recordInitState.store(0);
 }

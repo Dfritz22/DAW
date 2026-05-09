@@ -3,7 +3,8 @@
 #error "This header is internal-only."
 #endif
 
-#include "core/state.h"
+#include "core/CoreState.h"
+#include "audio/AudioRuntimeState.h"
 
 // ── MME audio device backend ─────────────────────────────────────────────────
 // All waveIn / waveOut operations live here. No UI headers are included.
@@ -11,17 +12,17 @@
 
 // ── MME output ────────────────────────────────────────────────────────────────
 // Opens waveOut, prepares headers, starts the internal AudioThreadProc thread.
-// On success returns true and state.audioThread / state.waveOut are set.
-// On failure returns false; state.waveOut stays nullptr.
-bool DeviceStartMmeAudio(HWND hwnd, UiState& state);
+// On success returns true and audio.audioThread / audio.waveOut are set.
+// On failure returns false; audio.waveOut stays nullptr.
+bool DeviceStartMmeAudio(HWND hwnd, CoreState& core, AudioRuntimeState& audio, float playheadBeat);
 
 // Stops and closes waveOut; clears state.waveHeaders / waveData / waveOut.
-void DeviceStopMmeAudio(UiState& state);
+void DeviceStopMmeAudio(AudioRuntimeState& audio);
 
 // ── MME input ─────────────────────────────────────────────────────────────────
 // Opens waveIn, prepares headers, starts the internal RecordThreadProc thread.
 // armedTrack and wasPlaying are provided by the orchestration layer in main.cpp.
-bool DeviceStartMmeRecording(HWND hwnd, UiState& state, int armedTrack, bool wasPlaying);
+bool DeviceStartMmeRecording(HWND hwnd, CoreState& core, AudioRuntimeState& audio, int armedTrack, bool wasPlaying, float playheadBeat);
 
 // Stops and closes waveIn. Does NOT commit captured audio (caller handles that).
-void DeviceStopMmeRecording(UiState& state);
+void DeviceStopMmeRecording(AudioRuntimeState& audio);

@@ -2,7 +2,10 @@
 #include "core/internal_app_services.h"
 #include "io/wav_io.h"
 
-bool RenderTrackToStereoLocked(const UiState& state, int trackIndex,
+#include <fstream>
+#include <iterator>
+
+bool RenderTrackToStereoLocked(const AppState& state, int trackIndex,
                                std::vector<float>* outStereo, int* outSampleRate);
 using daw::internal::core::DefaultInsertBypass;
 using daw::internal::core::DefaultInsertConfig;
@@ -260,8 +263,8 @@ bool ParseAutoMixSettings(
     return true;
 }
 
-bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
-    if (state.project.audio.empty()) {
+bool ApplyAutoMixToFaders(HWND hwnd, AppState& state) {
+    if (state.core.project.audio.empty()) {
         MessageBoxW(hwnd, L"Import tracks first before applying AutoMix.", L"AutoMix", MB_OK | MB_ICONINFORMATION);
         return false;
     }
@@ -289,13 +292,13 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
     std::filesystem::create_directories(inputDir, ec);
 
     std::vector<std::pair<std::wstring, int>> exportedTracks;
-    for (int ti = 0; ti < static_cast<int>(state.project.tracks.size()); ++ti) {
+    for (int ti = 0; ti < static_cast<int>(state.core.project.tracks.size()); ++ti) {
         std::vector<float> trackStereo;
         int trackSr = 0;
-        EnterCriticalSection(&state.audioStateLock);
+        EnterCriticalSection(&state.audio.audioStateLock);
         const bool hasTrackAudio = RenderTrackToStereoLocked(state, ti, &trackStereo, &trackSr);
-        const std::wstring trackName = state.project.tracks[static_cast<size_t>(ti)].name;
-        LeaveCriticalSection(&state.audioStateLock);
+        const std::wstring trackName = state.core.project.tracks[static_cast<size_t>(ti)].name;
+        LeaveCriticalSection(&state.audio.audioStateLock);
         if (!hasTrackAudio || trackStereo.empty() || trackSr <= 0) {
             continue;
         }
@@ -378,10 +381,10 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
     int applied = 0;
     int appliedFx = 0;
     int appliedBusRoute = 0;
-    EnterCriticalSection(&state.audioStateLock);
+    EnterCriticalSection(&state.audio.audioStateLock);
     for (const auto& e : exportedTracks) {
         const int trackIndex = e.second;
-        if (trackIndex < 0 || trackIndex >= static_cast<int>(state.project.tracks.size())) {
+        if (trackIndex < 0 || trackIndex >= static_cast<int>(state.core.project.tracks.size())) {
             continue;
         }
         const std::wstring key = ToLowerCopy(e.first);
@@ -391,19 +394,19 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
             if (it == settings.end()) continue;
             const AutoMixTrackSettings& s = it->second;
 
-            state.project.tracks[static_cast<size_t>(trackIndex)].gainDb = std::clamp(s.gainDb, kFaderMinDb, kFaderMaxDb);
-            if (trackIndex < static_cast<int>(state.project.tracks.size())) {
-                state.project.tracks[static_cast<size_t>(trackIndex)].pan = std::clamp(s.pan, -1.0f, 1.0f);
+            state.core.project.tracks[static_cast<size_t>(trackIndex)].gainDb = std::clamp(s.gainDb, kFaderMinDb, kFaderMaxDb);
+            if (trackIndex < static_cast<int>(state.core.project.tracks.size())) {
+                state.core.project.tracks[static_cast<size_t>(trackIndex)].pan = std::clamp(s.pan, -1.0f, 1.0f);
             }
-            if (trackIndex < static_cast<int>(state.project.tracks.size())) {
-                state.project.tracks[static_cast<size_t>(trackIndex)].busIndex = std::clamp(s.busIndex, 0, kBusCount - 1);
+            if (trackIndex < static_cast<int>(state.core.project.tracks.size())) {
+                state.core.project.tracks[static_cast<size_t>(trackIndex)].busIndex = std::clamp(s.busIndex, 0, kBusCount - 1);
                 ++appliedBusRoute;
             }
 
-            if (trackIndex < static_cast<int>(state.project.tracks.size()) &&
-                trackIndex < static_cast<int>(state.project.tracks.size()) &&
-                trackIndex < static_cast<int>(state.project.tracks.size()) &&
-                trackIndex < static_cast<int>(state.project.tracks.size())) {
+            if (trackIndex < static_cast<int>(state.core.project.tracks.size()) &&
+                trackIndex < static_cast<int>(state.core.project.tracks.size()) &&
+                trackIndex < static_cast<int>(state.core.project.tracks.size()) &&
+                trackIndex < static_cast<int>(state.core.project.tracks.size())) {
                 InsertEffectArray fx = DefaultInsertEffects();
                 InsertBypassArray by = DefaultInsertBypass();
                 InsertConfigArray pp = DefaultInsertConfig();
@@ -483,10 +486,10 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
                     AutoMixAppendInsert(&fx, &by, &pp, &slots, kFxREV, p);
                 }
 
-                state.project.tracks[static_cast<size_t>(trackIndex)].insertEffects = fx;
-                state.project.tracks[static_cast<size_t>(trackIndex)].insertBypass = by;
-                state.project.tracks[static_cast<size_t>(trackIndex)].insertConfig = pp;
-                state.project.tracks[static_cast<size_t>(trackIndex)].insertSlots = slots;
+                state.core.project.tracks[static_cast<size_t>(trackIndex)].insertEffects = fx;
+                state.core.project.tracks[static_cast<size_t>(trackIndex)].insertBypass = by;
+                state.core.project.tracks[static_cast<size_t>(trackIndex)].insertConfig = pp;
+                state.core.project.tracks[static_cast<size_t>(trackIndex)].insertSlots = slots;
                 if (slots > 0) ++appliedFx;
             }
 
@@ -494,16 +497,16 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
         } else {
             auto it = gains.find(key);
             if (it == gains.end()) continue;
-            state.project.tracks[static_cast<size_t>(trackIndex)].gainDb = std::clamp(it->second, kFaderMinDb, kFaderMaxDb);
+            state.core.project.tracks[static_cast<size_t>(trackIndex)].gainDb = std::clamp(it->second, kFaderMinDb, kFaderMaxDb);
             ++applied;
         }
     }
 
     if (hasFullSettings && master.hasCompressor &&
-        state.project.buses.size() > 3 &&
-        state.project.buses.size() > 3 &&
-        state.project.buses.size() > 3 &&
-        state.project.buses.size() > 3) {
+        state.core.project.buses.size() > 3 &&
+        state.core.project.buses.size() > 3 &&
+        state.core.project.buses.size() > 3 &&
+        state.core.project.buses.size() > 3) {
         InsertEffectArray fx = DefaultInsertEffects();
         InsertBypassArray by = DefaultInsertBypass();
         InsertConfigArray pp = DefaultInsertConfig();
@@ -518,13 +521,13 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
         p.cmp_knee_db = 4.0f;
         AutoMixAppendInsert(&fx, &by, &pp, &slots, kFxCMP, p);
 
-        state.project.buses[3].insertEffects = fx;
-        state.project.buses[3].insertBypass = by;
-        state.project.buses[3].insertConfig = pp;
-        state.project.buses[3].insertSlots = slots;
+        state.core.project.buses[3].insertEffects = fx;
+        state.core.project.buses[3].insertBypass = by;
+        state.core.project.buses[3].insertConfig = pp;
+        state.core.project.buses[3].insertSlots = slots;
     }
 
-    LeaveCriticalSection(&state.audioStateLock);
+    LeaveCriticalSection(&state.audio.audioStateLock);
 
     if (applied == 0) {
         MessageBoxW(hwnd, L"AutoMix completed but no matching track settings were found.", L"AutoMix", MB_OK | MB_ICONWARNING);
@@ -547,9 +550,9 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
     return true;
 }
 
-bool AnalyzeSelectedTrackQuality(HWND hwnd, UiState& state) {
-    const int trackIndex = state.selectedTrackIndex;
-    if (trackIndex < 0 || trackIndex >= static_cast<int>(state.project.tracks.size())) {
+bool AnalyzeSelectedTrackQuality(HWND hwnd, AppState& state) {
+    const int trackIndex = state.ui.selectedTrackIndex;
+    if (trackIndex < 0 || trackIndex >= static_cast<int>(state.core.project.tracks.size())) {
         MessageBoxW(hwnd, L"Select a track first, then run Vocal Check.", L"Vocal Check", MB_OK | MB_ICONINFORMATION);
         return false;
     }
@@ -558,17 +561,17 @@ bool AnalyzeSelectedTrackQuality(HWND hwnd, UiState& state) {
     std::vector<float> referenceStereo;
     int sampleRate = 0;
     int referenceSampleRate = 0;
-    EnterCriticalSection(&state.audioStateLock);
+    EnterCriticalSection(&state.audio.audioStateLock);
     const bool hasAudio = RenderTrackToStereoLocked(state, trackIndex, &stereo, &sampleRate);
     bool hasReference = false;
-    if (trackIndex >= 0 && trackIndex < static_cast<int>(state.project.tracks.size())) {
-        const bool prevMute = state.project.tracks[static_cast<size_t>(trackIndex)].mute;
-        state.project.tracks[static_cast<size_t>(trackIndex)].mute = true;
+    if (trackIndex >= 0 && trackIndex < static_cast<int>(state.core.project.tracks.size())) {
+        const bool prevMute = state.core.project.tracks[static_cast<size_t>(trackIndex)].mute;
+        state.core.project.tracks[static_cast<size_t>(trackIndex)].mute = true;
         hasReference = RenderFullMixToStereoLocked(state, &referenceStereo, &referenceSampleRate);
-        state.project.tracks[static_cast<size_t>(trackIndex)].mute = prevMute;
+        state.core.project.tracks[static_cast<size_t>(trackIndex)].mute = prevMute;
     }
-    const std::wstring trackName = state.project.tracks[static_cast<size_t>(trackIndex)].name;
-    LeaveCriticalSection(&state.audioStateLock);
+    const std::wstring trackName = state.core.project.tracks[static_cast<size_t>(trackIndex)].name;
+    LeaveCriticalSection(&state.audio.audioStateLock);
 
     if (!hasAudio || stereo.empty() || sampleRate <= 0) {
         MessageBoxW(hwnd, L"Selected track has no audio clips to analyze.", L"Vocal Check", MB_OK | MB_ICONWARNING);
@@ -616,7 +619,7 @@ bool AnalyzeSelectedTrackQuality(HWND hwnd, UiState& state) {
         QuoteArg(pythonExe.wstring()) +
         L" -m daw_ai.vocal_check --input " + QuoteArg(wavPath.wstring()) +
         L" --output " + QuoteArg(txtPath.wstring()) +
-        L" --bpm " + std::to_wstring(static_cast<int>(state.project.bpm)) +
+        L" --bpm " + std::to_wstring(static_cast<int>(state.core.project.bpm)) +
         L" --track-name " + QuoteArg(trackName);
 
     if (wroteReference) {
@@ -668,27 +671,27 @@ bool AnalyzeSelectedTrackQuality(HWND hwnd, UiState& state) {
 }
 
 DWORD WINAPI AutoMixThreadProc(LPVOID param) {
-    auto* state = reinterpret_cast<UiState*>(param);
-    if (state == nullptr || state->hwnd == nullptr) {
+    auto* state = reinterpret_cast<AppState*>(param);
+    if (state == nullptr || state->ui.hwnd == nullptr) {
         return 0;
     }
 
-    const bool ok = ApplyAutoMixToFaders(state->hwnd, *state);
-    state->automixRunning.store(false);
-    PostMessage(state->hwnd, kMsgAutoMixFinished, ok ? 1 : 0, 0);
+    const bool ok = ApplyAutoMixToFaders(state->ui.hwnd, *state);
+    state->audio.automixRunning.store(false);
+    PostMessage(state->ui.hwnd, kMsgAutoMixFinished, ok ? 1 : 0, 0);
     return 0;
 }
 
-void StartAutoMixAsync(HWND hwnd, UiState& state) {
-    if (state.automixRunning.load()) {
+void StartAutoMixAsync(HWND hwnd, AppState& state) {
+    if (state.audio.automixRunning.load()) {
         MessageBoxW(hwnd, L"AutoMix is already running.", L"AutoMix", MB_OK | MB_ICONINFORMATION);
         return;
     }
 
-    state.automixRunning.store(true);
-    state.automixThread = CreateThread(nullptr, 0, AutoMixThreadProc, &state, 0, nullptr);
-    if (state.automixThread == nullptr) {
-        state.automixRunning.store(false);
+    state.audio.automixRunning.store(true);
+    state.audio.automixThread = CreateThread(nullptr, 0, AutoMixThreadProc, &state, 0, nullptr);
+    if (state.audio.automixThread == nullptr) {
+        state.audio.automixRunning.store(false);
         MessageBoxW(hwnd, L"Could not start AutoMix worker thread.", L"AutoMix", MB_OK | MB_ICONERROR);
         return;
     }

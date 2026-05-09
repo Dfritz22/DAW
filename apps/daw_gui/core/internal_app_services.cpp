@@ -2,14 +2,6 @@
 
 namespace daw::internal::core {
 
-void UpdateWindowTitle(HWND hwnd, const UiState& state) {
-    std::wstring name = state.projectFilePath.empty()
-        ? L"Untitled"
-        : std::filesystem::path(state.projectFilePath).stem().wstring();
-    std::wstring title = L"DAW  -  " + name + (state.projectModified ? L" *" : L"");
-    SetWindowTextW(hwnd, title.c_str());
-}
-
 InsertEffectArray DefaultInsertEffects() {
     InsertEffectArray effects{};
     for (int i = 0; i < kMaxInsertSlots; ++i) {
@@ -64,20 +56,10 @@ std::filesystem::path FindRepoRoot() {
         return {};
     };
 
-    wchar_t exeBuf[MAX_PATH] = {};
-    const DWORD exeLen = GetModuleFileNameW(nullptr, exeBuf, MAX_PATH);
-    if (exeLen > 0 && exeLen < MAX_PATH) {
-        std::filesystem::path exeDir = std::filesystem::path(exeBuf).parent_path();
-        std::filesystem::path fromExe = scanUp(exeDir);
-        if (!fromExe.empty()) {
-            return fromExe;
-        }
-    }
-
-    wchar_t cwdBuf[MAX_PATH] = {};
-    const DWORD cwdLen = GetCurrentDirectoryW(MAX_PATH, cwdBuf);
-    if (cwdLen > 0 && cwdLen < MAX_PATH) {
-        std::filesystem::path fromCwd = scanUp(std::filesystem::path(cwdBuf));
+    std::error_code ec;
+    const std::filesystem::path cwd = std::filesystem::current_path(ec);
+    if (!ec) {
+        std::filesystem::path fromCwd = scanUp(cwd);
         if (!fromCwd.empty()) {
             return fromCwd;
         }

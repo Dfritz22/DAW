@@ -1,4 +1,4 @@
-#include "core/state.h"
+#include "core/CoreState.h"
 #include "core/timeline.h"
 #include <algorithm>
 #include <cmath>
@@ -42,7 +42,7 @@ static int EvaluateBusCurveAtBeat(const TrackAutomationCurve& curve, float beat,
 
 } // namespace
 
-float AutomationTrackGainDbAt(const UiState& state, int trackIndex, float beat) {
+float AutomationTrackGainDbAt(const CoreState& state, int trackIndex, float beat) {
     if (trackIndex < 0 || trackIndex >= static_cast<int>(state.project.tracks.size())) {
         return 0.0f;
     }
@@ -55,7 +55,7 @@ float AutomationTrackGainDbAt(const UiState& state, int trackIndex, float beat) 
     return EvaluateCurveAtBeat(state.trackGainCurves[static_cast<size_t>(trackIndex)], beat, defaultValue);
 }
 
-float AutomationTrackPanAt(const UiState& state, int trackIndex, float beat) {
+float AutomationTrackPanAt(const CoreState& state, int trackIndex, float beat) {
     if (trackIndex < 0 || trackIndex >= static_cast<int>(state.project.tracks.size())) {
         return 0.0f;
     }
@@ -71,7 +71,7 @@ float AutomationTrackPanAt(const UiState& state, int trackIndex, float beat) {
         1.0f);
 }
 
-int AutomationTrackBusIndexAt(const UiState& state, int trackIndex, float beat) {
+int AutomationTrackBusIndexAt(const CoreState& state, int trackIndex, float beat) {
     if (trackIndex < 0 || trackIndex >= static_cast<int>(state.project.tracks.size())) {
         return 1;  // default to Music bus
     }
@@ -87,26 +87,26 @@ int AutomationTrackBusIndexAt(const UiState& state, int trackIndex, float beat) 
         kBusCount - 1);
 }
 
-float TrackGainDbAt(const UiState& state, int trackIndex, float beat) {
+float TrackGainDbAt(const CoreState& state, int trackIndex, float beat) {
     return AutomationTrackGainDbAt(state, trackIndex, beat);
 }
 
-float TrackPanAt(const UiState& state, int trackIndex, float beat) {
+float TrackPanAt(const CoreState& state, int trackIndex, float beat) {
     return AutomationTrackPanAt(state, trackIndex, beat);
 }
 
-int TrackBusIndexAt(const UiState& state, int trackIndex, float beat) {
+int TrackBusIndexAt(const CoreState& state, int trackIndex, float beat) {
     return AutomationTrackBusIndexAt(state, trackIndex, beat);
 }
 
-float TrackGainDbAt(const UiState& state, int trackIndex) {
+float TrackGainDbAt(const CoreState& state, int trackIndex) {
     return AutomationTrackGainDbAt(state, trackIndex, 0.0f);
 }
 
-float TrackPanAt(const UiState& state, int trackIndex) {
+float TrackPanAt(const CoreState& state, int trackIndex) {
     return AutomationTrackPanAt(state, trackIndex, 0.0f);
 }
 
-int TrackBusIndexAt(const UiState& state, int trackIndex) {
+int TrackBusIndexAt(const CoreState& state, int trackIndex) {
     return AutomationTrackBusIndexAt(state, trackIndex, 0.0f);
 }

@@ -1,6 +1,6 @@
 #include "wav_io.h"
 
-#include "core/state.h"
+#include "core/CoreState.h"
 #include <fstream>
 #include <cstdint>
 #include <cstring>

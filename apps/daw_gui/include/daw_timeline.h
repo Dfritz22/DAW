@@ -2,8 +2,8 @@
 
 #include <cstdint>
 
-struct UiState;
+struct AppState;
 
-float SamplesPerBeat(const UiState& state);
-std::uint64_t FramesFromBeats(const UiState& state, float beat);
-float BeatsFromFrames(const UiState& state, std::uint64_t frame);
+float SamplesPerBeat(const AppState& app);
+std::uint64_t FramesFromBeats(const AppState& app, float beat);
+float BeatsFromFrames(const AppState& app, std::uint64_t frame);

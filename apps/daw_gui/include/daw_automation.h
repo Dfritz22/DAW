@@ -1,10 +1,10 @@
 #pragma once
 
-struct UiState;
+struct AppState;
 
-float TrackGainDbAt(const UiState& state, int trackIndex, float beat);
-float TrackPanAt(const UiState& state, int trackIndex, float beat);
-int TrackBusIndexAt(const UiState& state, int trackIndex, float beat);
-float TrackGainDbAt(const UiState& state, int trackIndex);
-float TrackPanAt(const UiState& state, int trackIndex);
-int TrackBusIndexAt(const UiState& state, int trackIndex);
+float TrackGainDbAt(const AppState& app, int trackIndex, float beat);
+float TrackPanAt(const AppState& app, int trackIndex, float beat);
+int TrackBusIndexAt(const AppState& app, int trackIndex, float beat);
+float TrackGainDbAt(const AppState& app, int trackIndex);
+float TrackPanAt(const AppState& app, int trackIndex);
+int TrackBusIndexAt(const AppState& app, int trackIndex);

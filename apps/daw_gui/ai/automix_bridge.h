@@ -1,5 +1,16 @@
 #pragma once
-#include "core/state.h"
+
+#ifdef DAW_PUBLIC_API
+#error "This header is internal-only."
+#endif
+
+#include "AppState.h"
+
+#include <filesystem>
+#include <map>
+
+struct HWND__;
+using HWND = HWND__*;
 
 // ── AutoMix per-track settings returned by the AI script ──────────────────
 struct AutoMixTrackSettings {
@@ -48,13 +59,13 @@ bool ParseAutoMixSettings(const std::filesystem::path& jsonPath,
                           AutoMixMasterSettings* outMaster);
 
 // Export stems, run the Python AutoMix script, and apply results to state.
-bool ApplyAutoMixToFaders(HWND hwnd, UiState& state);
+bool ApplyAutoMixToFaders(HWND hwnd, AppState& state);
 
 // Launch ApplyAutoMixToFaders on a background thread (non-blocking).
-void StartAutoMixAsync(HWND hwnd, UiState& state);
+void StartAutoMixAsync(HWND hwnd, AppState& state);
 
 // Thread procedure used by StartAutoMixAsync.
 DWORD WINAPI AutoMixThreadProc(LPVOID param);
 
 // Render the selected track to a temp WAV, run vocal_check, show the report.
-bool AnalyzeSelectedTrackQuality(HWND hwnd, UiState& state);
+bool AnalyzeSelectedTrackQuality(HWND hwnd, AppState& state);

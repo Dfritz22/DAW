@@ -3,7 +3,8 @@
 #error "This header is internal-only."
 #endif
 
-#include "core/state.h"
+#include "core/CoreState.h"
+#include "audio/AudioRuntimeState.h"
 
 // ── Audio-domain utilities ────────────────────────────────────────────────────
 // These helpers are used exclusively by the audio engine (engine.cpp) and by
@@ -16,15 +17,18 @@ float DbToLinear(float db);
 // Bus accessors (definitions move here; declarations also kept in state.h
 // so that draw.cpp can call them without depending on this header).
 // BusGainDbAt / BusPanAt / BusMuteAt are declared in state.h.
+float BusGainDbAt(const CoreState& core, int busIndex);
+float BusPanAt(const CoreState& core, int busIndex);
+bool BusMuteAt(const CoreState& core, int busIndex);
 
 // DSP-state book-keeping
-void EnsureInsertDspStateStorage(const UiState& state);
+void EnsureInsertDspStateStorage(const CoreState& core, AudioRuntimeState& audio);
 
 // Track audibility (mute / solo logic – audio domain)
-bool IsTrackAudible(const UiState& state, int trackIndex);
+bool IsTrackAudible(const CoreState& core, int trackIndex);
 
 // Project-length calculation
-std::uint64_t ComputeProjectEndFrameLocked(const UiState& state);
+std::uint64_t ComputeProjectEndFrameLocked(const CoreState& core);
 
 // Single-sample interpolated read from a LoadedAudio clip
 bool ReadClipSampleAtProjectFrame(

@@ -1,4 +1,5 @@
 #include "daw_sdk.h"
+#include <windowsx.h>
 #include "core/internal_app_services.h"
 #include "ui/draw.h"
 #include "ui/layout.h"
@@ -28,20 +29,20 @@ void ApplyBalancePan(float pan, float* left, float* right) {
     }
 }
 
-void ImportWavFiles(HWND hwnd, UiState& state);
+void ImportWavFiles(HWND hwnd, AppState& state);
 
 // Forward declarations for audio orchestration (defined after DoAutoMaster/DoExportMix)
-void StopPlayback(UiState& state, bool rewind);
-void StopRecording(UiState& state, bool commitTake);
-bool StartRecording(HWND hwnd, UiState& state);
-bool StartPlayback(HWND hwnd, UiState& state);
+void StopPlayback(AppState& state, bool rewind);
+void StopRecording(AppState& state, bool commitTake);
+bool StartRecording(HWND hwnd, AppState& state);
+bool StartPlayback(HWND hwnd, AppState& state);
 
 // ============================================================
 // Audio Settings Dialog
 // ============================================================
 
 struct AudioSettingsDlgData {
-    UiState*         appState    {nullptr};
+    AppState*         appState    {nullptr};
     std::vector<int> sampleRates;
     std::vector<int> bufferSizes;
     // Originals preserved for Cancel
@@ -64,36 +65,36 @@ static constexpr int kAsDlgApply      = 1010;
 // IDOK = 1, IDCANCEL = 2
 
 static void AsDlgReadFields(HWND hwnd, AudioSettingsDlgData& d) {
-    UiState& state = *d.appState;
+    AppState& state = *d.appState;
     const int beIdx = (int)SendDlgItemMessageW(hwnd, kAsDlgBackend, CB_GETCURSEL, 0, 0);
-    if      (beIdx == 0) state.audioBackend = AudioBackend::MME;
-    else if (beIdx == 1) state.audioBackend = AudioBackend::WasapiShared;
-    else if (beIdx == 2) state.audioBackend = AudioBackend::WasapiExclusive;
+    if      (beIdx == 0) state.audio.audioBackend = AudioBackend::MME;
+    else if (beIdx == 1) state.audio.audioBackend = AudioBackend::WasapiShared;
+    else if (beIdx == 2) state.audio.audioBackend = AudioBackend::WasapiExclusive;
 
     const int outIdx = (int)SendDlgItemMessageW(hwnd, kAsDlgOutputDev, CB_GETCURSEL, 0, 0);
-    if (outIdx >= 0 && outIdx < (int)state.outputDeviceIds.size()) {
-        state.selectedOutputDeviceId   = state.outputDeviceIds[outIdx];
-        state.selectedOutputDeviceName = state.outputDeviceNames[outIdx];
+    if (outIdx >= 0 && outIdx < (int)state.audio.outputDeviceIds.size()) {
+        state.audio.selectedOutputDeviceId   = state.audio.outputDeviceIds[outIdx];
+        state.audio.selectedOutputDeviceName = state.audio.outputDeviceNames[outIdx];
     }
     const int inIdx = (int)SendDlgItemMessageW(hwnd, kAsDlgInputDev, CB_GETCURSEL, 0, 0);
-    if (inIdx >= 0 && inIdx < (int)state.inputDeviceIds.size()) {
-        state.selectedInputDeviceId   = state.inputDeviceIds[inIdx];
-        state.selectedInputDeviceName = state.inputDeviceNames[inIdx];
+    if (inIdx >= 0 && inIdx < (int)state.audio.inputDeviceIds.size()) {
+        state.audio.selectedInputDeviceId   = state.audio.inputDeviceIds[inIdx];
+        state.audio.selectedInputDeviceName = state.audio.inputDeviceNames[inIdx];
     }
     const int srIdx = (int)SendDlgItemMessageW(hwnd, kAsDlgSampleRate, CB_GETCURSEL, 0, 0);
     if (srIdx >= 0 && srIdx < (int)d.sampleRates.size()) {
-        state.preferredSampleRate = d.sampleRates[srIdx];
+        state.audio.preferredSampleRate = d.sampleRates[srIdx];
     }
     const int bufIdx = (int)SendDlgItemMessageW(hwnd, kAsDlgBufferSize, CB_GETCURSEL, 0, 0);
     if (bufIdx >= 0 && bufIdx < (int)d.bufferSizes.size()) {
-        state.preferredBufferFrames = d.bufferSizes[bufIdx];
+        state.audio.preferredBufferFrames = d.bufferSizes[bufIdx];
     }
 }
 
-static void AsDlgUpdateStatus(HWND hwnd, const UiState& state) {
+static void AsDlgUpdateStatus(HWND hwnd, const AppState& state) {
     wchar_t buf[256]{};
-    const int sr  = state.activeDeviceSampleRate   > 0 ? state.activeDeviceSampleRate   : state.project.projectSampleRate;
-    const int bsz = state.activeDeviceBufferFrames > 0 ? state.activeDeviceBufferFrames : state.preferredBufferFrames;
+    const int sr  = state.audio.activeDeviceSampleRate   > 0 ? state.audio.activeDeviceSampleRate   : state.core.project.projectSampleRate;
+    const int bsz = state.audio.activeDeviceBufferFrames > 0 ? state.audio.activeDeviceBufferFrames : state.audio.preferredBufferFrames;
     if (sr > 0) {
         const double ms = bsz > 0 ? static_cast<double>(bsz) / static_cast<double>(sr) * 1000.0 : 0.0;
         swprintf_s(buf, L"Active: %d Hz  /  %d frames  (~%.1f ms latency)", sr, bsz, ms);
@@ -110,7 +111,7 @@ static LRESULT CALLBACK AudioSettingsDlgProc(HWND hwnd, UINT msg, WPARAM wParam,
         auto* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
         d = reinterpret_cast<AudioSettingsDlgData*>(cs->lpCreateParams);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(d));
-        UiState& state = *d->appState;
+        AppState& state = *d->appState;
 
         const HFONT hFont = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
         const HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
@@ -177,27 +178,27 @@ static LRESULT CALLBACK AudioSettingsDlgProc(HWND hwnd, UINT msg, WPARAM wParam,
         SendMessageW(hBe, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"WASAPI Shared"));
         SendMessageW(hBe, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"WASAPI Exclusive"));
         int beIdx = 1;
-        if (state.audioBackend == AudioBackend::MME)              beIdx = 0;
-        else if (state.audioBackend == AudioBackend::WasapiExclusive) beIdx = 2;
+        if (state.audio.audioBackend == AudioBackend::MME)              beIdx = 0;
+        else if (state.audio.audioBackend == AudioBackend::WasapiExclusive) beIdx = 2;
         SendMessageW(hBe, CB_SETCURSEL, beIdx, 0);
 
         // Output Device
         HWND hOut = GetDlgItem(hwnd, kAsDlgOutputDev);
         int selOut = 0;
-        for (size_t i = 0; i < state.outputDeviceNames.size(); ++i) {
-            SendMessageW(hOut, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(state.outputDeviceNames[i].c_str()));
-            if (state.outputDeviceIds[i] == state.selectedOutputDeviceId) selOut = static_cast<int>(i);
+        for (size_t i = 0; i < state.audio.outputDeviceNames.size(); ++i) {
+            SendMessageW(hOut, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(state.audio.outputDeviceNames[i].c_str()));
+            if (state.audio.outputDeviceIds[i] == state.audio.selectedOutputDeviceId) selOut = static_cast<int>(i);
         }
-        if (!state.outputDeviceNames.empty()) SendMessageW(hOut, CB_SETCURSEL, selOut, 0);
+        if (!state.audio.outputDeviceNames.empty()) SendMessageW(hOut, CB_SETCURSEL, selOut, 0);
 
         // Input Device
         HWND hIn = GetDlgItem(hwnd, kAsDlgInputDev);
         int selIn = 0;
-        for (size_t i = 0; i < state.inputDeviceNames.size(); ++i) {
-            SendMessageW(hIn, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(state.inputDeviceNames[i].c_str()));
-            if (state.inputDeviceIds[i] == state.selectedInputDeviceId) selIn = static_cast<int>(i);
+        for (size_t i = 0; i < state.audio.inputDeviceNames.size(); ++i) {
+            SendMessageW(hIn, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(state.audio.inputDeviceNames[i].c_str()));
+            if (state.audio.inputDeviceIds[i] == state.audio.selectedInputDeviceId) selIn = static_cast<int>(i);
         }
-        if (!state.inputDeviceNames.empty()) SendMessageW(hIn, CB_SETCURSEL, selIn, 0);
+        if (!state.audio.inputDeviceNames.empty()) SendMessageW(hIn, CB_SETCURSEL, selIn, 0);
 
         // Sample Rate
         {
@@ -207,9 +208,9 @@ static LRESULT CALLBACK AudioSettingsDlgProc(HWND hwnd, UINT msg, WPARAM wParam,
                 if (sr > 0 && std::find(d->sampleRates.begin(), d->sampleRates.end(), sr) == d->sampleRates.end())
                     d->sampleRates.push_back(sr);
             };
-            addSR(state.preferredSampleRate);
-            addSR(state.project.projectSampleRate);
-            addSR(state.activeDeviceSampleRate);
+            addSR(state.audio.preferredSampleRate);
+            addSR(state.core.project.projectSampleRate);
+            addSR(state.audio.activeDeviceSampleRate);
             std::sort(d->sampleRates.begin(), d->sampleRates.end());
             HWND hSr = GetDlgItem(hwnd, kAsDlgSampleRate);
             int selSR = 1; // default 44100
@@ -217,7 +218,7 @@ static LRESULT CALLBACK AudioSettingsDlgProc(HWND hwnd, UINT msg, WPARAM wParam,
                 wchar_t rbuf[32]{};
                 swprintf_s(rbuf, L"%d Hz", d->sampleRates[i]);
                 SendMessageW(hSr, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(rbuf));
-                const int target = (state.preferredSampleRate > 0) ? state.preferredSampleRate : state.project.projectSampleRate;
+                const int target = (state.audio.preferredSampleRate > 0) ? state.audio.preferredSampleRate : state.core.project.projectSampleRate;
                 if (d->sampleRates[i] == target) selSR = static_cast<int>(i);
             }
             SendMessageW(hSr, CB_SETCURSEL, selSR, 0);
@@ -233,7 +234,7 @@ static LRESULT CALLBACK AudioSettingsDlgProc(HWND hwnd, UINT msg, WPARAM wParam,
                 wchar_t rbuf[32]{};
                 swprintf_s(rbuf, L"%d frames", d->bufferSizes[i]);
                 SendMessageW(hBuf, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(rbuf));
-                if (d->bufferSizes[i] == state.preferredBufferFrames) selBuf = static_cast<int>(i);
+                if (d->bufferSizes[i] == state.audio.preferredBufferFrames) selBuf = static_cast<int>(i);
             }
             SendMessageW(hBuf, CB_SETCURSEL, selBuf, 0);
         }
@@ -248,14 +249,14 @@ static LRESULT CALLBACK AudioSettingsDlgProc(HWND hwnd, UINT msg, WPARAM wParam,
             AsDlgReadFields(hwnd, *d);
             DestroyWindow(hwnd);
         } else if (ctrlId == IDCANCEL) {
-            UiState& state = *d->appState;
-            state.audioBackend            = d->origBackend;
-            state.preferredSampleRate     = d->origSampleRate;
-            state.preferredBufferFrames   = d->origBufferFrames;
-            state.selectedOutputDeviceId   = d->origOutputDeviceId;
-            state.selectedOutputDeviceName = d->origOutputDeviceName;
-            state.selectedInputDeviceId    = d->origInputDeviceId;
-            state.selectedInputDeviceName  = d->origInputDeviceName;
+            AppState& state = *d->appState;
+            state.audio.audioBackend            = d->origBackend;
+            state.audio.preferredSampleRate     = d->origSampleRate;
+            state.audio.preferredBufferFrames   = d->origBufferFrames;
+            state.audio.selectedOutputDeviceId   = d->origOutputDeviceId;
+            state.audio.selectedOutputDeviceName = d->origOutputDeviceName;
+            state.audio.selectedInputDeviceId    = d->origInputDeviceId;
+            state.audio.selectedInputDeviceName  = d->origInputDeviceName;
             DestroyWindow(hwnd);
         } else if (ctrlId == kAsDlgApply) {
             AsDlgReadFields(hwnd, *d);
@@ -266,14 +267,14 @@ static LRESULT CALLBACK AudioSettingsDlgProc(HWND hwnd, UINT msg, WPARAM wParam,
     case WM_CLOSE: {
         // Treat X as Cancel
         if (d != nullptr) {
-            UiState& state = *d->appState;
-            state.audioBackend            = d->origBackend;
-            state.preferredSampleRate     = d->origSampleRate;
-            state.preferredBufferFrames   = d->origBufferFrames;
-            state.selectedOutputDeviceId   = d->origOutputDeviceId;
-            state.selectedOutputDeviceName = d->origOutputDeviceName;
-            state.selectedInputDeviceId    = d->origInputDeviceId;
-            state.selectedInputDeviceName  = d->origInputDeviceName;
+            AppState& state = *d->appState;
+            state.audio.audioBackend            = d->origBackend;
+            state.audio.preferredSampleRate     = d->origSampleRate;
+            state.audio.preferredBufferFrames   = d->origBufferFrames;
+            state.audio.selectedOutputDeviceId   = d->origOutputDeviceId;
+            state.audio.selectedOutputDeviceName = d->origOutputDeviceName;
+            state.audio.selectedInputDeviceId    = d->origInputDeviceId;
+            state.audio.selectedInputDeviceName  = d->origInputDeviceName;
         }
         DestroyWindow(hwnd);
         return 0;
@@ -284,19 +285,19 @@ static LRESULT CALLBACK AudioSettingsDlgProc(HWND hwnd, UINT msg, WPARAM wParam,
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
-static void ShowAudioSettingsDialog(HWND hwndParent, UiState& state) {
+static void ShowAudioSettingsDialog(HWND hwndParent, AppState& state) {
     DeviceRefreshInputDevices(state);
     DeviceRefreshOutputDevices(state);
 
     AudioSettingsDlgData dlgData;
     dlgData.appState             = &state;
-    dlgData.origBackend          = state.audioBackend;
-    dlgData.origSampleRate       = state.preferredSampleRate;
-    dlgData.origBufferFrames     = state.preferredBufferFrames;
-    dlgData.origOutputDeviceId   = state.selectedOutputDeviceId;
-    dlgData.origOutputDeviceName = state.selectedOutputDeviceName;
-    dlgData.origInputDeviceId    = state.selectedInputDeviceId;
-    dlgData.origInputDeviceName  = state.selectedInputDeviceName;
+    dlgData.origBackend          = state.audio.audioBackend;
+    dlgData.origSampleRate       = state.audio.preferredSampleRate;
+    dlgData.origBufferFrames     = state.audio.preferredBufferFrames;
+    dlgData.origOutputDeviceId   = state.audio.selectedOutputDeviceId;
+    dlgData.origOutputDeviceName = state.audio.selectedOutputDeviceName;
+    dlgData.origInputDeviceId    = state.audio.selectedInputDeviceId;
+    dlgData.origInputDeviceName  = state.audio.selectedInputDeviceName;
 
     // Register window class once
     static bool sClassRegistered = false;
@@ -354,7 +355,7 @@ static void ShowAudioSettingsDialog(HWND hwndParent, UiState& state) {
     InvalidateRect(hwndParent, nullptr, FALSE);
 }
 
-void ShowTopMenu(HWND hwnd, UiState& state, int menuKind, const RECT& menuRect) {
+void ShowTopMenu(HWND hwnd, AppState& state, int menuKind, const RECT& menuRect) {
     HMENU menu = CreatePopupMenu();
     if (menu == nullptr) {
         return;
@@ -380,34 +381,34 @@ void ShowTopMenu(HWND hwnd, UiState& state, int menuKind, const RECT& menuRect) 
         DeviceRefreshOutputDevices(state);
         HMENU inputSub = CreatePopupMenu();
         if (inputSub != nullptr) {
-            for (size_t i = 0; i < state.inputDeviceNames.size(); ++i) {
+            for (size_t i = 0; i < state.audio.inputDeviceNames.size(); ++i) {
                 const UINT cmdId = kCmdAudioInputBase + static_cast<UINT>(i);
                 UINT flags = MF_STRING;
-                if (state.inputDeviceIds[i] == state.selectedInputDeviceId) {
+                if (state.audio.inputDeviceIds[i] == state.audio.selectedInputDeviceId) {
                     flags |= MF_CHECKED;
                 }
-                AppendMenuW(inputSub, flags, cmdId, state.inputDeviceNames[i].c_str());
+                AppendMenuW(inputSub, flags, cmdId, state.audio.inputDeviceNames[i].c_str());
             }
             AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(inputSub), L"Input Device");
         }
         HMENU outputSub = CreatePopupMenu();
         if (outputSub != nullptr) {
-            for (size_t i = 0; i < state.outputDeviceNames.size(); ++i) {
+            for (size_t i = 0; i < state.audio.outputDeviceNames.size(); ++i) {
                 const UINT cmdId = kCmdAudioOutputBase + static_cast<UINT>(i);
                 UINT flags = MF_STRING;
-                if (state.outputDeviceIds[i] == state.selectedOutputDeviceId) {
+                if (state.audio.outputDeviceIds[i] == state.audio.selectedOutputDeviceId) {
                     flags |= MF_CHECKED;
                 }
-                AppendMenuW(outputSub, flags, cmdId, state.outputDeviceNames[i].c_str());
+                AppendMenuW(outputSub, flags, cmdId, state.audio.outputDeviceNames[i].c_str());
             }
             AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(outputSub), L"Output Device");
         }
         HMENU backendSub = CreatePopupMenu();
         if (backendSub != nullptr) {
-            AppendMenuW(backendSub, MF_STRING | (state.audioBackend == AudioBackend::MME ? MF_CHECKED : 0), kCmdAudioBackendMME, L"MME (Legacy)");
-            AppendMenuW(backendSub, MF_STRING | (state.audioBackend == AudioBackend::WasapiShared ? MF_CHECKED : 0), kCmdAudioBackendWasapiShared, L"WASAPI Shared (Default devices)");
-            AppendMenuW(backendSub, MF_STRING | (state.audioBackend == AudioBackend::WasapiExclusive ? MF_CHECKED : 0), kCmdAudioBackendWasapiExclusive, L"WASAPI Exclusive");
-            AppendMenuW(backendSub, MF_STRING | MF_GRAYED | (state.audioBackend == AudioBackend::Asio ? MF_CHECKED : 0), kCmdAudioBackendAsio, L"ASIO (Future)");
+            AppendMenuW(backendSub, MF_STRING | (state.audio.audioBackend == AudioBackend::MME ? MF_CHECKED : 0), kCmdAudioBackendMME, L"MME (Legacy)");
+            AppendMenuW(backendSub, MF_STRING | (state.audio.audioBackend == AudioBackend::WasapiShared ? MF_CHECKED : 0), kCmdAudioBackendWasapiShared, L"WASAPI Shared (Default devices)");
+            AppendMenuW(backendSub, MF_STRING | (state.audio.audioBackend == AudioBackend::WasapiExclusive ? MF_CHECKED : 0), kCmdAudioBackendWasapiExclusive, L"WASAPI Exclusive");
+            AppendMenuW(backendSub, MF_STRING | MF_GRAYED | (state.audio.audioBackend == AudioBackend::Asio ? MF_CHECKED : 0), kCmdAudioBackendAsio, L"ASIO (Future)");
             AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(backendSub), L"Backend");
         }
 
@@ -419,11 +420,11 @@ void ShowTopMenu(HWND hwnd, UiState& state, int menuKind, const RECT& menuRect) 
                     sampleRates.push_back(sr);
                 }
             };
-            addRate(state.preferredSampleRate);
-            addRate(state.project.projectSampleRate);
-            addRate(state.activeDeviceSampleRate);
-            addRate(state.lastOpenedOutputSampleRate);
-            for (const LoadedAudio& a : state.project.audio) {
+            addRate(state.audio.preferredSampleRate);
+            addRate(state.core.project.projectSampleRate);
+            addRate(state.audio.activeDeviceSampleRate);
+            addRate(state.audio.lastOpenedOutputSampleRate);
+            for (const LoadedAudio& a : state.core.project.audio) {
                 addRate(a.sampleRate);
             }
             std::sort(sampleRates.begin(), sampleRates.end());
@@ -435,7 +436,7 @@ void ShowTopMenu(HWND hwnd, UiState& state, int menuKind, const RECT& menuRect) 
                     const UINT cmdId = kCmdAudioSampleRateBase + static_cast<UINT>(i);
                     wchar_t label[64]{};
                     swprintf_s(label, L"%d Hz", sr);
-                    const UINT flags = MF_STRING | ((state.preferredSampleRate == sr) ? MF_CHECKED : 0);
+                    const UINT flags = MF_STRING | ((state.audio.preferredSampleRate == sr) ? MF_CHECKED : 0);
                     AppendMenuW(sampleRateSub, flags, cmdId, label);
                 }
             }
@@ -450,7 +451,7 @@ void ShowTopMenu(HWND hwnd, UiState& state, int menuKind, const RECT& menuRect) 
                 const UINT cmdId = kCmdAudioBufferSizeBase + static_cast<UINT>(i);
                 wchar_t label[64]{};
                 swprintf_s(label, L"%d frames", frames);
-                const UINT flags = MF_STRING | ((state.preferredBufferFrames == frames) ? MF_CHECKED : 0);
+                const UINT flags = MF_STRING | ((state.audio.preferredBufferFrames == frames) ? MF_CHECKED : 0);
                 AppendMenuW(bufferSub, flags, cmdId, label);
             }
             AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(bufferSub), L"Buffer Size");
@@ -470,15 +471,15 @@ void ShowTopMenu(HWND hwnd, UiState& state, int menuKind, const RECT& menuRect) 
 
     if (cmd == kCmdFileOpen) {
         DoOpen(hwnd, state);
-        if (state.trackInsertDspState.size() != state.project.tracks.size()) state.trackInsertDspState.resize(state.project.tracks.size());
+        if (state.audio.trackInsertDspState.size() != state.core.project.tracks.size()) state.audio.trackInsertDspState.resize(state.core.project.tracks.size());
     } else if (cmd == kCmdFileSave) {
         DoSave(hwnd, state);
     } else if (cmd == kCmdFileSaveAs) {
         DoSaveAs(hwnd, state);
     } else if (cmd == kCmdFileImportWav) {
         ImportWavFiles(hwnd, state);
-        state.projectModified = true;
-        UpdateWindowTitle(hwnd, state);
+        state.core.projectModified = true;
+        UpdateWindowTitle(hwnd, state.core);
     } else if (cmd == kCmdFileExportWav) {
         DoExportMix(hwnd, state);
     } else if (cmd == kCmdAutoMaster) {
@@ -488,12 +489,12 @@ void ShowTopMenu(HWND hwnd, UiState& state, int menuKind, const RECT& menuRect) 
     } else if (cmd == kCmdFileExit) {
         PostMessage(hwnd, WM_CLOSE, 0, 0);
     } else if (cmd == kCmdViewZoomIn) {
-        state.viewBeatsVisible = std::max(4.0f, state.viewBeatsVisible * 0.85f);
+        state.ui.viewBeatsVisible = std::max(4.0f, state.ui.viewBeatsVisible * 0.85f);
     } else if (cmd == kCmdViewZoomOut) {
-        state.viewBeatsVisible = std::min(128.0f, state.viewBeatsVisible * 1.15f);
+        state.ui.viewBeatsVisible = std::min(128.0f, state.ui.viewBeatsVisible * 1.15f);
     } else if (cmd == kCmdViewReset) {
-        state.viewStartBeat = 0.0f;
-        state.viewBeatsVisible = 32.0f;
+        state.ui.viewStartBeat = 0.0f;
+        state.ui.viewBeatsVisible = 32.0f;
     } else if (cmd == kCmdAudioRefreshInputs) {
         DeviceRefreshInputDevices(state);
         DeviceRefreshOutputDevices(state);
@@ -503,11 +504,11 @@ void ShowTopMenu(HWND hwnd, UiState& state, int menuKind, const RECT& menuRect) 
     } else if (cmd == kCmdAudioSettings) {
         ShowAudioSettingsDialog(hwnd, state);
     } else if (cmd == kCmdAudioBackendMME) {
-        state.audioBackend = AudioBackend::MME;
+        state.audio.audioBackend = AudioBackend::MME;
     } else if (cmd == kCmdAudioBackendWasapiShared) {
-        state.audioBackend = AudioBackend::WasapiShared;
+        state.audio.audioBackend = AudioBackend::WasapiShared;
     } else if (cmd == kCmdAudioBackendWasapiExclusive) {
-        state.audioBackend = AudioBackend::WasapiExclusive;
+        state.audio.audioBackend = AudioBackend::WasapiExclusive;
     } else if (cmd == kCmdAudioBackendAsio) {
         MessageBoxW(hwnd, L"ASIO backend is planned but not implemented yet.", L"Audio Backend", MB_OK | MB_ICONINFORMATION);
     } else if (cmd >= kCmdAudioSampleRateBase && cmd < kCmdAudioSampleRateBase + 64) {
@@ -517,32 +518,32 @@ void ShowTopMenu(HWND hwnd, UiState& state, int menuKind, const RECT& menuRect) 
                 sampleRates.push_back(sr);
             }
         };
-        addRate(state.preferredSampleRate);
-        addRate(state.project.projectSampleRate);
-        addRate(state.activeDeviceSampleRate);
-        addRate(state.lastOpenedOutputSampleRate);
-        for (const LoadedAudio& a : state.project.audio) addRate(a.sampleRate);
+        addRate(state.audio.preferredSampleRate);
+        addRate(state.core.project.projectSampleRate);
+        addRate(state.audio.activeDeviceSampleRate);
+        addRate(state.audio.lastOpenedOutputSampleRate);
+        for (const LoadedAudio& a : state.core.project.audio) addRate(a.sampleRate);
         std::sort(sampleRates.begin(), sampleRates.end());
         const size_t idx = static_cast<size_t>(cmd - kCmdAudioSampleRateBase);
         if (idx < sampleRates.size()) {
-            state.preferredSampleRate = sampleRates[idx];
+            state.audio.preferredSampleRate = sampleRates[idx];
         }
     } else if (cmd >= kCmdAudioBufferSizeBase && cmd < kCmdAudioBufferSizeBase + 16) {
         const int bufferOptions[] = {64, 128, 256, 512, 1024, 2048};
         const size_t idx = static_cast<size_t>(cmd - kCmdAudioBufferSizeBase);
         if (idx < std::size(bufferOptions)) {
-            state.preferredBufferFrames = bufferOptions[idx];
+            state.audio.preferredBufferFrames = bufferOptions[idx];
         }
     } else if (cmd == kCmdTrackNew) {
         AddNewTrack(state);
-    } else if (cmd >= kCmdAudioInputBase && cmd < kCmdAudioInputBase + static_cast<UINT>(state.inputDeviceIds.size())) {
+    } else if (cmd >= kCmdAudioInputBase && cmd < kCmdAudioInputBase + static_cast<UINT>(state.audio.inputDeviceIds.size())) {
         const size_t idx = static_cast<size_t>(cmd - kCmdAudioInputBase);
-        state.selectedInputDeviceId = state.inputDeviceIds[idx];
-        state.selectedInputDeviceName = state.inputDeviceNames[idx];
-    } else if (cmd >= kCmdAudioOutputBase && cmd < kCmdAudioOutputBase + static_cast<UINT>(state.outputDeviceIds.size())) {
+        state.audio.selectedInputDeviceId = state.audio.inputDeviceIds[idx];
+        state.audio.selectedInputDeviceName = state.audio.inputDeviceNames[idx];
+    } else if (cmd >= kCmdAudioOutputBase && cmd < kCmdAudioOutputBase + static_cast<UINT>(state.audio.outputDeviceIds.size())) {
         const size_t idx = static_cast<size_t>(cmd - kCmdAudioOutputBase);
-        state.selectedOutputDeviceId = state.outputDeviceIds[idx];
-        state.selectedOutputDeviceName = state.outputDeviceNames[idx];
+        state.audio.selectedOutputDeviceId = state.audio.outputDeviceIds[idx];
+        state.audio.selectedOutputDeviceName = state.audio.outputDeviceNames[idx];
     }
 
     DestroyMenu(menu);
@@ -629,7 +630,7 @@ static bool ChooseAutoMasterSettings(HWND hwnd, float* outTargetLufs, float* out
     return true;
 }
 
-static bool ReplaceProjectWithSingleWav(UiState& state, const std::wstring& wavPath, std::wstring* outError) {
+static bool ReplaceProjectWithSingleWav(AppState& state, const std::wstring& wavPath, std::wstring* outError) {
     LoadedAudio audio{};
     std::wstring error;
     if (!LoadWavStereo(wavPath, &audio, &error)) {
@@ -637,46 +638,46 @@ static bool ReplaceProjectWithSingleWav(UiState& state, const std::wstring& wavP
         return false;
     }
 
-    EnterCriticalSection(&state.audioStateLock);
-    state.project.tracks.clear();
-    state.project.audio.clear();
-    state.project.clips.clear();
+    EnterCriticalSection(&state.audio.audioStateLock);
+    state.core.project.tracks.clear();
+    state.core.project.audio.clear();
+    state.core.project.clips.clear();
 
     // Reset buses to defaults
-    state.project.buses.assign(kBusCount, BusData{});
+    state.core.project.buses.assign(kBusCount, BusData{});
 
-    state.project.projectSampleRate = audio.sampleRate;
+    state.core.project.projectSampleRate = audio.sampleRate;
 
     {
         TrackData t{};
         t.name = audio.displayName;
         t.busIndex = 3; // mastered stereo routes directly to Master
-        state.project.tracks.push_back(std::move(t));
+        state.core.project.tracks.push_back(std::move(t));
     }
-        state.project.audio.push_back(std::move(audio));
+        state.core.project.audio.push_back(std::move(audio));
 
-        const float lengthBeats = BeatsFromFrames(state, state.project.audio.back().frames);
-        state.project.clips.push_back(ClipItem{
+        const float lengthBeats = BeatsFromFrames(state, state.core.project.audio.back().frames);
+        state.core.project.clips.push_back(ClipItem{
             0,
             0,
             0.0f,
             std::max(0.25f, lengthBeats),
             kPalette.clip1,
-            state.project.tracks.back().name,
+            state.core.project.tracks.back().name,
         });
 
-    state.selectedTrackIndex = 0;
-    state.selectedClipIndex = 0;
-    state.playheadBeat = 0.0f;
-    state.viewStartBeat = 0.0f;
-    state.viewBeatsVisible = std::clamp(std::max(16.0f, lengthBeats + 4.0f), 16.0f, 128.0f);
-    state.projectFilePath.clear();
-    state.projectModified = true;
-    LeaveCriticalSection(&state.audioStateLock);
+    state.ui.selectedTrackIndex = 0;
+    state.ui.selectedClipIndex = 0;
+    state.ui.playheadBeat = 0.0f;
+    state.ui.viewStartBeat = 0.0f;
+    state.ui.viewBeatsVisible = std::clamp(std::max(16.0f, lengthBeats + 4.0f), 16.0f, 128.0f);
+    state.core.projectFilePath.clear();
+    state.core.projectModified = true;
+    LeaveCriticalSection(&state.audio.audioStateLock);
     return true;
 }
 
-bool DoAutoMaster(HWND hwnd, UiState& state) {
+bool DoAutoMaster(HWND hwnd, AppState& state) {
     float targetLufs = -14.0f;
     float ceilingDb = -1.0f;
     float width = 1.15f;
@@ -686,17 +687,17 @@ bool DoAutoMaster(HWND hwnd, UiState& state) {
 
     std::wstring sourceWav;
     {
-        EnterCriticalSection(&state.audioStateLock);
-        if (!state.project.clips.empty() && state.selectedClipIndex >= 0 && state.selectedClipIndex < static_cast<int>(state.project.clips.size())) {
-            const ClipItem& c = state.project.clips[static_cast<size_t>(state.selectedClipIndex)];
-            if (c.audioIndex >= 0 && c.audioIndex < static_cast<int>(state.project.audio.size())) {
-                sourceWav = state.project.audio[static_cast<size_t>(c.audioIndex)].sourcePath;
+        EnterCriticalSection(&state.audio.audioStateLock);
+        if (!state.core.project.clips.empty() && state.ui.selectedClipIndex >= 0 && state.ui.selectedClipIndex < static_cast<int>(state.core.project.clips.size())) {
+            const ClipItem& c = state.core.project.clips[static_cast<size_t>(state.ui.selectedClipIndex)];
+            if (c.audioIndex >= 0 && c.audioIndex < static_cast<int>(state.core.project.audio.size())) {
+                sourceWav = state.core.project.audio[static_cast<size_t>(c.audioIndex)].sourcePath;
             }
         }
-        if (sourceWav.empty() && state.project.audio.size() == 1) {
-            sourceWav = state.project.audio[0].sourcePath;
+        if (sourceWav.empty() && state.core.project.audio.size() == 1) {
+            sourceWav = state.core.project.audio[0].sourcePath;
         }
-        LeaveCriticalSection(&state.audioStateLock);
+        LeaveCriticalSection(&state.audio.audioStateLock);
     }
 
     if (sourceWav.empty() || !std::filesystem::exists(sourceWav)) {
@@ -782,7 +783,7 @@ bool DoAutoMaster(HWND hwnd, UiState& state) {
         L"\n\nOpen mastered file in a new empty project?";
     const int choice = MessageBoxW(hwnd, msg.c_str(), L"Auto Master", MB_YESNO | MB_ICONINFORMATION);
     if (choice == IDYES) {
-        if (state.recording) {
+        if (state.audio.recording) {
             MessageBoxW(hwnd, L"Stop recording before loading the mastered file.", L"Auto Master", MB_OK | MB_ICONWARNING);
             return true;
         }
@@ -794,15 +795,15 @@ bool DoAutoMaster(HWND hwnd, UiState& state) {
             MessageBoxW(hwnd, em.c_str(), L"Auto Master", MB_OK | MB_ICONERROR);
             return false;
         }
-        UpdateWindowTitle(hwnd, state);
+        UpdateWindowTitle(hwnd, state.core);
         InvalidateRect(hwnd, nullptr, FALSE);
     }
 
     return true;
 }
 
-bool DoMixReadiness(HWND hwnd, UiState& state) {
-    if (state.project.tracks.empty() || state.project.clips.empty()) {
+bool DoMixReadiness(HWND hwnd, AppState& state) {
+    if (state.core.project.tracks.empty() || state.core.project.clips.empty()) {
         MessageBoxW(hwnd, L"Nothing to analyse - add tracks and clips first.", L"Mix Readiness", MB_OK | MB_ICONINFORMATION);
         return false;
     }
@@ -820,9 +821,9 @@ bool DoMixReadiness(HWND hwnd, UiState& state) {
     for (int b = 0; b < kBusCount; ++b) {
         std::vector<float> stereo;
         int sr = 0;
-        EnterCriticalSection(&state.audioStateLock);
+        EnterCriticalSection(&state.audio.audioStateLock);
         const bool ok = RenderBusStemToStereoLocked(state, b, &stereo, &sr);
-        LeaveCriticalSection(&state.audioStateLock);
+        LeaveCriticalSection(&state.audio.audioStateLock);
         if (!ok || stereo.empty()) continue;
         const std::wstring wavPath = std::wstring(stemsDir) + L"\\" + kBusWavNames[b] + L".wav";
         if (WriteWavPcm16Stereo(wavPath, stereo, sr)) ++exported;
@@ -948,8 +949,8 @@ bool DoMixReadiness(HWND hwnd, UiState& state) {
     return gatePassed;
 }
 
-bool DoExportMix(HWND hwnd, UiState& state) {
-    if (state.project.tracks.empty() || state.project.clips.empty()) {
+bool DoExportMix(HWND hwnd, AppState& state) {
+    if (state.core.project.tracks.empty() || state.core.project.clips.empty()) {
         MessageBoxW(hwnd, L"Nothing to export -- add some tracks and clips first.", L"Export Mix", MB_OK | MB_ICONINFORMATION);
         return false;
     }
@@ -967,9 +968,9 @@ bool DoExportMix(HWND hwnd, UiState& state) {
     ofn.lpstrDefExt = L"wav";
 
     // Suggest a default filename next to the project file
-    if (!state.projectFilePath.empty()) {
-        const auto stem = std::filesystem::path(state.projectFilePath).stem().wstring();
-        const auto dir  = std::filesystem::path(state.projectFilePath).parent_path().wstring();
+    if (!state.core.projectFilePath.empty()) {
+        const auto stem = std::filesystem::path(state.core.projectFilePath).stem().wstring();
+        const auto dir  = std::filesystem::path(state.core.projectFilePath).parent_path().wstring();
         const std::wstring suggested = dir + L"\\" + stem + L"_mix.wav";
         wcsncpy_s(filePath, MAX_PATH, suggested.c_str(), _TRUNCATE);
         ofn.lpstrInitialDir = dir.c_str();
@@ -982,9 +983,9 @@ bool DoExportMix(HWND hwnd, UiState& state) {
     // Render
     std::vector<float> stereo;
     int sampleRate = 0;
-    EnterCriticalSection(&state.audioStateLock);
+    EnterCriticalSection(&state.audio.audioStateLock);
     const bool ok = RenderFullMixToStereoLocked(state, &stereo, &sampleRate);
-    LeaveCriticalSection(&state.audioStateLock);
+    LeaveCriticalSection(&state.audio.audioStateLock);
 
     if (!ok || stereo.empty()) {
         MessageBoxW(hwnd, L"Render failed - no audio could be mixed.", L"Export Mix", MB_OK | MB_ICONERROR);
@@ -1038,7 +1039,7 @@ std::vector<std::wstring> PickWavFiles(HWND hwnd) {
     return result;
 }
 
-void ImportWavFiles(HWND hwnd, UiState& state) {
+void ImportWavFiles(HWND hwnd, AppState& state) {
     const std::vector<std::wstring> files = PickWavFiles(hwnd);
     if (files.empty()) {
         return;
@@ -1055,46 +1056,46 @@ void ImportWavFiles(HWND hwnd, UiState& state) {
             continue;
         }
 
-        if (state.project.projectSampleRate == 0) {
-            state.project.projectSampleRate = audio.sampleRate;
-        } else if (audio.sampleRate != state.project.projectSampleRate) {
+        if (state.core.project.projectSampleRate == 0) {
+            state.core.project.projectSampleRate = audio.sampleRate;
+        } else if (audio.sampleRate != state.core.project.projectSampleRate) {
             skipped += std::filesystem::path(path).filename().wstring() + L": sample rate mismatch\n";
             continue;
         }
 
-        const int trackIndex = static_cast<int>(state.project.tracks.size());
-        const int audioIndex = static_cast<int>(state.project.audio.size());
+        const int trackIndex = static_cast<int>(state.core.project.tracks.size());
+        const int audioIndex = static_cast<int>(state.core.project.audio.size());
 
-        EnterCriticalSection(&state.audioStateLock);
+        EnterCriticalSection(&state.audio.audioStateLock);
         {
             TrackData t{};
             t.name = audio.displayName;
             t.busIndex = 1;
-            state.project.tracks.push_back(std::move(t));
+            state.core.project.tracks.push_back(std::move(t));
         }
-        state.project.audio.push_back(std::move(audio));
+        state.core.project.audio.push_back(std::move(audio));
 
-        const float lengthBeats = BeatsFromFrames(state, state.project.audio.back().frames);
-        state.project.clips.push_back(ClipItem{
+        const float lengthBeats = BeatsFromFrames(state, state.core.project.audio.back().frames);
+        state.core.project.clips.push_back(ClipItem{
             trackIndex,
             audioIndex,
             0.0f,
             std::max(0.25f, lengthBeats),
             clipColors[trackIndex % 4],
-            state.project.tracks.back().name,
+            state.core.project.tracks.back().name,
         });
-        LeaveCriticalSection(&state.audioStateLock);
+        LeaveCriticalSection(&state.audio.audioStateLock);
     }
 
-    if (!state.project.clips.empty()) {
+    if (!state.core.project.clips.empty()) {
         float endBeat = 0.0f;
-        EnterCriticalSection(&state.audioStateLock);
-        for (const ClipItem& clip : state.project.clips) {
+        EnterCriticalSection(&state.audio.audioStateLock);
+        for (const ClipItem& clip : state.core.project.clips) {
             endBeat = std::max(endBeat, clip.startBeat + clip.lengthBeats);
         }
-        LeaveCriticalSection(&state.audioStateLock);
-        state.viewStartBeat = 0.0f;
-        state.viewBeatsVisible = std::clamp(std::max(16.0f, endBeat + 4.0f), 16.0f, 128.0f);
+        LeaveCriticalSection(&state.audio.audioStateLock);
+        state.ui.viewStartBeat = 0.0f;
+        state.ui.viewBeatsVisible = std::clamp(std::max(16.0f, endBeat + 4.0f), 16.0f, 128.0f);
     }
 
     if (!skipped.empty()) {
@@ -1105,35 +1106,35 @@ void ImportWavFiles(HWND hwnd, UiState& state) {
 // ── Audio orchestration layer ─────────────────────────────────────────────────
 // These functions coordinate both the MME and WASAPI backends.
 
-void StopPlayback(UiState& state, bool rewind) {
+void StopPlayback(AppState& state, bool rewind) {
     DeviceStopPlaybackBackend(state);
 
-    state.playing = false;
-    state.audioThreadRunning.store(false);
+    state.audio.playing = false;
+    state.audio.audioThreadRunning.store(false);
     if (rewind) {
-        state.playheadBeat = 0.0f;
-        state.playbackFrameCursor.store(0);
+        state.ui.playheadBeat = 0.0f;
+        state.audio.playbackFrameCursor.store(0);
     }
 }
 
-void StopRecording(UiState& state, bool commitTake) {
-    if (!state.recording && state.recordThread == nullptr) {
+void StopRecording(AppState& state, bool commitTake) {
+    if (!state.audio.recording && state.audio.recordThread == nullptr) {
         return;
     }
 
     DeviceStopRecordingBackend(state);
 
-    if (commitTake && state.recordTrackIndex >= 0 && !state.recordedInputPcm.empty()) {
-        const int channels = std::max(1, state.recordInputChannels);
-        const std::uint32_t totalFrames = static_cast<std::uint32_t>(state.recordedInputPcm.size() / static_cast<size_t>(channels));
+    if (commitTake && state.audio.recordTrackIndex >= 0 && !state.audio.recordedInputPcm.empty()) {
+        const int channels = std::max(1, state.audio.recordInputChannels);
+        const std::uint32_t totalFrames = static_cast<std::uint32_t>(state.audio.recordedInputPcm.size() / static_cast<size_t>(channels));
         const ULONGLONG nowTick = GetTickCount64();
-        const ULONGLONG elapsedMsUll = (state.recordCaptureStartTickMs > 0 && nowTick > state.recordCaptureStartTickMs)
-            ? (nowTick - state.recordCaptureStartTickMs)
+        const ULONGLONG elapsedMsUll = (state.audio.recordCaptureStartTickMs > 0 && nowTick > state.audio.recordCaptureStartTickMs)
+            ? (nowTick - state.audio.recordCaptureStartTickMs)
             : 0ULL;
         const int elapsedMs = static_cast<int>(std::min<ULONGLONG>(elapsedMsUll, static_cast<ULONGLONG>(std::numeric_limits<int>::max())));
-        const int captureSampleRate = (state.lastOpenedInputSampleRate > 0)
-            ? state.lastOpenedInputSampleRate
-            : state.project.projectSampleRate;
+        const int captureSampleRate = (state.audio.lastOpenedInputSampleRate > 0)
+            ? state.audio.lastOpenedInputSampleRate
+            : state.core.project.projectSampleRate;
         const double expectedFrames = (elapsedMs > 0 && captureSampleRate > 0)
             ? (static_cast<double>(elapsedMs) * static_cast<double>(captureSampleRate) / 1000.0)
             : 0.0;
@@ -1147,12 +1148,12 @@ void StopRecording(UiState& state, bool commitTake) {
             frameStride = static_cast<int>(rounded);
         }
 
-        state.lastCaptureElapsedMs = elapsedMs;
-        state.lastCaptureObservedRateRatio = observedRatio;
-        state.lastCaptureFrameStride = frameStride;
+        state.audio.lastCaptureElapsedMs = elapsedMs;
+        state.audio.lastCaptureObservedRateRatio = observedRatio;
+        state.audio.lastCaptureFrameStride = frameStride;
 
         const std::uint32_t skipFramesRaw = static_cast<std::uint32_t>(
-            std::min<std::uint64_t>(state.recordPrerollFrames * static_cast<std::uint64_t>(frameStride), totalFrames));
+            std::min<std::uint64_t>(state.audio.recordPrerollFrames * static_cast<std::uint64_t>(frameStride), totalFrames));
         const std::uint32_t frames = (totalFrames > skipFramesRaw)
             ? ((totalFrames - skipFramesRaw) / static_cast<std::uint32_t>(frameStride))
             : 0;
@@ -1164,13 +1165,13 @@ void StopRecording(UiState& state, bool commitTake) {
                 float r = 0.0f;
                 const std::uint32_t srcFrame = skipFramesRaw + f * static_cast<std::uint32_t>(frameStride);
                 if (channels == 1) {
-                    const float v = static_cast<float>(state.recordedInputPcm[static_cast<size_t>(srcFrame)]) / 32768.0f;
+                    const float v = static_cast<float>(state.audio.recordedInputPcm[static_cast<size_t>(srcFrame)]) / 32768.0f;
                     l = v;
                     r = v;
                 } else {
                     const size_t base = static_cast<size_t>(srcFrame) * static_cast<size_t>(channels);
-                    l = static_cast<float>(state.recordedInputPcm[base]) / 32768.0f;
-                    r = static_cast<float>(state.recordedInputPcm[base + 1]) / 32768.0f;
+                    l = static_cast<float>(state.audio.recordedInputPcm[base]) / 32768.0f;
+                    r = static_cast<float>(state.audio.recordedInputPcm[base + 1]) / 32768.0f;
                 }
                 stereo[static_cast<size_t>(f) * 2] = l;
                 stereo[static_cast<size_t>(f) * 2 + 1] = r;
@@ -1178,61 +1179,61 @@ void StopRecording(UiState& state, bool commitTake) {
 
             LoadedAudio take{};
             take.sourcePath = L"[recording]";
-            take.displayName = L"Take " + std::to_wstring(static_cast<int>(state.project.audio.size()) + 1);
+            take.displayName = L"Take " + std::to_wstring(static_cast<int>(state.core.project.audio.size()) + 1);
             take.sampleRate = captureSampleRate;
             take.frames = frames;
             take.stereo = std::move(stereo);
 
-            state.lastCommittedTakeSampleRate = take.sampleRate;
-            state.lastCommittedTakeFrames = static_cast<int>(take.frames);
-            state.lastCommittedTakeChannels = 2;
+            state.audio.lastCommittedTakeSampleRate = take.sampleRate;
+            state.audio.lastCommittedTakeFrames = static_cast<int>(take.frames);
+            state.audio.lastCommittedTakeChannels = 2;
 
             const COLORREF clipColors[4] = {kPalette.clip1, kPalette.clip2, kPalette.clip3, kPalette.clip4};
-            EnterCriticalSection(&state.audioStateLock);
-            const int audioIndex = static_cast<int>(state.project.audio.size());
-            state.project.audio.push_back(std::move(take));
+            EnterCriticalSection(&state.audio.audioStateLock);
+            const int audioIndex = static_cast<int>(state.core.project.audio.size());
+            state.core.project.audio.push_back(std::move(take));
 
-            const float startBeat = BeatsFromFrames(state, state.recordStartFrame);
+            const float startBeat = BeatsFromFrames(state, state.audio.recordStartFrame);
             const float lengthBeats = BeatsFromFrames(state, frames);
 
-            if (state.recordTrackIndex >= 0 && state.recordTrackIndex < static_cast<int>(state.project.tracks.size())) {
-                state.project.clips.push_back(ClipItem{
-                    state.recordTrackIndex,
+            if (state.audio.recordTrackIndex >= 0 && state.audio.recordTrackIndex < static_cast<int>(state.core.project.tracks.size())) {
+                state.core.project.clips.push_back(ClipItem{
+                    state.audio.recordTrackIndex,
                     audioIndex,
                     startBeat,
                     std::max(0.25f, lengthBeats),
-                    clipColors[state.recordTrackIndex % 4],
-                    state.project.tracks[static_cast<size_t>(state.recordTrackIndex)].name + L" Rec",
+                    clipColors[state.audio.recordTrackIndex % 4],
+                    state.core.project.tracks[static_cast<size_t>(state.audio.recordTrackIndex)].name + L" Rec",
                 });
-                state.projectModified = true;
-                if (state.hwnd) UpdateWindowTitle(state.hwnd, state);
+                state.core.projectModified = true;
+                if (state.ui.hwnd) UpdateWindowTitle(state.ui.hwnd, state.core);
             }
-            LeaveCriticalSection(&state.audioStateLock);
+            LeaveCriticalSection(&state.audio.audioStateLock);
         }
     }
 
-    state.recordedInputPcm.clear();
-    state.monitorInputPcm.clear();
-    state.monitorInputReadPos = 0;
-    state.recordInputChannels = 0;
-    state.recordTrackIndex = -1;
-    state.recordCaptureStartTickMs = 0;
-    state.recordStartFrame = 0;
-    state.recordPrerollFrames = 0;
-    state.countingIn = false;
-    state.recordUsingWasapi = false;
-    state.recordInitState.store(0);
-    state.recording = false;
+    state.audio.recordedInputPcm.clear();
+    state.audio.monitorInputPcm.clear();
+    state.audio.monitorInputReadPos = 0;
+    state.audio.recordInputChannels = 0;
+    state.audio.recordTrackIndex = -1;
+    state.audio.recordCaptureStartTickMs = 0;
+    state.audio.recordStartFrame = 0;
+    state.audio.recordPrerollFrames = 0;
+    state.audio.countingIn = false;
+    state.audio.recordUsingWasapi = false;
+    state.audio.recordInitState.store(0);
+    state.audio.recording = false;
 }
 
-bool StartRecording(HWND hwnd, UiState& state) {
-    if (state.recording) {
+bool StartRecording(HWND hwnd, AppState& state) {
+    if (state.audio.recording) {
         return true;
     }
 
     int armedTrack = -1;
-    for (size_t i = 0; i < state.project.tracks.size(); ++i) {
-        if (state.project.tracks[i].recordArm) {
+    for (size_t i = 0; i < state.core.project.tracks.size(); ++i) {
+        if (state.core.project.tracks[i].recordArm) {
             armedTrack = static_cast<int>(i);
             break;
         }
@@ -1242,9 +1243,9 @@ bool StartRecording(HWND hwnd, UiState& state) {
         return false;
     }
 
-    const bool wasPlaying = state.playing;
+    const bool wasPlaying = state.audio.playing;
 
-    if (!state.playing && (!state.project.clips.empty() || state.metronomeRecord || state.countInEnabled)) {
+    if (!state.audio.playing && (!state.core.project.clips.empty() || state.audio.metronomeRecord || state.audio.countInEnabled)) {
         if (!StartPlayback(hwnd, state)) {
             return false;
         }
@@ -1253,16 +1254,16 @@ bool StartRecording(HWND hwnd, UiState& state) {
     return DeviceStartRecordingBackend(hwnd, state, armedTrack, wasPlaying);
 }
 
-bool StartPlayback(HWND hwnd, UiState& state) {
-    state.lastPlaybackInitError.clear();
+bool StartPlayback(HWND hwnd, AppState& state) {
+    state.audio.lastPlaybackInitError.clear();
 
     DeviceRefreshOutputDevices(state);
-    if (state.outputDeviceIds.empty()) {
+    if (state.audio.outputDeviceIds.empty()) {
         MessageBoxW(hwnd, L"No audio output devices detected.", L"Playback error", MB_OK | MB_ICONERROR);
         return false;
     }
 
-    if (state.project.clips.empty() && !state.metronomePlay && !state.metronomeRecord && !state.countInEnabled) {
+    if (state.core.project.clips.empty() && !state.audio.metronomePlay && !state.audio.metronomeRecord && !state.audio.countInEnabled) {
         MessageBoxW(hwnd, L"Import at least one supported WAV file first.", L"No audio to play", MB_OK | MB_ICONINFORMATION);
         return false;
     }
@@ -1274,15 +1275,15 @@ bool StartPlayback(HWND hwnd, UiState& state) {
 
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    auto* state = reinterpret_cast<UiState*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
+    auto* state = reinterpret_cast<AppState*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
 
     switch (msg) {
     case WM_CREATE: {
-        auto* initial = new UiState();
-        initial->hwnd = hwnd;
+        auto* initial = new AppState();
+        initial->ui.hwnd = hwnd;
         DeviceRefreshInputDevices(*initial);
         DeviceRefreshOutputDevices(*initial);
-        InitializeCriticalSection(&initial->audioStateLock);
+        InitializeCriticalSection(&initial->audio.audioStateLock);
         SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(initial));
         SetTimer(hwnd, kPlaybackTimerId, kPlaybackTimerMs, nullptr);
         return 0;
@@ -1291,20 +1292,20 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         KillTimer(hwnd, kPlaybackTimerId);
         if (state != nullptr) {
             StopRecording(*state, false);
-            if (state->automixThread != nullptr) {
-                WaitForSingleObject(state->automixThread, INFINITE);
-                CloseHandle(state->automixThread);
-                state->automixThread = nullptr;
+            if (state->audio.automixThread != nullptr) {
+                WaitForSingleObject(state->audio.automixThread, INFINITE);
+                CloseHandle(state->audio.automixThread);
+                state->audio.automixThread = nullptr;
             }
             StopPlayback(*state, false);
-            DeleteCriticalSection(&state->audioStateLock);
+            DeleteCriticalSection(&state->audio.audioStateLock);
             delete state;
         }
         PostQuitMessage(0);
         return 0;
     case kMsgPlaybackFinished:
         if (state != nullptr) {
-            if (state->recording) {
+            if (state->audio.recording) {
                 StopRecording(*state, true);
             }
             StopPlayback(*state, false);
@@ -1313,21 +1314,21 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     case kMsgAutoMixFinished:
         if (state != nullptr) {
-            if (state->automixThread != nullptr) {
-                CloseHandle(state->automixThread);
-                state->automixThread = nullptr;
+            if (state->audio.automixThread != nullptr) {
+                CloseHandle(state->audio.automixThread);
+                state->audio.automixThread = nullptr;
             }
             InvalidateRect(hwnd, nullptr, FALSE);
         }
         return 0;
     case WM_TIMER:
-        if (state != nullptr && wParam == kPlaybackTimerId && state->playing) {
+        if (state != nullptr && wParam == kPlaybackTimerId && state->audio.playing) {
             const std::uint64_t absoluteFrame = DeviceGetRenderedPlaybackFrame(*state);
-            state->playheadBeat = BeatsFromFrames(*state, absoluteFrame);
+            state->ui.playheadBeat = BeatsFromFrames(*state, absoluteFrame);
 
-            const float viewRight = state->viewStartBeat + state->viewBeatsVisible;
-            if (state->playheadBeat > viewRight - 1.0f) {
-                state->viewStartBeat = state->playheadBeat - (state->viewBeatsVisible * 0.75f);
+            const float viewRight = state->ui.viewStartBeat + state->ui.viewBeatsVisible;
+            if (state->ui.playheadBeat > viewRight - 1.0f) {
+                state->ui.viewStartBeat = state->ui.playheadBeat - (state->ui.viewBeatsVisible * 0.75f);
             }
             InvalidateRect(hwnd, nullptr, FALSE);
         }
@@ -1337,8 +1338,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         if (wParam == VK_SPACE) {
-            if (state->playing) {
-                if (state->recording) {
+            if (state->audio.playing) {
+                if (state->audio.recording) {
                     StopRecording(*state, true);
                 }
                 StopPlayback(*state, false);
@@ -1350,20 +1351,20 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         if (wParam == VK_HOME) {
             StopPlayback(*state, true);
-            state->viewStartBeat = 0.0f;
+            state->ui.viewStartBeat = 0.0f;
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
         if (wParam == 'I') {
             ImportWavFiles(hwnd, *state);
-            state->projectModified = true;
-            UpdateWindowTitle(hwnd, *state);
+            state->core.projectModified = true;
+            UpdateWindowTitle(hwnd, state->core);
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
         if (wParam == 'O' && (GetKeyState(VK_CONTROL) & 0x8000)) {
             DoOpen(hwnd, *state);
-            if (state->trackInsertDspState.size() != state->project.tracks.size()) state->trackInsertDspState.resize(state->project.tracks.size());
+            if (state->audio.trackInsertDspState.size() != state->core.project.tracks.size()) state->audio.trackInsertDspState.resize(state->core.project.tracks.size());
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
@@ -1376,39 +1377,39 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         if (wParam == 'Z' && (GetKeyState(VK_CONTROL) & 0x8000)) {
-            if (state->playing || state->recording) return 0;
+            if (state->audio.playing || state->audio.recording) return 0;
             ApplyUndo(hwnd, *state);
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
         if ((wParam == 'Y' && (GetKeyState(VK_CONTROL) & 0x8000)) ||
             (wParam == 'Z' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000))) {
-            if (state->playing || state->recording) return 0;
+            if (state->audio.playing || state->audio.recording) return 0;
             ApplyRedo(hwnd, *state);
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
         if (wParam == 'S' && !(GetKeyState(VK_CONTROL) & 0x8000)) {
             // Split selected clip at playhead
-            if (state->playing || state->recording) return 0;
+            if (state->audio.playing || state->audio.recording) return 0;
             SplitSelectedClip(*state);
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
         if (wParam == 'D' && (GetKeyState(VK_CONTROL) & 0x8000)) {
-            if (state->playing || state->recording) return 0;
+            if (state->audio.playing || state->audio.recording) return 0;
             DuplicateSelectedClip(*state);
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
         if (wParam == VK_LEFT && !(GetKeyState(VK_CONTROL) & 0x8000)) {
-            if (state->playing || state->recording) return 0;
+            if (state->audio.playing || state->audio.recording) return 0;
             NudgeSelectedClip(*state, -0.25f);
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
         if (wParam == VK_RIGHT && !(GetKeyState(VK_CONTROL) & 0x8000)) {
-            if (state->playing || state->recording) return 0;
+            if (state->audio.playing || state->audio.recording) return 0;
             NudgeSelectedClip(*state, 0.25f);
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
@@ -1424,7 +1425,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         if (wParam == 'R') {
-            if (state->recording) {
+            if (state->audio.recording) {
                 StopRecording(*state, true);
                 StopPlayback(*state, true);  // rewind so next take starts from beat 0
             } else {
@@ -1434,41 +1435,41 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         if (wParam == VK_ESCAPE) {
-            if (state->fxInspectorOpen) {
-                state->fxInspectorOpen = false;
+            if (state->ui.fxInspectorOpen) {
+                state->ui.fxInspectorOpen = false;
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
         }
         if (wParam == VK_DELETE) {
-            if (state->recording || state->playing) {
+            if (state->audio.recording || state->audio.playing) {
                 MessageBoxW(hwnd, L"Stop playback/recording before deleting.", L"Delete", MB_OK | MB_ICONINFORMATION);
                 return 0;
             }
 
-            if (state->selectedClipIndex >= 0 && state->selectedClipIndex < static_cast<int>(state->project.clips.size())) {
+            if (state->ui.selectedClipIndex >= 0 && state->ui.selectedClipIndex < static_cast<int>(state->core.project.clips.size())) {
                 DeleteSelectedClip(*state);
-                state->projectModified = true;
-                UpdateWindowTitle(hwnd, *state);
+                state->core.projectModified = true;
+                UpdateWindowTitle(hwnd, state->core);
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
 
-            if (state->selectedTrackIndex >= 0 && state->selectedTrackIndex < static_cast<int>(state->project.tracks.size())) {
-                DeleteTrackAt(*state, state->selectedTrackIndex);
-                state->projectModified = true;
-                UpdateWindowTitle(hwnd, *state);
+            if (state->ui.selectedTrackIndex >= 0 && state->ui.selectedTrackIndex < static_cast<int>(state->core.project.tracks.size())) {
+                DeleteTrackAt(*state, state->ui.selectedTrackIndex);
+                state->core.projectModified = true;
+                UpdateWindowTitle(hwnd, state->core);
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
             return 0;
         }
         if (wParam == VK_OEM_PLUS || wParam == VK_ADD) {
-            state->viewBeatsVisible = std::max(4.0f, state->viewBeatsVisible * 0.85f);
+            state->ui.viewBeatsVisible = std::max(4.0f, state->ui.viewBeatsVisible * 0.85f);
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
         if (wParam == VK_OEM_MINUS || wParam == VK_SUBTRACT) {
-            state->viewBeatsVisible = std::min(128.0f, state->viewBeatsVisible * 1.15f);
+            state->ui.viewBeatsVisible = std::min(128.0f, state->ui.viewBeatsVisible * 1.15f);
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
@@ -1479,25 +1480,25 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         {
             const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-            if (PtInRect(&state->fileMenuRect, pt)) {
-                ShowTopMenu(hwnd, *state, 0, state->fileMenuRect);
+            if (PtInRect(&state->ui.fileMenuRect, pt)) {
+                ShowTopMenu(hwnd, *state, 0, state->ui.fileMenuRect);
                 return 0;
             }
-            if (PtInRect(&state->viewMenuRect, pt)) {
-                ShowTopMenu(hwnd, *state, 1, state->viewMenuRect);
+            if (PtInRect(&state->ui.viewMenuRect, pt)) {
+                ShowTopMenu(hwnd, *state, 1, state->ui.viewMenuRect);
                 return 0;
             }
-            if (PtInRect(&state->audioMenuRect, pt)) {
-                ShowTopMenu(hwnd, *state, 2, state->audioMenuRect);
+            if (PtInRect(&state->ui.audioMenuRect, pt)) {
+                ShowTopMenu(hwnd, *state, 2, state->ui.audioMenuRect);
                 return 0;
             }
-            if (PtInRect(&state->trackMenuRect, pt)) {
-                ShowTopMenu(hwnd, *state, 3, state->trackMenuRect);
+            if (PtInRect(&state->ui.trackMenuRect, pt)) {
+                ShowTopMenu(hwnd, *state, 3, state->ui.trackMenuRect);
                 return 0;
             }
 
-            if (PtInRect(&state->playRect, pt)) {
-                if (state->playing) {
+            if (PtInRect(&state->ui.playRect, pt)) {
+                if (state->audio.playing) {
                     StopPlayback(*state, false);
                 } else {
                     StartPlayback(hwnd, *state);
@@ -1505,16 +1506,16 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
-            if (PtInRect(&state->stopRect, pt)) {
-                if (state->recording) {
+            if (PtInRect(&state->ui.stopRect, pt)) {
+                if (state->audio.recording) {
                     StopRecording(*state, true);
                 }
                 StopPlayback(*state, true);
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
-            if (PtInRect(&state->recordRect, pt)) {
-                if (state->recording) {
+            if (PtInRect(&state->ui.recordRect, pt)) {
+                if (state->audio.recording) {
                     StopRecording(*state, true);
                     StopPlayback(*state, true);  // rewind so next take starts from beat 0
                 } else {
@@ -1523,55 +1524,55 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
-            if (PtInRect(&state->importRect, pt)) {
+            if (PtInRect(&state->ui.importRect, pt)) {
                 ImportWavFiles(hwnd, *state);
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
-            if (PtInRect(&state->automixRect, pt)) {
+            if (PtInRect(&state->ui.automixRect, pt)) {
                 StartAutoMixAsync(hwnd, *state);
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
-            if (PtInRect(&state->vocalCheckRect, pt)) {
+            if (PtInRect(&state->ui.vocalCheckRect, pt)) {
                 AnalyzeSelectedTrackQuality(hwnd, *state);
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
-            if (PtInRect(&state->autoMasterRect, pt)) {
+            if (PtInRect(&state->ui.autoMasterRect, pt)) {
                 DoAutoMaster(hwnd, *state);
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
-            if (PtInRect(&state->metPlayRect, pt)) {
-                state->metronomePlay = !state->metronomePlay;
+            if (PtInRect(&state->ui.metPlayRect, pt)) {
+                state->audio.metronomePlay = !state->audio.metronomePlay;
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
-            if (PtInRect(&state->metRecRect, pt)) {
-                state->metronomeRecord = !state->metronomeRecord;
+            if (PtInRect(&state->ui.metRecRect, pt)) {
+                state->audio.metronomeRecord = !state->audio.metronomeRecord;
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
-            if (PtInRect(&state->monitorRect, pt)) {
-                state->inputMonitoring = !state->inputMonitoring;
+            if (PtInRect(&state->ui.monitorRect, pt)) {
+                state->audio.inputMonitoring = !state->audio.inputMonitoring;
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
-            if (PtInRect(&state->bpmDownRect, pt)) {
+            if (PtInRect(&state->ui.bpmDownRect, pt)) {
                 const bool coarse = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-                state->project.bpm = static_cast<float>(std::max(40, static_cast<int>(state->project.bpm) - (coarse ? 5 : 1)));
+                state->core.project.bpm = static_cast<float>(std::max(40, static_cast<int>(state->core.project.bpm) - (coarse ? 5 : 1)));
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
-            if (PtInRect(&state->bpmUpRect, pt)) {
+            if (PtInRect(&state->ui.bpmUpRect, pt)) {
                 const bool coarse = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-                state->project.bpm = static_cast<float>(std::min(260, static_cast<int>(state->project.bpm) + (coarse ? 5 : 1)));
+                state->core.project.bpm = static_cast<float>(std::min(260, static_cast<int>(state->core.project.bpm) + (coarse ? 5 : 1)));
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
-            if (PtInRect(&state->countInRect, pt)) {
-                state->countInEnabled = !state->countInEnabled;
+            if (PtInRect(&state->ui.countInRect, pt)) {
+                state->audio.countInEnabled = !state->audio.countInEnabled;
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
@@ -1581,38 +1582,38 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             const LayoutRects layout = UiLayoutComputeLayout(client);
 
             // ── Insert inspector click handling ──────────────────────────
-            if (state->fxInspectorOpen && state->fxInspectorIndex >= 0) {
+            if (state->ui.fxInspectorOpen && state->ui.fxInspectorIndex >= 0) {
                 const RECT inspPanel = UiDrawGetInspectorPanelRect(client, *state);
                 if (!PtInRect(&inspPanel, pt)) {
                     // Click outside → close
-                    state->fxInspectorOpen = false;
+                    state->ui.fxInspectorOpen = false;
                     InvalidateRect(hwnd, nullptr, FALSE);
                     // Don't return - let the click fall through to normal handling
                 } else {
                     // Click inside inspector - handle controls
-                    const int idx = state->fxInspectorIndex;
+                    const int idx = state->ui.fxInspectorIndex;
                     int* pSlots       = nullptr;
                     InsertEffectArray* pEffects = nullptr;
                     InsertBypassArray* pBypass  = nullptr;
                     InsertConfigArray* pParams  = nullptr;
-                    if (state->fxInspectorIsTrack) {
-                        if (idx < static_cast<int>(state->project.tracks.size()))
-                            pSlots = &state->project.tracks[static_cast<size_t>(idx)].insertSlots;
-                        if (idx < static_cast<int>(state->project.tracks.size()))
-                            pEffects = &state->project.tracks[static_cast<size_t>(idx)].insertEffects;
-                        if (idx < static_cast<int>(state->project.tracks.size()))
-                            pBypass = &state->project.tracks[static_cast<size_t>(idx)].insertBypass;
-                        if (idx < static_cast<int>(state->project.tracks.size()))
-                            pParams = &state->project.tracks[static_cast<size_t>(idx)].insertConfig;
+                    if (state->ui.fxInspectorIsTrack) {
+                        if (idx < static_cast<int>(state->core.project.tracks.size()))
+                            pSlots = &state->core.project.tracks[static_cast<size_t>(idx)].insertSlots;
+                        if (idx < static_cast<int>(state->core.project.tracks.size()))
+                            pEffects = &state->core.project.tracks[static_cast<size_t>(idx)].insertEffects;
+                        if (idx < static_cast<int>(state->core.project.tracks.size()))
+                            pBypass = &state->core.project.tracks[static_cast<size_t>(idx)].insertBypass;
+                        if (idx < static_cast<int>(state->core.project.tracks.size()))
+                            pParams = &state->core.project.tracks[static_cast<size_t>(idx)].insertConfig;
                     } else {
-                        if (idx < static_cast<int>(state->project.buses.size()))
-                            pSlots = &state->project.buses[static_cast<size_t>(idx)].insertSlots;
-                        if (idx < static_cast<int>(state->project.buses.size()))
-                            pEffects = &state->project.buses[static_cast<size_t>(idx)].insertEffects;
-                        if (idx < static_cast<int>(state->project.buses.size()))
-                            pBypass = &state->project.buses[static_cast<size_t>(idx)].insertBypass;
-                        if (idx < static_cast<int>(state->project.buses.size()))
-                            pParams = &state->project.buses[static_cast<size_t>(idx)].insertConfig;
+                        if (idx < static_cast<int>(state->core.project.buses.size()))
+                            pSlots = &state->core.project.buses[static_cast<size_t>(idx)].insertSlots;
+                        if (idx < static_cast<int>(state->core.project.buses.size()))
+                            pEffects = &state->core.project.buses[static_cast<size_t>(idx)].insertEffects;
+                        if (idx < static_cast<int>(state->core.project.buses.size()))
+                            pBypass = &state->core.project.buses[static_cast<size_t>(idx)].insertBypass;
+                        if (idx < static_cast<int>(state->core.project.buses.size()))
+                            pParams = &state->core.project.buses[static_cast<size_t>(idx)].insertConfig;
                     }
 
                     const int slotCount = pSlots ? std::clamp(*pSlots, 0, kMaxInsertSlots) : 0;
@@ -1620,7 +1621,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     // Close button
                     RECT closeBtn{inspPanel.right - 24, inspPanel.top + 4, inspPanel.right - 4, inspPanel.top + kUiDrawInspHeaderH - 4};
                     if (PtInRect(&closeBtn, pt)) {
-                        state->fxInspectorOpen = false;
+                        state->ui.fxInspectorOpen = false;
                         InvalidateRect(hwnd, nullptr, FALSE);
                         return 0;
                     }
@@ -1630,22 +1631,22 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     RECT addBtn{inspPanel.left + 6,  ctrlTop + 4, inspPanel.left + 66,  ctrlTop + kUiDrawInspCtrlH - 4};
                     RECT remBtn{inspPanel.left + 72, ctrlTop + 4, inspPanel.left + 132, ctrlTop + kUiDrawInspCtrlH - 4};
                     if (PtInRect(&addBtn, pt) && pSlots && slotCount < kMaxInsertSlots) {
-                        EnterCriticalSection(&state->audioStateLock);
+                        EnterCriticalSection(&state->audio.audioStateLock);
                         (*pSlots)++;
-                        state->projectModified = true;
-                        UpdateWindowTitle(hwnd, *state);
-                        LeaveCriticalSection(&state->audioStateLock);
+                        state->core.projectModified = true;
+                        UpdateWindowTitle(hwnd, state->core);
+                        LeaveCriticalSection(&state->audio.audioStateLock);
                         InvalidateRect(hwnd, nullptr, FALSE);
                         return 0;
                     }
                     if (PtInRect(&remBtn, pt) && pSlots && slotCount > 0) {
-                        EnterCriticalSection(&state->audioStateLock);
+                        EnterCriticalSection(&state->audio.audioStateLock);
                         (*pSlots)--;
                         // Clear removed slot's bypass so it doesn't persist
                         if (pBypass) (*pBypass)[static_cast<size_t>(*pSlots)] = false;
-                        state->projectModified = true;
-                        UpdateWindowTitle(hwnd, *state);
-                        LeaveCriticalSection(&state->audioStateLock);
+                        state->core.projectModified = true;
+                        UpdateWindowTitle(hwnd, state->core);
+                        LeaveCriticalSection(&state->audio.audioStateLock);
                         InvalidateRect(hwnd, nullptr, FALSE);
                         return 0;
                     }
@@ -1659,34 +1660,34 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         RECT bypassBtn{inspPanel.left + 88, rowTop + 2, inspPanel.left + 130, rowBot - 2};
                         RECT arrowBtn {inspPanel.left + 134, rowTop + 2, inspPanel.left + 154, rowBot - 2};
                         if (PtInRect(&typeBtn, pt) && pEffects) {
-                            EnterCriticalSection(&state->audioStateLock);
+                            EnterCriticalSection(&state->audio.audioStateLock);
                             std::uint8_t& fx = (*pEffects)[static_cast<size_t>(s)];
                             fx = static_cast<std::uint8_t>((fx + 1) % kInsertEffectTypeCount);
-                            state->projectModified = true;
-                            UpdateWindowTitle(hwnd, *state);
-                            LeaveCriticalSection(&state->audioStateLock);
+                            state->core.projectModified = true;
+                            UpdateWindowTitle(hwnd, state->core);
+                            LeaveCriticalSection(&state->audio.audioStateLock);
                             InvalidateRect(hwnd, nullptr, FALSE);
                             return 0;
                         }
                         if (PtInRect(&bypassBtn, pt) && pBypass) {
-                            EnterCriticalSection(&state->audioStateLock);
+                            EnterCriticalSection(&state->audio.audioStateLock);
                             (*pBypass)[static_cast<size_t>(s)] = !(*pBypass)[static_cast<size_t>(s)];
-                            state->projectModified = true;
-                            UpdateWindowTitle(hwnd, *state);
-                            LeaveCriticalSection(&state->audioStateLock);
+                            state->core.projectModified = true;
+                            UpdateWindowTitle(hwnd, state->core);
+                            LeaveCriticalSection(&state->audio.audioStateLock);
                             InvalidateRect(hwnd, nullptr, FALSE);
                             return 0;
                         }
                         if (PtInRect(&arrowBtn, pt)) {
-                            state->fxInspectorSelectedSlot = (state->fxInspectorSelectedSlot == s) ? -1 : s;
+                            state->ui.fxInspectorSelectedSlot = (state->ui.fxInspectorSelectedSlot == s) ? -1 : s;
                             InvalidateRect(hwnd, nullptr, FALSE);
                             return 0;
                         }
                     }
 
                     // Param knob clicks in the expanded strip
-                    if (state->fxInspectorSelectedSlot >= 0 && state->fxInspectorSelectedSlot < slotCount && pParams && pEffects) {
-                        const int selSlot = state->fxInspectorSelectedSlot;
+                    if (state->ui.fxInspectorSelectedSlot >= 0 && state->ui.fxInspectorSelectedSlot < slotCount && pParams && pEffects) {
+                        const int selSlot = state->ui.fxInspectorSelectedSlot;
                         const int paramTop = slotsTop + slotCount * kUiDrawInspSlotH;
                         const int ky = paramTop + 16;
                         const int kw = (kUiDrawInspW - 12) / 4;
@@ -1726,10 +1727,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                                 case 60:curVal=P.dee_threshold_db; break; case 61:curVal=P.dee_freq_hz; break; case 62:curVal=P.dee_bandwidth_hz; break; case 63:curVal=P.dee_reduction_db; break;
                                 case 70:curVal=P.lim_ceiling_db; break; case 71:curVal=P.lim_release_ms; break;
                                 }
-                                state->draggingParamKnob = true;
-                                state->paramKnobParamId  = knobs[k].paramId * 100 + selSlot;  // encode slot in lower 2 digits
-                                state->paramKnobDragStartY   = pt.y;
-                                state->paramKnobDragStartVal = curVal;
+                                state->ui.draggingParamKnob = true;
+                                state->ui.paramKnobParamId  = knobs[k].paramId * 100 + selSlot;  // encode slot in lower 2 digits
+                                state->ui.paramKnobDragStartY   = pt.y;
+                                state->ui.paramKnobDragStartVal = curVal;
                                 SetCapture(hwnd);
                                 return 0;
                             }
@@ -1743,18 +1744,18 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             // ── Ruler click → set playhead ───────────────────────────────
             if (PtInRect(&layout.ruler, pt)) {
                 const float beat = std::max(0.0f, UiLayoutXToBeat(layout.ruler, *state, pt.x));
-                state->playheadBeat = UiLayoutSnapBeat(beat);
-                state->draggingPlayhead = true;
+                state->ui.playheadBeat = UiLayoutSnapBeat(beat);
+                state->ui.draggingPlayhead = true;
                 SetCapture(hwnd);
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
 
-            if (PtInRect(&layout.leftPanel, pt) && pt.y > layout.leftPanel.top + kRulerHeight && !state->project.tracks.empty()) {
+            if (PtInRect(&layout.leftPanel, pt) && pt.y > layout.leftPanel.top + kRulerHeight && !state->core.project.tracks.empty()) {
                 const int trackIndex = UiLayoutTrackIndexFromY(layout.arrange, *state, pt.y);
-                if (trackIndex >= 0 && trackIndex < static_cast<int>(state->project.tracks.size())) {
-                    state->selectedTrackIndex = trackIndex;
-                    state->selectedClipIndex = -1;
+                if (trackIndex >= 0 && trackIndex < static_cast<int>(state->core.project.tracks.size())) {
+                    state->ui.selectedTrackIndex = trackIndex;
+                    state->ui.selectedClipIndex = -1;
 
                     RECT busRect{};
                     RECT panKnobRect{};
@@ -1762,41 +1763,41 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     RECT fxRect{};
                     UiLayoutGetTrackRoutingRects(layout.leftPanel, trackIndex, &busRect, &panKnobRect, &panValRect, &fxRect);
                     if (PtInRect(&busRect, pt)) {
-                        EnterCriticalSection(&state->audioStateLock);
-                        if (trackIndex < static_cast<int>(state->project.tracks.size())) {
+                        EnterCriticalSection(&state->audio.audioStateLock);
+                        if (trackIndex < static_cast<int>(state->core.project.tracks.size())) {
                             const int cur = TrackBusIndexAt(*state, trackIndex);
-                            state->project.tracks[static_cast<size_t>(trackIndex)].busIndex = (cur + 1) % kBusCount;
-                            state->projectModified = true;
-                            UpdateWindowTitle(hwnd, *state);
+                            state->core.project.tracks[static_cast<size_t>(trackIndex)].busIndex = (cur + 1) % kBusCount;
+                            state->core.projectModified = true;
+                            UpdateWindowTitle(hwnd, state->core);
                         }
-                        LeaveCriticalSection(&state->audioStateLock);
+                        LeaveCriticalSection(&state->audio.audioStateLock);
                         InvalidateRect(hwnd, nullptr, FALSE);
                         return 0;
                     }
                     if (PtInRect(&fxRect, pt)) {
                         // Open insert-chain inspector for this track
-                        state->fxInspectorOpen    = true;
-                        state->fxInspectorIsTrack = true;
-                        state->fxInspectorIndex   = trackIndex;
+                        state->ui.fxInspectorOpen    = true;
+                        state->ui.fxInspectorIsTrack = true;
+                        state->ui.fxInspectorIndex   = trackIndex;
                         InvalidateRect(hwnd, nullptr, FALSE);
                         return 0;
                     }
                     if (PtInRect(&panKnobRect, pt) || PtInRect(&panValRect, pt)) {
                         if (PtInRect(&panValRect, pt) && (GetKeyState(VK_LBUTTON) & 0x8000)) {
                             // Double-click on value label resets to center
-                            EnterCriticalSection(&state->audioStateLock);
-                            if (trackIndex < static_cast<int>(state->project.tracks.size()))
-                                state->project.tracks[static_cast<size_t>(trackIndex)].pan = 0.0f;
-                            state->projectModified = true;
-                            UpdateWindowTitle(hwnd, *state);
-                            LeaveCriticalSection(&state->audioStateLock);
-                        } else if (trackIndex < static_cast<int>(state->project.tracks.size())) {
+                            EnterCriticalSection(&state->audio.audioStateLock);
+                            if (trackIndex < static_cast<int>(state->core.project.tracks.size()))
+                                state->core.project.tracks[static_cast<size_t>(trackIndex)].pan = 0.0f;
+                            state->core.projectModified = true;
+                            UpdateWindowTitle(hwnd, state->core);
+                            LeaveCriticalSection(&state->audio.audioStateLock);
+                        } else if (trackIndex < static_cast<int>(state->core.project.tracks.size())) {
                             // Start drag
-                            state->draggingPan    = true;
-                            state->dragPanIsBus   = false;
-                            state->dragPanIndex   = trackIndex;
-                            state->dragPanStartY  = pt.y;
-                            state->dragPanStartVal = state->project.tracks[static_cast<size_t>(trackIndex)].pan;
+                            state->ui.draggingPan    = true;
+                            state->ui.dragPanIsBus   = false;
+                            state->ui.dragPanIndex   = trackIndex;
+                            state->ui.dragPanStartY  = pt.y;
+                            state->ui.dragPanStartVal = state->core.project.tracks[static_cast<size_t>(trackIndex)].pan;
                             SetCapture(hwnd);
                         }
                         InvalidateRect(hwnd, nullptr, FALSE);
@@ -1808,29 +1809,29 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     RECT recRect{};
                     UiLayoutGetTrackButtonRects(layout.leftPanel, trackIndex, &muteRect, &soloRect, &recRect);
                     if (PtInRect(&muteRect, pt)) {
-                        EnterCriticalSection(&state->audioStateLock);
-                        if (trackIndex < static_cast<int>(state->project.tracks.size())) {
-                            state->project.tracks[static_cast<size_t>(trackIndex)].mute = !state->project.tracks[static_cast<size_t>(trackIndex)].mute;
+                        EnterCriticalSection(&state->audio.audioStateLock);
+                        if (trackIndex < static_cast<int>(state->core.project.tracks.size())) {
+                            state->core.project.tracks[static_cast<size_t>(trackIndex)].mute = !state->core.project.tracks[static_cast<size_t>(trackIndex)].mute;
                         }
-                        LeaveCriticalSection(&state->audioStateLock);
+                        LeaveCriticalSection(&state->audio.audioStateLock);
                         InvalidateRect(hwnd, nullptr, FALSE);
                         return 0;
                     }
                     if (PtInRect(&recRect, pt)) {
-                        EnterCriticalSection(&state->audioStateLock);
-                        if (trackIndex < static_cast<int>(state->project.tracks.size())) {
-                            state->project.tracks[static_cast<size_t>(trackIndex)].recordArm = !state->project.tracks[static_cast<size_t>(trackIndex)].recordArm;
+                        EnterCriticalSection(&state->audio.audioStateLock);
+                        if (trackIndex < static_cast<int>(state->core.project.tracks.size())) {
+                            state->core.project.tracks[static_cast<size_t>(trackIndex)].recordArm = !state->core.project.tracks[static_cast<size_t>(trackIndex)].recordArm;
                         }
-                        LeaveCriticalSection(&state->audioStateLock);
+                        LeaveCriticalSection(&state->audio.audioStateLock);
                         InvalidateRect(hwnd, nullptr, FALSE);
                         return 0;
                     }
                     if (PtInRect(&soloRect, pt)) {
-                        EnterCriticalSection(&state->audioStateLock);
-                        if (trackIndex < static_cast<int>(state->project.tracks.size())) {
-                            state->project.tracks[static_cast<size_t>(trackIndex)].solo = !state->project.tracks[static_cast<size_t>(trackIndex)].solo;
+                        EnterCriticalSection(&state->audio.audioStateLock);
+                        if (trackIndex < static_cast<int>(state->core.project.tracks.size())) {
+                            state->core.project.tracks[static_cast<size_t>(trackIndex)].solo = !state->core.project.tracks[static_cast<size_t>(trackIndex)].solo;
                         }
-                        LeaveCriticalSection(&state->audioStateLock);
+                        LeaveCriticalSection(&state->audio.audioStateLock);
                         InvalidateRect(hwnd, nullptr, FALSE);
                         return 0;
                     }
@@ -1841,13 +1842,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     RECT hitRect{rail.left - 12, rail.top, rail.right + 12, rail.bottom};
                     if (PtInRect(&hitRect, pt)) {
                         PushUndo(*state);
-                        state->draggingFader = true;
-                        state->dragFaderTrack = trackIndex;
-                        state->dragFaderStartY = pt.y;
-                        EnterCriticalSection(&state->audioStateLock);
-                        state->dragFaderStartDb = UiLayoutGainFromFaderY(rail, pt.y);
-                        state->project.tracks[static_cast<size_t>(trackIndex)].gainDb = state->dragFaderStartDb;
-                        LeaveCriticalSection(&state->audioStateLock);
+                        state->ui.draggingFader = true;
+                        state->ui.dragFaderTrack = trackIndex;
+                        state->ui.dragFaderStartY = pt.y;
+                        EnterCriticalSection(&state->audio.audioStateLock);
+                        state->ui.dragFaderStartDb = UiLayoutGainFromFaderY(rail, pt.y);
+                        state->core.project.tracks[static_cast<size_t>(trackIndex)].gainDb = state->ui.dragFaderStartDb;
+                        LeaveCriticalSection(&state->audio.audioStateLock);
                         SetCapture(hwnd);
                         InvalidateRect(hwnd, nullptr, FALSE);
                         return 0;
@@ -1869,35 +1870,35 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                             continue;
                         }
 
-                        EnterCriticalSection(&state->audioStateLock);
-                        if (PtInRect(&muteRect, pt) && b < static_cast<int>(state->project.buses.size())) {
-                            state->project.buses[static_cast<size_t>(b)].mute = !state->project.buses[static_cast<size_t>(b)].mute;
-                        } else if (PtInRect(&gainDownRect, pt) && b < static_cast<int>(state->project.buses.size())) {
-                            state->project.buses[static_cast<size_t>(b)].gainDb = std::max(kFaderMinDb, state->project.buses[static_cast<size_t>(b)].gainDb - 1.0f);
-                        } else if (PtInRect(&gainUpRect, pt) && b < static_cast<int>(state->project.buses.size())) {
-                            state->project.buses[static_cast<size_t>(b)].gainDb = std::min(kFaderMaxDb, state->project.buses[static_cast<size_t>(b)].gainDb + 1.0f);
-                        } else if ((PtInRect(&panKnobRect, pt) || PtInRect(&panValRect, pt)) && b < static_cast<int>(state->project.buses.size())) {
-                            LeaveCriticalSection(&state->audioStateLock);
-                            state->draggingPan    = true;
-                            state->dragPanIsBus   = true;
-                            state->dragPanIndex   = b;
-                            state->dragPanStartY  = pt.y;
-                            state->dragPanStartVal = state->project.buses[static_cast<size_t>(b)].pan;
+                        EnterCriticalSection(&state->audio.audioStateLock);
+                        if (PtInRect(&muteRect, pt) && b < static_cast<int>(state->core.project.buses.size())) {
+                            state->core.project.buses[static_cast<size_t>(b)].mute = !state->core.project.buses[static_cast<size_t>(b)].mute;
+                        } else if (PtInRect(&gainDownRect, pt) && b < static_cast<int>(state->core.project.buses.size())) {
+                            state->core.project.buses[static_cast<size_t>(b)].gainDb = std::max(kFaderMinDb, state->core.project.buses[static_cast<size_t>(b)].gainDb - 1.0f);
+                        } else if (PtInRect(&gainUpRect, pt) && b < static_cast<int>(state->core.project.buses.size())) {
+                            state->core.project.buses[static_cast<size_t>(b)].gainDb = std::min(kFaderMaxDb, state->core.project.buses[static_cast<size_t>(b)].gainDb + 1.0f);
+                        } else if ((PtInRect(&panKnobRect, pt) || PtInRect(&panValRect, pt)) && b < static_cast<int>(state->core.project.buses.size())) {
+                            LeaveCriticalSection(&state->audio.audioStateLock);
+                            state->ui.draggingPan    = true;
+                            state->ui.dragPanIsBus   = true;
+                            state->ui.dragPanIndex   = b;
+                            state->ui.dragPanStartY  = pt.y;
+                            state->ui.dragPanStartVal = state->core.project.buses[static_cast<size_t>(b)].pan;
                             SetCapture(hwnd);
                             InvalidateRect(hwnd, nullptr, FALSE);
                             return 0;
-                        } else if (PtInRect(&fxRect, pt) && b < static_cast<int>(state->project.buses.size())) {
+                        } else if (PtInRect(&fxRect, pt) && b < static_cast<int>(state->core.project.buses.size())) {
                             // Open insert-chain inspector for this bus
-                            LeaveCriticalSection(&state->audioStateLock);
-                            state->fxInspectorOpen    = true;
-                            state->fxInspectorIsTrack = false;
-                            state->fxInspectorIndex   = b;
+                            LeaveCriticalSection(&state->audio.audioStateLock);
+                            state->ui.fxInspectorOpen    = true;
+                            state->ui.fxInspectorIsTrack = false;
+                            state->ui.fxInspectorIndex   = b;
                             InvalidateRect(hwnd, nullptr, FALSE);
                             return 0;
                         }
-                        state->projectModified = true;
-                        UpdateWindowTitle(hwnd, *state);
-                        LeaveCriticalSection(&state->audioStateLock);
+                        state->core.projectModified = true;
+                        UpdateWindowTitle(hwnd, state->core);
+                        LeaveCriticalSection(&state->audio.audioStateLock);
 
                         InvalidateRect(hwnd, nullptr, FALSE);
                         return 0;
@@ -1906,38 +1907,38 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
 
             if (PtInRect(&layout.arrange, pt)) {
-                state->selectedClipIndex = -1;
-                for (int i = static_cast<int>(state->project.clips.size()) - 1; i >= 0; --i) {
+                state->ui.selectedClipIndex = -1;
+                for (int i = static_cast<int>(state->core.project.clips.size()) - 1; i >= 0; --i) {
                     RECT r{};
-                    if (!UiLayoutClipRectForDraw(layout.arrange, *state, state->project.clips[static_cast<size_t>(i)], &r)) {
+                    if (!UiLayoutClipRectForDraw(layout.arrange, *state, state->core.project.clips[static_cast<size_t>(i)], &r)) {
                         continue;
                     }
                     if (PtInRect(&r, pt)) {
-                        state->selectedClipIndex = i;
-                        state->selectedTrackIndex = state->project.clips[static_cast<size_t>(i)].trackIndex;
+                        state->ui.selectedClipIndex = i;
+                        state->ui.selectedTrackIndex = state->core.project.clips[static_cast<size_t>(i)].trackIndex;
 
                         constexpr int kEdgeThresh = 7;
-                        const int fullLeft  = UiLayoutBeatToX(layout.arrange, *state, state->project.clips[static_cast<size_t>(i)].startBeat);
-                        const int fullRight = UiLayoutBeatToX(layout.arrange, *state, state->project.clips[static_cast<size_t>(i)].startBeat + state->project.clips[static_cast<size_t>(i)].lengthBeats);
+                        const int fullLeft  = UiLayoutBeatToX(layout.arrange, *state, state->core.project.clips[static_cast<size_t>(i)].startBeat);
+                        const int fullRight = UiLayoutBeatToX(layout.arrange, *state, state->core.project.clips[static_cast<size_t>(i)].startBeat + state->core.project.clips[static_cast<size_t>(i)].lengthBeats);
                         const bool nearLeft  = (pt.x - fullLeft)  <= kEdgeThresh && (pt.x - fullLeft)  >= 0;
                         const bool nearRight = (fullRight - pt.x)  <= kEdgeThresh && (fullRight - pt.x) >= 0;
 
                         if (nearLeft || nearRight) {
                             // Trim
-                            state->trimmingClip         = true;
-                            state->trimClipIndex        = i;
-                            state->trimIsLeft           = nearLeft;
-                            state->trimOrigStart        = state->project.clips[static_cast<size_t>(i)].startBeat;
-                            state->trimOrigLen          = state->project.clips[static_cast<size_t>(i)].lengthBeats;
-                            state->trimOrigSourceOffset = state->project.clips[static_cast<size_t>(i)].sourceOffsetFrames;
+                            state->ui.trimmingClip         = true;
+                            state->ui.trimClipIndex        = i;
+                            state->ui.trimIsLeft           = nearLeft;
+                            state->ui.trimOrigStart        = state->core.project.clips[static_cast<size_t>(i)].startBeat;
+                            state->ui.trimOrigLen          = state->core.project.clips[static_cast<size_t>(i)].lengthBeats;
+                            state->ui.trimOrigSourceOffset = state->core.project.clips[static_cast<size_t>(i)].sourceOffsetFrames;
                             PushUndo(*state);
                             SetCapture(hwnd);
                         } else {
                             // Drag
                             PushUndo(*state);
-                            state->draggingClip = true;
-                            state->dragClipIndex = i;
-                            state->dragOffsetBeats = UiLayoutXToBeat(layout.arrange, *state, pt.x) - state->project.clips[static_cast<size_t>(i)].startBeat;
+                            state->ui.draggingClip = true;
+                            state->ui.dragClipIndex = i;
+                            state->ui.dragOffsetBeats = UiLayoutXToBeat(layout.arrange, *state, pt.x) - state->core.project.clips[static_cast<size_t>(i)].startBeat;
                             SetCapture(hwnd);
                         }
                         break;
@@ -1969,11 +1970,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             AppendMenuW(menu, MF_STRING, kCmdTrackNew, L"New Track");
 
             int trackIndex = -1;
-            if (pt.y > layout.leftPanel.top + kRulerHeight && !state->project.tracks.empty()) {
+            if (pt.y > layout.leftPanel.top + kRulerHeight && !state->core.project.tracks.empty()) {
                 trackIndex = UiLayoutTrackIndexFromY(layout.arrange, *state, pt.y);
             }
-            if (trackIndex >= 0 && trackIndex < static_cast<int>(state->project.tracks.size())) {
-                const bool armed = state->project.tracks[static_cast<size_t>(trackIndex)].recordArm;
+            if (trackIndex >= 0 && trackIndex < static_cast<int>(state->core.project.tracks.size())) {
+                const bool armed = state->core.project.tracks[static_cast<size_t>(trackIndex)].recordArm;
                 AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
                 AppendMenuW(menu, MF_STRING, kCmdTrackNew + 1000, armed ? L"Disarm Track" : L"Arm Track");
             }
@@ -1985,13 +1986,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
             if (cmd == kCmdTrackNew) {
                 AddNewTrack(*state);
-                state->projectModified = true;
-                UpdateWindowTitle(hwnd, *state);
+                state->core.projectModified = true;
+                UpdateWindowTitle(hwnd, state->core);
                 InvalidateRect(hwnd, nullptr, FALSE);
-            } else if (cmd == kCmdTrackNew + 1000 && trackIndex >= 0 && trackIndex < static_cast<int>(state->project.tracks.size())) {
-                EnterCriticalSection(&state->audioStateLock);
-                state->project.tracks[static_cast<size_t>(trackIndex)].recordArm = !state->project.tracks[static_cast<size_t>(trackIndex)].recordArm;
-                LeaveCriticalSection(&state->audioStateLock);
+            } else if (cmd == kCmdTrackNew + 1000 && trackIndex >= 0 && trackIndex < static_cast<int>(state->core.project.tracks.size())) {
+                EnterCriticalSection(&state->audio.audioStateLock);
+                state->core.project.tracks[static_cast<size_t>(trackIndex)].recordArm = !state->core.project.tracks[static_cast<size_t>(trackIndex)].recordArm;
+                LeaveCriticalSection(&state->audio.audioStateLock);
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
         }
@@ -2001,99 +2002,99 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
 
-        if (state->draggingPlayhead) {
+        if (state->ui.draggingPlayhead) {
             RECT client{};
             GetClientRect(hwnd, &client);
             const LayoutRects layout = UiLayoutComputeLayout(client);
             const float beat = std::max(0.0f, UiLayoutXToBeat(layout.ruler, *state, GET_X_LPARAM(lParam)));
-            state->playheadBeat = UiLayoutSnapBeat(beat);
+            state->ui.playheadBeat = UiLayoutSnapBeat(beat);
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
 
-        if (state->trimmingClip && state->trimClipIndex >= 0 &&
-            state->trimClipIndex < static_cast<int>(state->project.clips.size())) {
+        if (state->ui.trimmingClip && state->ui.trimClipIndex >= 0 &&
+            state->ui.trimClipIndex < static_cast<int>(state->core.project.clips.size())) {
             RECT client{};
             GetClientRect(hwnd, &client);
             const LayoutRects layout = UiLayoutComputeLayout(client);
             const float mouseBeat = UiLayoutSnapBeat(std::max(0.0f, UiLayoutXToBeat(layout.arrange, *state, GET_X_LPARAM(lParam))));
-            ClipItem& clip = state->project.clips[static_cast<size_t>(state->trimClipIndex)];
-            if (state->trimIsLeft) {
-                const float newStart = std::min(mouseBeat, state->trimOrigStart + state->trimOrigLen - 0.25f);
-                const float delta = newStart - state->trimOrigStart;
-                clip.startBeat   = std::max(0.0f, state->trimOrigStart + delta);
-                clip.lengthBeats = std::max(0.25f, state->trimOrigLen   - delta);
+            ClipItem& clip = state->core.project.clips[static_cast<size_t>(state->ui.trimClipIndex)];
+            if (state->ui.trimIsLeft) {
+                const float newStart = std::min(mouseBeat, state->ui.trimOrigStart + state->ui.trimOrigLen - 0.25f);
+                const float delta = newStart - state->ui.trimOrigStart;
+                clip.startBeat   = std::max(0.0f, state->ui.trimOrigStart + delta);
+                clip.lengthBeats = std::max(0.25f, state->ui.trimOrigLen   - delta);
                 const float spb = SamplesPerBeat(*state);
                 const std::int64_t offsetDelta = static_cast<std::int64_t>(delta * spb);
-                const std::int64_t newOff = static_cast<std::int64_t>(state->trimOrigSourceOffset) + offsetDelta;
+                const std::int64_t newOff = static_cast<std::int64_t>(state->ui.trimOrigSourceOffset) + offsetDelta;
                 clip.sourceOffsetFrames = static_cast<std::uint64_t>(std::max<std::int64_t>(0, newOff));
             } else {
-                const float newEnd = std::max(mouseBeat, state->trimOrigStart + 0.25f);
+                const float newEnd = std::max(mouseBeat, state->ui.trimOrigStart + 0.25f);
                 clip.lengthBeats = newEnd - clip.startBeat;
             }
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
 
-        if (state->draggingFader && state->dragFaderTrack >= 0) {
+        if (state->ui.draggingFader && state->ui.dragFaderTrack >= 0) {
             RECT client{};
             GetClientRect(hwnd, &client);
             const LayoutRects layout = UiLayoutComputeLayout(client);
             RECT rail{};
             RECT knob{};
-            UiLayoutGetTrackFaderRects(layout.leftPanel, state->dragFaderTrack, &rail, &knob);
+            UiLayoutGetTrackFaderRects(layout.leftPanel, state->ui.dragFaderTrack, &rail, &knob);
             const int mouseY = GET_Y_LPARAM(lParam);
             const bool shiftFine = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
             float newDb;
             if (shiftFine) {
                 // Fine mode: 1px = 0.05 dB (drag relative from start point)
-                const int dy = mouseY - state->dragFaderStartY;
-                newDb = std::clamp(state->dragFaderStartDb - dy * 0.05f, kFaderMinDb, kFaderMaxDb);
+                const int dy = mouseY - state->ui.dragFaderStartY;
+                newDb = std::clamp(state->ui.dragFaderStartDb - dy * 0.05f, kFaderMinDb, kFaderMaxDb);
             } else {
                 newDb = UiLayoutGainFromFaderY(rail, mouseY);
             }
-            EnterCriticalSection(&state->audioStateLock);
-            state->project.tracks[static_cast<size_t>(state->dragFaderTrack)].gainDb = newDb;
-            LeaveCriticalSection(&state->audioStateLock);
+            EnterCriticalSection(&state->audio.audioStateLock);
+            state->core.project.tracks[static_cast<size_t>(state->ui.dragFaderTrack)].gainDb = newDb;
+            LeaveCriticalSection(&state->audio.audioStateLock);
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
 
-        if (state->draggingPan && state->dragPanIndex >= 0) {
+        if (state->ui.draggingPan && state->ui.dragPanIndex >= 0) {
             const int mouseY = GET_Y_LPARAM(lParam);
             const bool shiftFine = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
             // Drag up = more right (+), drag down = more left (-).
             // Normal: full range (-1..+1) over ~200px. Fine (Shift): 10x slower.
-            const int dy = mouseY - state->dragPanStartY;
+            const int dy = mouseY - state->ui.dragPanStartY;
             const float sensitivity = shiftFine ? 0.001f : 0.01f;
-            const float newPan = std::clamp(state->dragPanStartVal - dy * sensitivity, -1.0f, 1.0f);
-            EnterCriticalSection(&state->audioStateLock);
-            if (state->dragPanIsBus) {
-                if (state->dragPanIndex < static_cast<int>(state->project.buses.size()))
-                    state->project.buses[static_cast<size_t>(state->dragPanIndex)].pan = newPan;
+            const float newPan = std::clamp(state->ui.dragPanStartVal - dy * sensitivity, -1.0f, 1.0f);
+            EnterCriticalSection(&state->audio.audioStateLock);
+            if (state->ui.dragPanIsBus) {
+                if (state->ui.dragPanIndex < static_cast<int>(state->core.project.buses.size()))
+                    state->core.project.buses[static_cast<size_t>(state->ui.dragPanIndex)].pan = newPan;
             } else {
-                if (state->dragPanIndex < static_cast<int>(state->project.tracks.size()))
-                    state->project.tracks[static_cast<size_t>(state->dragPanIndex)].pan = newPan;
+                if (state->ui.dragPanIndex < static_cast<int>(state->core.project.tracks.size()))
+                    state->core.project.tracks[static_cast<size_t>(state->ui.dragPanIndex)].pan = newPan;
             }
-            LeaveCriticalSection(&state->audioStateLock);
+            LeaveCriticalSection(&state->audio.audioStateLock);
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
 
-        if (state->draggingParamKnob && state->paramKnobParamId >= 0) {
-            const int dy = GET_Y_LPARAM(lParam) - state->paramKnobDragStartY;
+        if (state->ui.draggingParamKnob && state->ui.paramKnobParamId >= 0) {
+            const int dy = GET_Y_LPARAM(lParam) - state->ui.paramKnobDragStartY;
             const bool shiftFine = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
             // paramKnobParamId = paramId * 100 + slotIndex
-            const int paramId = state->paramKnobParamId / 100;
-            const int slotIdx = state->paramKnobParamId % 100;
-            const int inspIdx = state->fxInspectorIndex;
+            const int paramId = state->ui.paramKnobParamId / 100;
+            const int slotIdx = state->ui.paramKnobParamId % 100;
+            const int inspIdx = state->ui.fxInspectorIndex;
             InsertConfigArray* pPA = nullptr;
-            if (state->fxInspectorIsTrack) {
-                if (inspIdx >= 0 && inspIdx < static_cast<int>(state->project.tracks.size()))
-                    pPA = &state->project.tracks[static_cast<size_t>(inspIdx)].insertConfig;
+            if (state->ui.fxInspectorIsTrack) {
+                if (inspIdx >= 0 && inspIdx < static_cast<int>(state->core.project.tracks.size()))
+                    pPA = &state->core.project.tracks[static_cast<size_t>(inspIdx)].insertConfig;
             } else {
-                if (inspIdx >= 0 && inspIdx < static_cast<int>(state->project.buses.size()))
-                    pPA = &state->project.buses[static_cast<size_t>(inspIdx)].insertConfig;
+                if (inspIdx >= 0 && inspIdx < static_cast<int>(state->core.project.buses.size()))
+                    pPA = &state->core.project.buses[static_cast<size_t>(inspIdx)].insertConfig;
             }
             if (pPA && slotIdx >= 0 && slotIdx < kMaxInsertSlots) {
                 InsertConfig& P = (*pPA)[static_cast<size_t>(slotIdx)];
@@ -2104,9 +2105,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 auto applyDrag = [&](float lo, float hi) -> float {
                     const float range = hi - lo;
                     const float sens = shiftFine ? 0.001f : 0.01f;
-                    return std::clamp(state->paramKnobDragStartVal - dy * range * sens, lo, hi);
+                    return std::clamp(state->ui.paramKnobDragStartVal - dy * range * sens, lo, hi);
                 };
-                EnterCriticalSection(&state->audioStateLock);
+                EnterCriticalSection(&state->audio.audioStateLock);
                 switch (paramId) {
                 case 0: P.eq[0].freq_hz  = applyDrag(20.0f, 20000.0f); break;
                 case 1: P.eq[0].gain_db  = applyDrag(-18.0f, 18.0f);   break;
@@ -2134,14 +2135,14 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 case 70: P.lim_ceiling_db = applyDrag(-12.0f, 0.0f);  break;
                 case 71: P.lim_release_ms = applyDrag(1.0f, 500.0f);  break;
                 }
-                LeaveCriticalSection(&state->audioStateLock);
-                state->projectModified = true;
+                LeaveCriticalSection(&state->audio.audioStateLock);
+                state->core.projectModified = true;
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
             return 0;
         }
 
-        if (!state->draggingClip || state->dragClipIndex < 0) {
+        if (!state->ui.draggingClip || state->ui.dragClipIndex < 0) {
             return 0;
         }
 
@@ -2152,14 +2153,14 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
             const int mouseX = GET_X_LPARAM(lParam);
             const int mouseY = GET_Y_LPARAM(lParam);
-            float newStart = UiLayoutXToBeat(layout.arrange, *state, mouseX) - state->dragOffsetBeats;
+            float newStart = UiLayoutXToBeat(layout.arrange, *state, mouseX) - state->ui.dragOffsetBeats;
             newStart = std::max(0.0f, UiLayoutSnapBeat(newStart));
 
-            EnterCriticalSection(&state->audioStateLock);
-            ClipItem& clip = state->project.clips[static_cast<size_t>(state->dragClipIndex)];
+            EnterCriticalSection(&state->audio.audioStateLock);
+            ClipItem& clip = state->core.project.clips[static_cast<size_t>(state->ui.dragClipIndex)];
             clip.startBeat = newStart;
             clip.trackIndex = UiLayoutTrackIndexFromY(layout.arrange, *state, mouseY);
-            LeaveCriticalSection(&state->audioStateLock);
+            LeaveCriticalSection(&state->audio.audioStateLock);
 
             InvalidateRect(hwnd, nullptr, FALSE);
         }
@@ -2167,42 +2168,42 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_LBUTTONUP:
         if (state != nullptr) {
             bool changed = false;
-            if (state->draggingPlayhead) {
-                state->draggingPlayhead = false;
+            if (state->ui.draggingPlayhead) {
+                state->ui.draggingPlayhead = false;
                 changed = true;
             }
-            if (state->trimmingClip) {
-                state->trimmingClip = false;
-                state->trimClipIndex = -1;
-                state->projectModified = true;
+            if (state->ui.trimmingClip) {
+                state->ui.trimmingClip = false;
+                state->ui.trimClipIndex = -1;
+                state->core.projectModified = true;
                 changed = true;
             }
-            if (state->draggingClip) {
-                state->draggingClip = false;
-                state->dragClipIndex = -1;
-                state->projectModified = true;
+            if (state->ui.draggingClip) {
+                state->ui.draggingClip = false;
+                state->ui.dragClipIndex = -1;
+                state->core.projectModified = true;
                 changed = true;
             }
-            if (state->draggingFader) {
-                state->draggingFader = false;
-                state->dragFaderTrack = -1;
-                state->projectModified = true;
+            if (state->ui.draggingFader) {
+                state->ui.draggingFader = false;
+                state->ui.dragFaderTrack = -1;
+                state->core.projectModified = true;
                 changed = true;
             }
-            if (state->draggingPan) {
-                state->draggingPan = false;
-                state->dragPanIndex = -1;
-                state->projectModified = true;
+            if (state->ui.draggingPan) {
+                state->ui.draggingPan = false;
+                state->ui.dragPanIndex = -1;
+                state->core.projectModified = true;
                 changed = true;
             }
-            if (state->draggingParamKnob) {
-                state->draggingParamKnob = false;
-                state->paramKnobParamId  = -1;
-                state->projectModified = true;
+            if (state->ui.draggingParamKnob) {
+                state->ui.draggingParamKnob = false;
+                state->ui.paramKnobParamId  = -1;
+                state->core.projectModified = true;
                 changed = true;
             }
             if (changed) {
-                UpdateWindowTitle(hwnd, *state);
+                UpdateWindowTitle(hwnd, state->core);
                 ReleaseCapture();
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
@@ -2216,10 +2217,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             const short delta = GET_WHEEL_DELTA_WPARAM(wParam);
             const bool ctrl = (GET_KEYSTATE_WPARAM(wParam) & MK_CONTROL) != 0;
             if (ctrl) {
-                const float oldVisible = state->viewBeatsVisible;
-                state->viewBeatsVisible = (delta > 0)
-                    ? std::max(4.0f, state->viewBeatsVisible * 0.9f)
-                    : std::min(128.0f, state->viewBeatsVisible * 1.1f);
+                const float oldVisible = state->ui.viewBeatsVisible;
+                state->ui.viewBeatsVisible = (delta > 0)
+                    ? std::max(4.0f, state->ui.viewBeatsVisible * 0.9f)
+                    : std::min(128.0f, state->ui.viewBeatsVisible * 1.1f);
 
                 RECT client{};
                 GetClientRect(hwnd, &client);
@@ -2228,13 +2229,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 ScreenToClient(hwnd, &p);
                 const int focusX = std::clamp(p.x, layout.arrange.left, layout.arrange.right);
                 const float beatAtCursor = UiLayoutXToBeat(layout.arrange, *state, focusX);
-                const float ratio = (beatAtCursor - state->viewStartBeat) / oldVisible;
-                state->viewStartBeat = beatAtCursor - ratio * state->viewBeatsVisible;
+                const float ratio = (beatAtCursor - state->ui.viewStartBeat) / oldVisible;
+                state->ui.viewStartBeat = beatAtCursor - ratio * state->ui.viewBeatsVisible;
             } else {
-                const float step = state->viewBeatsVisible * 0.08f;
-                state->viewStartBeat += (delta > 0) ? -step : step;
+                const float step = state->ui.viewBeatsVisible * 0.08f;
+                state->ui.viewStartBeat += (delta > 0) ? -step : step;
             }
-            state->viewStartBeat = std::max(0.0f, state->viewStartBeat);
+            state->ui.viewStartBeat = std::max(0.0f, state->ui.viewStartBeat);
             InvalidateRect(hwnd, nullptr, FALSE);
         }
         return 0;
@@ -2244,23 +2245,23 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         {
             const short delta = GET_WHEEL_DELTA_WPARAM(wParam);
-            const float step = state->viewBeatsVisible * 0.08f;
-            state->viewStartBeat += (delta > 0) ? -step : step;
-            state->viewStartBeat = std::max(0.0f, state->viewStartBeat);
+            const float step = state->ui.viewBeatsVisible * 0.08f;
+            state->ui.viewStartBeat += (delta > 0) ? -step : step;
+            state->ui.viewStartBeat = std::max(0.0f, state->ui.viewStartBeat);
             InvalidateRect(hwnd, nullptr, FALSE);
         }
         return 0;
     case WM_CAPTURECHANGED:
         if (state != nullptr) {
-            state->draggingClip = false;
-            state->dragClipIndex = -1;
-            state->draggingFader = false;
-            state->dragFaderTrack = -1;
-            state->draggingPan = false;
-            state->dragPanIndex = -1;
-            state->draggingPlayhead = false;
-            state->trimmingClip = false;
-            state->trimClipIndex = -1;
+            state->ui.draggingClip = false;
+            state->ui.dragClipIndex = -1;
+            state->ui.draggingFader = false;
+            state->ui.dragFaderTrack = -1;
+            state->ui.draggingPan = false;
+            state->ui.dragPanIndex = -1;
+            state->ui.draggingPlayhead = false;
+            state->ui.trimmingClip = false;
+            state->ui.trimClipIndex = -1;
         }
         return 0;
     case WM_ERASEBKGND:
@@ -2308,7 +2309,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             UiDrawArrangeLanes(memDc, layout.arrange, *state);
 
             // Inspector panel floats on top of everything
-            if (state->fxInspectorOpen)
+            if (state->ui.fxInspectorOpen)
                 UiDrawInsertInspector(memDc, client, *state);
 
             SelectObject(memDc, oldFont);
@@ -2330,11 +2331,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 }
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdShow) {
-    daw_core::Project project;
-    project.name = "scratch";
-    daw_core::Engine engine(project);
-    (void)engine;
-
     // Optional: path to .dawproj passed as first command-line argument
     std::wstring startupProjectPath;
     if (lpCmdLine && lpCmdLine[0] != L'\0') {
@@ -2375,13 +2371,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdSho
 
     // Load project file if one was specified at launch
     if (!startupProjectPath.empty()) {
-        auto* initialState = reinterpret_cast<UiState*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
+        auto* initialState = reinterpret_cast<AppState*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
         if (initialState != nullptr) {
-            EnterCriticalSection(&initialState->audioStateLock);
+            EnterCriticalSection(&initialState->audio.audioStateLock);
             LoadProject(startupProjectPath, *initialState);
-            LeaveCriticalSection(&initialState->audioStateLock);
-            if (initialState->trackInsertDspState.size() != initialState->project.tracks.size()) initialState->trackInsertDspState.resize(initialState->project.tracks.size());
-            UpdateWindowTitle(hwnd, *initialState);
+            LeaveCriticalSection(&initialState->audio.audioStateLock);
+            if (initialState->audio.trackInsertDspState.size() != initialState->core.project.tracks.size()) initialState->audio.trackInsertDspState.resize(initialState->core.project.tracks.size());
+            UpdateWindowTitle(hwnd, initialState->core);
         }
     }
 

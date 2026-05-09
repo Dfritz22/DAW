@@ -7,31 +7,31 @@
 struct HWND__;
 using HWND = HWND__*;
 
-struct UiState;
+struct AppState;
 struct LoadedAudio;
 enum class AudioBackend;
 
-bool EngineInit(UiState& state);
-void EngineShutdown(UiState& state);
+bool EngineInit(AppState& state);
+void EngineShutdown(AppState& state);
 
-bool StartPlayback(HWND hwnd, UiState& state);
-void StopPlayback(UiState& state, bool rewind);
-bool StartRecording(HWND hwnd, UiState& state);
-void StopRecording(UiState& state, bool commitTake);
+bool StartPlayback(HWND hwnd, AppState& state);
+void StopPlayback(AppState& state, bool rewind);
+bool StartRecording(HWND hwnd, AppState& state);
+void StopRecording(AppState& state, bool commitTake);
 
-bool RenderFullMixToStereoLocked(const UiState& state, std::vector<float>* outStereo, int* outSampleRate);
+bool RenderFullMixToStereoLocked(const AppState& state, std::vector<float>* outStereo, int* outSampleRate);
 
 // Non-backend-specific device control and diagnostics.
-void DeviceRefreshInputDevices(UiState& state);
-void DeviceRefreshOutputDevices(UiState& state);
-std::wstring DeviceBuildAudioDiagnosticsReport(const UiState& state);
+void DeviceRefreshInputDevices(AppState& state);
+void DeviceRefreshOutputDevices(AppState& state);
+std::wstring DeviceBuildAudioDiagnosticsReport(const AppState& state);
 const wchar_t* DeviceAudioBackendLabel(AudioBackend backend);
-std::uint64_t DeviceGetRenderedPlaybackFrame(const UiState& state);
+std::uint64_t DeviceGetRenderedPlaybackFrame(const AppState& state);
 
-bool DeviceStartPlaybackBackend(HWND hwnd, UiState& state);
-void DeviceStopPlaybackBackend(UiState& state);
-bool DeviceStartRecordingBackend(HWND hwnd, UiState& state, int armedTrack, bool wasPlaying);
-void DeviceStopRecordingBackend(UiState& state);
+bool DeviceStartPlaybackBackend(HWND hwnd, AppState& state);
+void DeviceStopPlaybackBackend(AppState& state);
+bool DeviceStartRecordingBackend(HWND hwnd, AppState& state, int armedTrack, bool wasPlaying);
+void DeviceStopRecordingBackend(AppState& state);
 
 bool LoadWavStereo(const std::wstring& path, LoadedAudio* out, std::wstring* error);
 bool WriteWavPcm16Stereo(const std::wstring& path, const std::vector<float>& stereo, int sampleRate);

@@ -1,8 +1,10 @@
 #include "project_io.h"
 
 #include "core/internal_app_services.h"
-#include "core/state.h"
 #include "wav_io.h"
+
+#include <fstream>
+#include <iterator>
 
 using daw::internal::core::DefaultInsertBypass;
 using daw::internal::core::DefaultInsertConfig;
@@ -258,7 +260,7 @@ static void DecodeInsertBypassCsv(const std::string& csv, int slotCount, InsertB
     }
 }
 
-bool IoSaveProject(const std::wstring& path, UiState& state) {
+bool IoSaveProject(const std::wstring& path, AppState& state) {
 
     // Materialize recorded in-memory takes so they survive save/load round-trips.
     {
@@ -270,8 +272,8 @@ bool IoSaveProject(const std::wstring& path, UiState& state) {
             return false;
         }
 
-        for (size_t i = 0; i < state.project.audio.size(); ++i) {
-            auto& a = state.project.audio[i];
+        for (size_t i = 0; i < state.core.project.audio.size(); ++i) {
+            auto& a = state.core.project.audio[i];
             const bool needsMaterialize = a.sourcePath.empty() || a.sourcePath == L"[recording]";
             if (!needsMaterialize) {
                 continue;
@@ -290,21 +292,21 @@ bool IoSaveProject(const std::wstring& path, UiState& state) {
     std::ostringstream js;
     js << "{\n";
     js << "  \"version\": 1,\n";
-    js << "  \"bpm\": " << state.project.bpm << ",\n";
-    js << "  \"sample_rate\": " << state.project.projectSampleRate << ",\n";
-    js << "  \"audio_backend\": \"" << daw::internal::io::AudioBackendToJson(state.audioBackend) << "\",\n";
-    js << "  \"audio_preferred_sample_rate\": " << state.preferredSampleRate << ",\n";
-    js << "  \"audio_preferred_buffer_frames\": " << state.preferredBufferFrames << ",\n";
-    js << "  \"audio_input_device_name\": \"" << JsonEscape(WstrToUtf8(state.selectedInputDeviceName)) << "\",\n";
-    js << "  \"audio_output_device_name\": \"" << JsonEscape(WstrToUtf8(state.selectedOutputDeviceName)) << "\",\n";
-    js << "  \"view_start_beat\": " << state.viewStartBeat << ",\n";
-    js << "  \"view_beats_visible\": " << state.viewBeatsVisible << ",\n";
+    js << "  \"bpm\": " << state.core.project.bpm << ",\n";
+    js << "  \"sample_rate\": " << state.core.project.projectSampleRate << ",\n";
+    js << "  \"audio_backend\": \"" << daw::internal::io::AudioBackendToJson(state.audio.audioBackend) << "\",\n";
+    js << "  \"audio_preferred_sample_rate\": " << state.audio.preferredSampleRate << ",\n";
+    js << "  \"audio_preferred_buffer_frames\": " << state.audio.preferredBufferFrames << ",\n";
+    js << "  \"audio_input_device_name\": \"" << JsonEscape(WstrToUtf8(state.audio.selectedInputDeviceName)) << "\",\n";
+    js << "  \"audio_output_device_name\": \"" << JsonEscape(WstrToUtf8(state.audio.selectedOutputDeviceName)) << "\",\n";
+    js << "  \"view_start_beat\": " << state.ui.viewStartBeat << ",\n";
+    js << "  \"view_beats_visible\": " << state.ui.viewBeatsVisible << ",\n";
 
     // Fixed buses
     js << "  \"buses\": [\n";
     for (int b = 0; b < kBusCount; ++b) {
-        if (b >= static_cast<int>(state.project.buses.size())) break;
-        const BusData& bus = state.project.buses[static_cast<size_t>(b)];
+        if (b >= static_cast<int>(state.core.project.buses.size())) break;
+        const BusData& bus = state.core.project.buses[static_cast<size_t>(b)];
         const std::string insertEffects = JsonEscape(EncodeInsertEffectsCsv(bus.insertEffects, bus.insertSlots));
         const std::string insertBypass = JsonEscape(EncodeInsertBypassCsv(bus.insertBypass, bus.insertSlots));
         const std::string insertConfig = JsonEscape(EncodeInsertConfigCsv(bus.insertConfig, bus.insertSlots));
@@ -325,8 +327,8 @@ bool IoSaveProject(const std::wstring& path, UiState& state) {
 
     // Tracks
     js << "  \"tracks\": [\n";
-    for (size_t i = 0; i < state.project.tracks.size(); ++i) {
-        const TrackData& track = state.project.tracks[i];
+    for (size_t i = 0; i < state.core.project.tracks.size(); ++i) {
+        const TrackData& track = state.core.project.tracks[i];
         const std::string name = JsonEscape(WstrToUtf8(track.name));
         const std::string insertEffects = JsonEscape(EncodeInsertEffectsCsv(track.insertEffects, track.insertSlots));
         const std::string insertBypass = JsonEscape(EncodeInsertBypassCsv(track.insertBypass, track.insertSlots));
@@ -344,25 +346,25 @@ bool IoSaveProject(const std::wstring& path, UiState& state) {
         js << "\"insert_bypass\":\"" << insertBypass << "\",";
         js << "\"insert_params\":\"" << insertConfig << "\"";
         js << "}";
-        if (i + 1 < state.project.tracks.size()) js << ",";
+        if (i + 1 < state.core.project.tracks.size()) js << ",";
         js << "\n";
     }
     js << "  ],\n";
 
     // Audio files (deduplicated source paths)
     js << "  \"audio_files\": [\n";
-    for (size_t i = 0; i < state.project.audio.size(); ++i) {
-        const std::string src = JsonEscape(WstrToUtf8(state.project.audio[i].sourcePath));
+    for (size_t i = 0; i < state.core.project.audio.size(); ++i) {
+        const std::string src = JsonEscape(WstrToUtf8(state.core.project.audio[i].sourcePath));
         js << "    \"" << src << "\"";
-        if (i + 1 < state.project.audio.size()) js << ",";
+        if (i + 1 < state.core.project.audio.size()) js << ",";
         js << "\n";
     }
     js << "  ],\n";
 
     // Clips
     js << "  \"clips\": [\n";
-    for (size_t i = 0; i < state.project.clips.size(); ++i) {
-        const ClipItem& c = state.project.clips[i];
+    for (size_t i = 0; i < state.core.project.clips.size(); ++i) {
+        const ClipItem& c = state.core.project.clips[i];
         const std::string cname = JsonEscape(WstrToUtf8(c.name));
         js << "    {";
         js << "\"track_index\":" << c.trackIndex << ",";
@@ -372,7 +374,7 @@ bool IoSaveProject(const std::wstring& path, UiState& state) {
         js << "\"source_offset_frames\":" << c.sourceOffsetFrames << ",";
         js << "\"name\":\"" << cname << "\"";
         js << "}";
-        if (i + 1 < state.project.clips.size()) js << ",";
+        if (i + 1 < state.core.project.clips.size()) js << ",";
         js << "\n";
     }
     js << "  ]\n";
@@ -404,34 +406,34 @@ static bool JsonReadDouble(const std::string& json, const std::string& key, doub
     try { *val = std::stod(json.substr(pos + search.size())); return true; } catch (...) { return false; }
 }
 
-bool IoLoadProject(const std::wstring& path, UiState& state) {
+bool IoLoadProject(const std::wstring& path, AppState& state) {
     std::ifstream in(path, std::ios::binary);
     if (!in) return false;
     const std::string json((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     if (json.empty()) return false;
 
     // Clear current session
-    state.project.tracks.clear();
-    state.project.buses.assign(kBusCount, BusData{});
-    state.project.audio.clear();
-    state.project.clips.clear();
-    state.selectedTrackIndex = -1;
-    state.selectedClipIndex  = -1;
-    state.playheadBeat  = 0.0f;
-    state.viewStartBeat = 0.0f;
+    state.core.project.tracks.clear();
+    state.core.project.buses.assign(kBusCount, BusData{});
+    state.core.project.audio.clear();
+    state.core.project.clips.clear();
+    state.ui.selectedTrackIndex = -1;
+    state.ui.selectedClipIndex  = -1;
+    state.ui.playheadBeat  = 0.0f;
+    state.ui.viewStartBeat = 0.0f;
 
     // Top-level scalars
     double dval = 0.0;
     std::string sval;
-    if (JsonReadDouble(json, "bpm", &dval))                state.project.bpm               = static_cast<float>(dval);
-    if (JsonReadDouble(json, "sample_rate", &dval))        state.project.projectSampleRate  = static_cast<int>(dval);
-    if (JsonReadString(json, "audio_backend", &sval))      state.audioBackend       = daw::internal::io::AudioBackendFromJson(sval);
-    if (JsonReadDouble(json, "audio_preferred_sample_rate", &dval)) state.preferredSampleRate = std::max(0, static_cast<int>(dval));
-    if (JsonReadDouble(json, "audio_preferred_buffer_frames", &dval)) state.preferredBufferFrames = std::max(64, static_cast<int>(dval));
-    if (JsonReadString(json, "audio_input_device_name", &sval)) state.selectedInputDeviceName = Utf8ToWstr(sval);
-    if (JsonReadString(json, "audio_output_device_name", &sval)) state.selectedOutputDeviceName = Utf8ToWstr(sval);
-    if (JsonReadDouble(json, "view_start_beat", &dval))    state.viewStartBeat      = static_cast<float>(dval);
-    if (JsonReadDouble(json, "view_beats_visible", &dval)) state.viewBeatsVisible   = static_cast<float>(dval);
+    if (JsonReadDouble(json, "bpm", &dval))                state.core.project.bpm               = static_cast<float>(dval);
+    if (JsonReadDouble(json, "sample_rate", &dval))        state.core.project.projectSampleRate  = static_cast<int>(dval);
+    if (JsonReadString(json, "audio_backend", &sval))      state.audio.audioBackend       = daw::internal::io::AudioBackendFromJson(sval);
+    if (JsonReadDouble(json, "audio_preferred_sample_rate", &dval)) state.audio.preferredSampleRate = std::max(0, static_cast<int>(dval));
+    if (JsonReadDouble(json, "audio_preferred_buffer_frames", &dval)) state.audio.preferredBufferFrames = std::max(64, static_cast<int>(dval));
+    if (JsonReadString(json, "audio_input_device_name", &sval)) state.audio.selectedInputDeviceName = Utf8ToWstr(sval);
+    if (JsonReadString(json, "audio_output_device_name", &sval)) state.audio.selectedOutputDeviceName = Utf8ToWstr(sval);
+    if (JsonReadDouble(json, "view_start_beat", &dval))    state.ui.viewStartBeat      = static_cast<float>(dval);
+    if (JsonReadDouble(json, "view_beats_visible", &dval)) state.ui.viewBeatsVisible   = static_cast<float>(dval);
 
     // Parse fixed buses array (optional for backward compatibility)
     {
@@ -484,7 +486,7 @@ bool IoLoadProject(const std::wstring& path, UiState& state) {
                 strVal("insert_bypass", insertBypassCsv);
                 strVal("insert_params", insertConfigCsv);
 
-                BusData& bus = state.project.buses[static_cast<size_t>(busIdx)];
+                BusData& bus = state.core.project.buses[static_cast<size_t>(busIdx)];
                 bus.name = Utf8ToWstr(busName);
                 bus.gainDb = static_cast<float>(gain);
                 bus.pan = static_cast<float>(pan);
@@ -560,7 +562,7 @@ bool IoLoadProject(const std::wstring& path, UiState& state) {
                 DecodeInsertEffectsCsv(insertEffectsCsv, slotCount, &track.insertEffects);
                 DecodeInsertBypassCsv(insertBypassCsv, slotCount, &track.insertBypass);
                 DecodeInsertConfigCsv(insertConfigCsv, slotCount, &track.insertConfig);
-                state.project.tracks.push_back(track);
+                state.core.project.tracks.push_back(track);
 
                 cur = obClose + 1;
             }
@@ -583,14 +585,14 @@ bool IoLoadProject(const std::wstring& path, UiState& state) {
                 LoadedAudio audio{};
                 std::wstring err;
                 if (std::filesystem::exists(srcPath) && IoLoadWavStereo(srcPath, &audio, &err)) {
-                    if (state.project.projectSampleRate == 0) state.project.projectSampleRate = audio.sampleRate;
-                    state.project.audio.push_back(std::move(audio));
+                    if (state.core.project.projectSampleRate == 0) state.core.project.projectSampleRate = audio.sampleRate;
+                    state.core.project.audio.push_back(std::move(audio));
                 } else {
                     // Push placeholder so clip audio_index references stay valid
                     LoadedAudio placeholder{};
                     placeholder.sourcePath = srcPath;
                     placeholder.displayName = std::filesystem::path(srcPath).filename().wstring() + L" [missing]";
-                    state.project.audio.push_back(std::move(placeholder));
+                    state.core.project.audio.push_back(std::move(placeholder));
                 }
                 cur = q2 + 1;
             }
@@ -651,28 +653,28 @@ bool IoLoadProject(const std::wstring& path, UiState& state) {
                 clip.color = (clip.trackIndex >= 0)
                     ? kClipColors[static_cast<size_t>(clip.trackIndex) % 4]
                     : kClipColors[0];
-                state.project.clips.push_back(clip);
+                state.core.project.clips.push_back(clip);
 
                 cur = obClose + 1;
             }
         }
     }
 
-    state.projectFilePath = path;
-    state.projectModified = false;
+    state.core.projectFilePath = path;
+    state.core.projectModified = false;
 
     // Runtime DSP state is not serialized; reset to defaults after load.
-    state.trackInsertDspState.assign(state.project.tracks.size(), InsertDspStateArray{});
-    state.busInsertDspState = {};
+    state.audio.trackInsertDspState.assign(state.core.project.tracks.size(), InsertDspStateArray{});
+    state.audio.busInsertDspState = {};
 
 
     return true;
 }
 
-bool IoDoSaveAs(HWND hwnd, UiState& state) {
+bool IoDoSaveAs(HWND hwnd, AppState& state) {
     wchar_t buf[MAX_PATH] = {};
-    if (!state.projectFilePath.empty()) {
-        wcsncpy_s(buf, state.projectFilePath.c_str(), MAX_PATH - 1);
+    if (!state.core.projectFilePath.empty()) {
+        wcsncpy_s(buf, state.core.projectFilePath.c_str(), MAX_PATH - 1);
     } else {
         wcsncpy_s(buf, L"Untitled.dawproj", MAX_PATH - 1);
     }
@@ -689,24 +691,24 @@ bool IoDoSaveAs(HWND hwnd, UiState& state) {
         MessageBoxW(hwnd, L"Failed to save project.", L"Save", MB_OK | MB_ICONERROR);
         return false;
     }
-    state.projectFilePath = buf;
-    state.projectModified = false;
-    UpdateWindowTitle(hwnd, state);
+    state.core.projectFilePath = buf;
+    state.core.projectModified = false;
+    UpdateWindowTitle(hwnd, state.core);
     return true;
 }
 
-bool IoDoSave(HWND hwnd, UiState& state) {
-    if (state.projectFilePath.empty()) return IoDoSaveAs(hwnd, state);
-    if (!IoSaveProject(state.projectFilePath, state)) {
+bool IoDoSave(HWND hwnd, AppState& state) {
+    if (state.core.projectFilePath.empty()) return IoDoSaveAs(hwnd, state);
+    if (!IoSaveProject(state.core.projectFilePath, state)) {
         MessageBoxW(hwnd, L"Failed to save project.", L"Save", MB_OK | MB_ICONERROR);
         return false;
     }
-    state.projectModified = false;
-    UpdateWindowTitle(hwnd, state);
+    state.core.projectModified = false;
+    UpdateWindowTitle(hwnd, state.core);
     return true;
 }
 
-bool IoDoOpen(HWND hwnd, UiState& state) {
+bool IoDoOpen(HWND hwnd, AppState& state) {
     wchar_t buf[MAX_PATH] = {};
     OPENFILENAMEW ofn{};
     ofn.lStructSize = sizeof(ofn);
@@ -716,33 +718,33 @@ bool IoDoOpen(HWND hwnd, UiState& state) {
     ofn.nMaxFile    = MAX_PATH;
     ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
     if (!GetOpenFileNameW(&ofn)) return false;
-    EnterCriticalSection(&state.audioStateLock);
+    EnterCriticalSection(&state.audio.audioStateLock);
     const bool ok = IoLoadProject(buf, state);
-    LeaveCriticalSection(&state.audioStateLock);
+    LeaveCriticalSection(&state.audio.audioStateLock);
     if (!ok) {
         MessageBoxW(hwnd, L"Failed to open project.", L"Open", MB_OK | MB_ICONERROR);
         return false;
     }
-    UpdateWindowTitle(hwnd, state);
+    UpdateWindowTitle(hwnd, state.core);
     return true;
 }
 
-bool SaveProject(const std::wstring& path, UiState& state) {
+bool SaveProject(const std::wstring& path, AppState& state) {
     return IoSaveProject(path, state);
 }
 
-bool LoadProject(const std::wstring& path, UiState& state) {
+bool LoadProject(const std::wstring& path, AppState& state) {
     return IoLoadProject(path, state);
 }
 
-bool DoSaveAs(HWND hwnd, UiState& state) {
+bool DoSaveAs(HWND hwnd, AppState& state) {
     return IoDoSaveAs(hwnd, state);
 }
 
-bool DoSave(HWND hwnd, UiState& state) {
+bool DoSave(HWND hwnd, AppState& state) {
     return IoDoSave(hwnd, state);
 }
 
-bool DoOpen(HWND hwnd, UiState& state) {
+bool DoOpen(HWND hwnd, AppState& state) {
     return IoDoOpen(hwnd, state);
 }

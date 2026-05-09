@@ -4,10 +4,10 @@
 #error "This header is internal-only."
 #endif
 
-#include "core/state.h"
+#include "AppState.h"
 
-bool IoSaveProject(const std::wstring& path, UiState& state);
-bool IoLoadProject(const std::wstring& path, UiState& state);
-bool IoDoSaveAs(HWND hwnd, UiState& state);
-bool IoDoSave(HWND hwnd, UiState& state);
-bool IoDoOpen(HWND hwnd, UiState& state);
+bool IoSaveProject(const std::wstring& path, AppState& state);
+bool IoLoadProject(const std::wstring& path, AppState& state);
+bool IoDoSaveAs(HWND hwnd, AppState& state);
+bool IoDoSave(HWND hwnd, AppState& state);
+bool IoDoOpen(HWND hwnd, AppState& state);

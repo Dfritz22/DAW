@@ -1,54 +1,57 @@
 #include "engine_utils.h"
 #include "core/timeline.h"
 
+#include <algorithm>
+#include <cmath>
+
 // ── Public definitions ────────────────────────────────────────────────────────
 
 float DbToLinear(float db) {
     return std::pow(10.0f, db / 20.0f);
 }
 
-float BusGainDbAt(const UiState& state, int busIndex) {
-    if (busIndex < 0 || busIndex >= static_cast<int>(state.project.buses.size())) {
+float BusGainDbAt(const CoreState& core, int busIndex) {
+    if (busIndex < 0 || busIndex >= static_cast<int>(core.project.buses.size())) {
         return 0.0f;
     }
-    return state.project.buses[static_cast<size_t>(busIndex)].gainDb;
+    return core.project.buses[static_cast<size_t>(busIndex)].gainDb;
 }
 
-float BusPanAt(const UiState& state, int busIndex) {
-    if (busIndex < 0 || busIndex >= static_cast<int>(state.project.buses.size())) {
+float BusPanAt(const CoreState& core, int busIndex) {
+    if (busIndex < 0 || busIndex >= static_cast<int>(core.project.buses.size())) {
         return 0.0f;
     }
-    return std::clamp(state.project.buses[static_cast<size_t>(busIndex)].pan, -1.0f, 1.0f);
+    return std::clamp(core.project.buses[static_cast<size_t>(busIndex)].pan, -1.0f, 1.0f);
 }
 
-bool BusMuteAt(const UiState& state, int busIndex) {
-    if (busIndex < 0 || busIndex >= static_cast<int>(state.project.buses.size())) {
+bool BusMuteAt(const CoreState& core, int busIndex) {
+    if (busIndex < 0 || busIndex >= static_cast<int>(core.project.buses.size())) {
         return false;
     }
-    return state.project.buses[static_cast<size_t>(busIndex)].mute;
+    return core.project.buses[static_cast<size_t>(busIndex)].mute;
 }
 
-void EnsureInsertDspStateStorage(const UiState& state) {
-    if (state.trackInsertDspState.size() != state.project.tracks.size()) {
-        state.trackInsertDspState.resize(state.project.tracks.size());
+void EnsureInsertDspStateStorage(const CoreState& core, AudioRuntimeState& audio) {
+    if (audio.trackInsertDspState.size() != core.project.tracks.size()) {
+        audio.trackInsertDspState.resize(core.project.tracks.size());
     }
 }
 
-bool IsTrackAudible(const UiState& state, int trackIndex) {
-    if (trackIndex < 0 || trackIndex >= static_cast<int>(state.project.tracks.size())) {
+bool IsTrackAudible(const CoreState& core, int trackIndex) {
+    if (trackIndex < 0 || trackIndex >= static_cast<int>(core.project.tracks.size())) {
         return false;
     }
 
     const bool muted =
-        trackIndex < static_cast<int>(state.project.tracks.size()) &&
-        state.project.tracks[static_cast<size_t>(trackIndex)].mute;
+        trackIndex < static_cast<int>(core.project.tracks.size()) &&
+        core.project.tracks[static_cast<size_t>(trackIndex)].mute;
     const bool soloed =
-        trackIndex < static_cast<int>(state.project.tracks.size()) &&
-        state.project.tracks[static_cast<size_t>(trackIndex)].solo;
+        trackIndex < static_cast<int>(core.project.tracks.size()) &&
+        core.project.tracks[static_cast<size_t>(trackIndex)].solo;
 
     bool anySolo = false;
-    for (size_t i = 0; i < state.project.tracks.size(); ++i) {
-        if (state.project.tracks[i].solo) {
+    for (size_t i = 0; i < core.project.tracks.size(); ++i) {
+        if (core.project.tracks[i].solo) {
             anySolo = true;
             break;
         }
@@ -63,14 +66,14 @@ bool IsTrackAudible(const UiState& state, int trackIndex) {
     return true;
 }
 
-std::uint64_t ComputeProjectEndFrameLocked(const UiState& state) {
+std::uint64_t ComputeProjectEndFrameLocked(const CoreState& core) {
     std::uint64_t maxFrame = 0;
-    for (const ClipItem& clip : state.project.clips) {
-        if (clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.project.audio.size())) {
+    for (const ClipItem& clip : core.project.clips) {
+        if (clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(core.project.audio.size())) {
             continue;
         }
-        const std::uint64_t clipStartTL   = TimelineFramesFromBeats(state, clip.startBeat);
-        const std::uint64_t clipLenFrames = TimelineFramesFromBeats(state, clip.lengthBeats);
+        const std::uint64_t clipStartTL   = TimelineFramesFromBeats(core, clip.startBeat);
+        const std::uint64_t clipLenFrames = TimelineFramesFromBeats(core, clip.lengthBeats);
         maxFrame = std::max(maxFrame, clipStartTL + clipLenFrames);
     }
     return maxFrame;

@@ -1,52 +1,47 @@
 #include "engine.h"
 #include "audio/engine_utils.h"
-#include "core/state.h"
+#include "core/CoreState.h"
+#include "audio/AudioRuntimeState.h"
 #include "dsp/chain.h"
 #include "core/automation.h"
 #include "core/automation_types.h"
 #include "core/timeline.h"
 
+#include <algorithm>
+#include <cmath>
+
 // ── Engine function definitions ───────────────────────────────────────────────
 
-bool EngineInit(UiState& state) {
-    (void)state;
-    return true;
-}
-
-void EngineShutdown(UiState& state) {
-    (void)state;
-}
-
-bool EngineFillRealtimeBufferLocked(UiState& state, std::int16_t* outInterleaved, int frames, bool* reachedEnd) {
-    if (state.project.projectSampleRate <= 0) {
+bool EngineFillRealtimeBufferLocked(CoreState& core, AudioRuntimeState& audio, std::int16_t* outInterleaved, int frames, bool* reachedEnd) {
+    if (core.project.projectSampleRate <= 0) {
         std::fill(outInterleaved, outInterleaved + (frames * 2), static_cast<std::int16_t>(0));
         *reachedEnd = true;
         return false;
     }
 
-    EnsureInsertDspStateStorage(state);
+    EnsureInsertDspStateStorage(core, audio);
 
-    const bool runMetPlay = state.playing && !state.recording && state.metronomePlay;
-    const bool runMetRec = state.recording && state.metronomeRecord;
+    const bool runMetPlay = audio.playing && !audio.recording && audio.metronomePlay;
+    const bool runMetRec = audio.recording && audio.metronomeRecord;
     // Play count-in click from Record-press until preroll ends (recordStartFrame).
-    const bool runCountInClick = state.countingIn
-        && state.playbackFrameCursor.load() < state.recordStartFrame;
-    const bool allowNoClipPlayback = runMetPlay || runMetRec || runCountInClick || (state.recording && state.inputMonitoring);
+    const bool runCountInClick = audio.countingIn
+        && audio.playbackFrameCursor.load() < audio.recordStartFrame;
+    const bool allowNoClipPlayback = runMetPlay || runMetRec || runCountInClick || (audio.recording && audio.inputMonitoring);
 
-    if (state.project.clips.empty() && !allowNoClipPlayback) {
+    if (core.project.clips.empty() && !allowNoClipPlayback) {
         std::fill(outInterleaved, outInterleaved + (frames * 2), static_cast<std::int16_t>(0));
         *reachedEnd = true;
         return false;
     }
 
-    const float samplesPerBeat = TimelineSamplesPerBeat(state);
-    const std::uint64_t endFrame = ComputeProjectEndFrameLocked(state);
-    const std::uint64_t startCursor = state.playbackFrameCursor.load();
-    const float sampleRate = static_cast<float>(state.project.projectSampleRate);
+    const float samplesPerBeat = TimelineSamplesPerBeat(core);
+    const std::uint64_t endFrame = ComputeProjectEndFrameLocked(core);
+    const std::uint64_t startCursor = audio.playbackFrameCursor.load();
+    const float sampleRate = static_cast<float>(core.project.projectSampleRate);
 
     int activeFrames = 0;
     // Keep running while recording, during count-in, or metronome-only playback.
-    if (state.recording || state.countingIn || (state.project.clips.empty() && (runMetPlay || runMetRec))) {
+    if (audio.recording || audio.countingIn || (core.project.clips.empty() && (runMetPlay || runMetRec))) {
         activeFrames = frames;
         *reachedEnd = false;
     } else {
@@ -56,7 +51,7 @@ bool EngineFillRealtimeBufferLocked(UiState& state, std::int16_t* outInterleaved
     }
 
     // Per-track stereo buffers: collect clips, apply track insert chain
-    const int trackCount = static_cast<int>(state.project.tracks.size());
+    const int trackCount = static_cast<int>(core.project.tracks.size());
 
     // Bus stereo accumulation buffers
     std::vector<float> busBuf[kBusCount];
@@ -64,16 +59,16 @@ bool EngineFillRealtimeBufferLocked(UiState& state, std::int16_t* outInterleaved
         busBuf[b].assign(static_cast<size_t>(frames) * 2, 0.0f);
 
     for (int ti = 0; ti < trackCount; ++ti) {
-        if (!IsTrackAudible(state, ti)) continue;
+        if (!IsTrackAudible(core, ti)) continue;
 
-        const int busIdx = std::clamp(AutomationTrackBusIndexAt(state, ti), 0, kBusCount - 1);
+        const int busIdx = std::clamp(AutomationTrackBusIndexAt(core, ti), 0, kBusCount - 1);
 
         // Fill track buffer from clips
         std::vector<float> trackBuf(static_cast<size_t>(activeFrames) * 2, 0.0f);
-        for (const ClipItem& clip : state.project.clips) {
+        for (const ClipItem& clip : core.project.clips) {
             if (clip.trackIndex != ti) continue;
-            if (clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.project.audio.size())) continue;
-            const LoadedAudio& a = state.project.audio[static_cast<size_t>(clip.audioIndex)];
+            if (clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(core.project.audio.size())) continue;
+            const LoadedAudio& a = core.project.audio[static_cast<size_t>(clip.audioIndex)];
             const std::uint64_t clipStart = static_cast<std::uint64_t>(
                 std::llround(std::max(0.0f, clip.startBeat) * samplesPerBeat));
             const std::uint64_t clipEnd = clipStart + static_cast<std::uint64_t>(
@@ -84,7 +79,7 @@ bool EngineFillRealtimeBufferLocked(UiState& state, std::int16_t* outInterleaved
                 if (gf < clipStart || gf >= clipEnd) continue;
                 float l = 0.0f;
                 float r = 0.0f;
-                if (!ReadClipSampleAtProjectFrame(a, gf - clipStart, state.project.projectSampleRate, clip.sourceOffsetFrames, &l, &r)) {
+                if (!ReadClipSampleAtProjectFrame(a, gf - clipStart, core.project.projectSampleRate, clip.sourceOffsetFrames, &l, &r)) {
                     continue;
                 }
                 trackBuf[static_cast<size_t>(i)*2]   += l;
@@ -93,21 +88,21 @@ bool EngineFillRealtimeBufferLocked(UiState& state, std::int16_t* outInterleaved
         }
 
         // Apply track insert chain
-        if (ti < static_cast<int>(state.project.tracks.size()) &&
-            ti < static_cast<int>(state.project.tracks.size()) &&
-            ti < static_cast<int>(state.project.tracks.size()) &&
-            ti < static_cast<int>(state.project.tracks.size())) {
+        if (ti < static_cast<int>(core.project.tracks.size()) &&
+            ti < static_cast<int>(core.project.tracks.size()) &&
+            ti < static_cast<int>(core.project.tracks.size()) &&
+            ti < static_cast<int>(core.project.tracks.size())) {
             DspApplyInsertChain(trackBuf, sampleRate,
-                state.project.tracks[static_cast<size_t>(ti)].insertEffects,
-                state.project.tracks[static_cast<size_t>(ti)].insertBypass,
-                state.project.tracks[static_cast<size_t>(ti)].insertConfig,
-                state.trackInsertDspState[static_cast<size_t>(ti)],
-                state.project.tracks[static_cast<size_t>(ti)].insertSlots);
+                core.project.tracks[static_cast<size_t>(ti)].insertEffects,
+                core.project.tracks[static_cast<size_t>(ti)].insertBypass,
+                core.project.tracks[static_cast<size_t>(ti)].insertConfig,
+                audio.trackInsertDspState[static_cast<size_t>(ti)],
+                core.project.tracks[static_cast<size_t>(ti)].insertSlots);
         }
 
         // Apply track gain + pan then mix into bus
-        const float trackGain = DbToLinear(AutomationTrackGainDbAt(state, ti));
-        const float pan = AutomationTrackPanAt(state, ti);
+        const float trackGain = DbToLinear(AutomationTrackGainDbAt(core, ti));
+        const float pan = AutomationTrackPanAt(core, ti);
         const float panRad = (pan + 1.0f) * 0.5f * 3.14159265f * 0.5f;
         const float gainL = trackGain * std::cos(panRad);
         const float gainR = trackGain * std::sin(panRad);
@@ -120,23 +115,23 @@ bool EngineFillRealtimeBufferLocked(UiState& state, std::int16_t* outInterleaved
     // Apply bus insert chains, then mix into master
     std::vector<float> masterBuf(static_cast<size_t>(frames) * 2, 0.0f);
     for (int b = 0; b < kBusCount; ++b) {
-        if (BusMuteAt(state, b)) continue;
+        if (BusMuteAt(core, b)) continue;
 
         // Apply bus insert chain (bus 3 = master)
-        if (b < static_cast<int>(state.project.buses.size()) &&
-            b < static_cast<int>(state.project.buses.size()) &&
-            b < static_cast<int>(state.project.buses.size()) &&
-            b < static_cast<int>(state.project.buses.size())) {
+        if (b < static_cast<int>(core.project.buses.size()) &&
+            b < static_cast<int>(core.project.buses.size()) &&
+            b < static_cast<int>(core.project.buses.size()) &&
+            b < static_cast<int>(core.project.buses.size())) {
             DspApplyInsertChain(busBuf[b], sampleRate,
-                state.project.buses[static_cast<size_t>(b)].insertEffects,
-                state.project.buses[static_cast<size_t>(b)].insertBypass,
-                state.project.buses[static_cast<size_t>(b)].insertConfig,
-                state.busInsertDspState[static_cast<size_t>(b)],
-                state.project.buses[static_cast<size_t>(b)].insertSlots);
+                core.project.buses[static_cast<size_t>(b)].insertEffects,
+                core.project.buses[static_cast<size_t>(b)].insertBypass,
+                core.project.buses[static_cast<size_t>(b)].insertConfig,
+                audio.busInsertDspState[static_cast<size_t>(b)],
+                core.project.buses[static_cast<size_t>(b)].insertSlots);
         }
 
-        const float busGain = DbToLinear(BusGainDbAt(state, b));
-        const float busPan  = BusPanAt(state, b);
+        const float busGain = DbToLinear(BusGainDbAt(core, b));
+        const float busPan  = BusPanAt(core, b);
         const float panRad  = (busPan + 1.0f) * 0.5f * 3.14159265f * 0.5f;
         const float bGainL  = (b == 3) ? busGain : busGain * std::cos(panRad);
         const float bGainR  = (b == 3) ? busGain : busGain * std::sin(panRad);
@@ -147,35 +142,35 @@ bool EngineFillRealtimeBufferLocked(UiState& state, std::int16_t* outInterleaved
     }
 
     // Input monitor path for low-latency tracking.
-    if (state.recording && state.inputMonitoring && state.recordInputChannels > 0) {
-        const int inCh = std::max(1, state.recordInputChannels);
-        const size_t availableSamples = (state.monitorInputPcm.size() > state.monitorInputReadPos)
-            ? (state.monitorInputPcm.size() - state.monitorInputReadPos)
+    if (audio.recording && audio.inputMonitoring && audio.recordInputChannels > 0) {
+        const int inCh = std::max(1, audio.recordInputChannels);
+        const size_t availableSamples = (audio.monitorInputPcm.size() > audio.monitorInputReadPos)
+            ? (audio.monitorInputPcm.size() - audio.monitorInputReadPos)
             : 0;
         const int availableFrames = static_cast<int>(availableSamples / static_cast<size_t>(inCh));
         const int mixFrames = std::min(activeFrames, availableFrames);
-        const float monGain = std::clamp(state.inputMonitorGain, 0.0f, 2.0f);
+        const float monGain = std::clamp(audio.inputMonitorGain, 0.0f, 2.0f);
         for (int i = 0; i < mixFrames; ++i) {
             float l = 0.0f;
             float r = 0.0f;
-            const size_t base = state.monitorInputReadPos + static_cast<size_t>(i * inCh);
+            const size_t base = audio.monitorInputReadPos + static_cast<size_t>(i * inCh);
             if (inCh == 1) {
-                const float v = static_cast<float>(state.monitorInputPcm[base]) / 32768.0f;
+                const float v = static_cast<float>(audio.monitorInputPcm[base]) / 32768.0f;
                 l = v;
                 r = v;
             } else {
-                l = static_cast<float>(state.monitorInputPcm[base]) / 32768.0f;
-                r = static_cast<float>(state.monitorInputPcm[base + 1]) / 32768.0f;
+                l = static_cast<float>(audio.monitorInputPcm[base]) / 32768.0f;
+                r = static_cast<float>(audio.monitorInputPcm[base + 1]) / 32768.0f;
             }
             masterBuf[static_cast<size_t>(i) * 2] += l * monGain;
             masterBuf[static_cast<size_t>(i) * 2 + 1] += r * monGain;
         }
-        state.monitorInputReadPos += static_cast<size_t>(mixFrames * inCh);
-        if (state.monitorInputReadPos > 16384 && state.monitorInputReadPos * 2 > state.monitorInputPcm.size()) {
-            state.monitorInputPcm.erase(
-                state.monitorInputPcm.begin(),
-                state.monitorInputPcm.begin() + static_cast<std::vector<std::int16_t>::difference_type>(state.monitorInputReadPos));
-            state.monitorInputReadPos = 0;
+        audio.monitorInputReadPos += static_cast<size_t>(mixFrames * inCh);
+        if (audio.monitorInputReadPos > 16384 && audio.monitorInputReadPos * 2 > audio.monitorInputPcm.size()) {
+            audio.monitorInputPcm.erase(
+                audio.monitorInputPcm.begin(),
+                audio.monitorInputPcm.begin() + static_cast<std::vector<std::int16_t>::difference_type>(audio.monitorInputReadPos));
+            audio.monitorInputReadPos = 0;
         }
     }
 
@@ -211,12 +206,13 @@ bool EngineFillRealtimeBufferLocked(UiState& state, std::int16_t* outInterleaved
         outInterleaved[i*2+1] = static_cast<std::int16_t>(std::lrint(r * 32767.0f));
     }
 
-    state.playbackFrameCursor.store(startCursor + static_cast<std::uint64_t>(frames));
+    audio.playbackFrameCursor.store(startCursor + static_cast<std::uint64_t>(frames));
     return true;
 }
 
 bool EngineFillRealtimeForDeviceLocked(
-    UiState& state,
+    CoreState& core,
+    AudioRuntimeState& audio,
     std::int16_t* outInterleaved,
     int deviceFrames,
     int deviceSampleRate,
@@ -227,39 +223,39 @@ bool EngineFillRealtimeForDeviceLocked(
         return false;
     }
 
-    if (state.project.projectSampleRate <= 0) {
-        state.project.projectSampleRate = deviceSampleRate;
+    if (core.project.projectSampleRate <= 0) {
+        core.project.projectSampleRate = deviceSampleRate;
     }
 
-    const int projectSampleRate = state.project.projectSampleRate;
+    const int projectSampleRate = core.project.projectSampleRate;
     if (projectSampleRate <= 0 || projectSampleRate == deviceSampleRate) {
-        return EngineFillRealtimeBufferLocked(state, outInterleaved, deviceFrames, reachedEnd);
+        return EngineFillRealtimeBufferLocked(core, audio, outInterleaved, deviceFrames, reachedEnd);
     }
 
     const double ratio = static_cast<double>(projectSampleRate) / static_cast<double>(deviceSampleRate);
     const int projectFramesNeeded = std::max(1, static_cast<int>(std::ceil(static_cast<double>(deviceFrames) * ratio)) + 2);
     std::vector<std::int16_t> projectPcm(static_cast<size_t>(projectFramesNeeded) * 2, 0);
     bool localReachedEnd = false;
-    EngineFillRealtimeBufferLocked(state, projectPcm.data(), projectFramesNeeded, &localReachedEnd);
+    EngineFillRealtimeBufferLocked(core, audio, projectPcm.data(), projectFramesNeeded, &localReachedEnd);
 
     ResampleStereoPcm16Linear(projectPcm.data(), projectFramesNeeded, outInterleaved, deviceFrames);
     *reachedEnd = localReachedEnd;
     return true;
 }
 
-bool RenderTrackToStereoLocked(const UiState& state, int trackIndex, std::vector<float>* outStereo, int* outSampleRate) {
-        EnsureInsertDspStateStorage(state);
+bool RenderTrackToStereoLocked(const CoreState& core, AudioRuntimeState& audio, int trackIndex, std::vector<float>* outStereo, int* outSampleRate) {
+        EnsureInsertDspStateStorage(core, audio);
 
-    if (trackIndex < 0 || trackIndex >= static_cast<int>(state.project.tracks.size()) || state.project.projectSampleRate <= 0) {
+    if (trackIndex < 0 || trackIndex >= static_cast<int>(core.project.tracks.size()) || core.project.projectSampleRate <= 0) {
         return false;
     }
 
     std::uint64_t startFrame = std::numeric_limits<std::uint64_t>::max();
     std::uint64_t endFrame = 0;
-    const float spb = TimelineSamplesPerBeat(state);
+    const float spb = TimelineSamplesPerBeat(core);
 
-    for (const ClipItem& clip : state.project.clips) {
-        if (clip.trackIndex != trackIndex || clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.project.audio.size())) {
+    for (const ClipItem& clip : core.project.clips) {
+        if (clip.trackIndex != trackIndex || clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(core.project.audio.size())) {
             continue;
         }
         const std::uint64_t clipStart = static_cast<std::uint64_t>(std::llround(std::max(0.0f, clip.startBeat) * spb));
@@ -274,11 +270,11 @@ bool RenderTrackToStereoLocked(const UiState& state, int trackIndex, std::vector
     const std::uint64_t totalFrames = endFrame - startFrame;
     std::vector<float> stereo(static_cast<size_t>(totalFrames) * 2, 0.0f);
 
-    for (const ClipItem& clip : state.project.clips) {
-        if (clip.trackIndex != trackIndex || clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.project.audio.size())) {
+    for (const ClipItem& clip : core.project.clips) {
+        if (clip.trackIndex != trackIndex || clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(core.project.audio.size())) {
             continue;
         }
-        const LoadedAudio& a = state.project.audio[static_cast<size_t>(clip.audioIndex)];
+        const LoadedAudio& a = core.project.audio[static_cast<size_t>(clip.audioIndex)];
         const std::uint64_t clipStartAbs = static_cast<std::uint64_t>(std::llround(std::max(0.0f, clip.startBeat) * spb));
         if (clipStartAbs < startFrame) {
             continue;
@@ -289,7 +285,7 @@ bool RenderTrackToStereoLocked(const UiState& state, int trackIndex, std::vector
         for (std::uint64_t f = 0; f < clipFrames && (writeStart + f) < totalFrames; ++f) {
             float l = 0.0f;
             float r = 0.0f;
-            if (!ReadClipSampleAtProjectFrame(a, f, state.project.projectSampleRate, clip.sourceOffsetFrames, &l, &r)) {
+            if (!ReadClipSampleAtProjectFrame(a, f, core.project.projectSampleRate, clip.sourceOffsetFrames, &l, &r)) {
                 continue;
             }
             const size_t dst = static_cast<size_t>(writeStart + f) * 2;
@@ -303,24 +299,24 @@ bool RenderTrackToStereoLocked(const UiState& state, int trackIndex, std::vector
     }
 
     *outStereo = std::move(stereo);
-    *outSampleRate = state.project.projectSampleRate;
+    *outSampleRate = core.project.projectSampleRate;
     return true;
 }
 
 // Renders the full mix to stereo: all un-muted tracks summed with track gain,
 // track pan, bus gain, and bus mute applied. Bus pan is also applied.
-bool RenderFullMixToStereoLocked(const UiState& state, std::vector<float>* outStereo, int* outSampleRate) {
-    if (state.project.projectSampleRate <= 0 || state.project.clips.empty() || state.project.tracks.empty()) {
+bool RenderFullMixToStereoLocked(const CoreState& core, AudioRuntimeState& audio, std::vector<float>* outStereo, int* outSampleRate) {
+    if (core.project.projectSampleRate <= 0 || core.project.clips.empty() || core.project.tracks.empty()) {
         return false;
     }
 
-    EnsureInsertDspStateStorage(state);
+    EnsureInsertDspStateStorage(core, audio);
 
     // Determine total length across all clips
     std::uint64_t endFrame = 0;
-    const float spb = TimelineSamplesPerBeat(state);
-    for (const ClipItem& clip : state.project.clips) {
-        if (clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.project.audio.size())) continue;
+    const float spb = TimelineSamplesPerBeat(core);
+    for (const ClipItem& clip : core.project.clips) {
+        if (clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(core.project.audio.size())) continue;
         const std::uint64_t clipStart = static_cast<std::uint64_t>(std::llround(std::max(0.0f, clip.startBeat) * spb));
         endFrame = std::max(endFrame, clipStart + static_cast<std::uint64_t>(std::llround(clip.lengthBeats * spb)));
     }
@@ -328,28 +324,28 @@ bool RenderFullMixToStereoLocked(const UiState& state, std::vector<float>* outSt
 
     std::vector<float> mix(static_cast<size_t>(endFrame) * 2, 0.0f);
 
-    const int trackCount = static_cast<int>(state.project.tracks.size());
+    const int trackCount = static_cast<int>(core.project.tracks.size());
     for (int ti = 0; ti < trackCount; ++ti) {
         // Track mute check
-        const bool trackMuted = (ti < static_cast<int>(state.project.tracks.size())) && state.project.tracks[static_cast<size_t>(ti)].mute;
+        const bool trackMuted = (ti < static_cast<int>(core.project.tracks.size())) && core.project.tracks[static_cast<size_t>(ti)].mute;
         if (trackMuted) continue;
 
         // Bus mute check
-        const int busIdx = (ti < static_cast<int>(state.project.tracks.size()))
-            ? std::clamp(state.project.tracks[static_cast<size_t>(ti)].busIndex, 0, kBusCount - 1) : 0;
-        const bool busMuted = (busIdx < static_cast<int>(state.project.buses.size())) && state.project.buses[static_cast<size_t>(busIdx)].mute;
+        const int busIdx = (ti < static_cast<int>(core.project.tracks.size()))
+            ? std::clamp(core.project.tracks[static_cast<size_t>(ti)].busIndex, 0, kBusCount - 1) : 0;
+        const bool busMuted = (busIdx < static_cast<int>(core.project.buses.size())) && core.project.buses[static_cast<size_t>(busIdx)].mute;
         if (busMuted) continue;
 
         // Gain: track dB + bus dB
-        const float trackDb = (ti < static_cast<int>(state.project.tracks.size()))
-            ? state.project.tracks[static_cast<size_t>(ti)].gainDb : 0.0f;
-        const float busDb = BusGainDbAt(state, busIdx);
+        const float trackDb = (ti < static_cast<int>(core.project.tracks.size()))
+            ? core.project.tracks[static_cast<size_t>(ti)].gainDb : 0.0f;
+        const float busDb = BusGainDbAt(core, busIdx);
         const float gain = std::pow(10.0f, (trackDb + busDb) / 20.0f);
 
         // Pan: track pan + bus pan combined (simple additive, clamped)
-        const float trackPan = (ti < static_cast<int>(state.project.tracks.size()))
-            ? state.project.tracks[static_cast<size_t>(ti)].pan : 0.0f;
-        const float busPan = BusPanAt(state, busIdx);
+        const float trackPan = (ti < static_cast<int>(core.project.tracks.size()))
+            ? core.project.tracks[static_cast<size_t>(ti)].pan : 0.0f;
+        const float busPan = BusPanAt(core, busIdx);
         const float pan = std::clamp(trackPan + busPan, -1.0f, 1.0f);
         // Constant-power panning
         const float panRad = (pan + 1.0f) * 0.5f * 3.14159265f * 0.5f;
@@ -358,15 +354,15 @@ bool RenderFullMixToStereoLocked(const UiState& state, std::vector<float>* outSt
 
         // Build per-track buffer for DSP
         std::vector<float> trackBuf(static_cast<size_t>(endFrame) * 2, 0.0f);
-        for (const ClipItem& clip : state.project.clips) {
-            if (clip.trackIndex != ti || clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.project.audio.size())) continue;
-            const LoadedAudio& a = state.project.audio[static_cast<size_t>(clip.audioIndex)];
+        for (const ClipItem& clip : core.project.clips) {
+            if (clip.trackIndex != ti || clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(core.project.audio.size())) continue;
+            const LoadedAudio& a = core.project.audio[static_cast<size_t>(clip.audioIndex)];
             const std::uint64_t clipStart = static_cast<std::uint64_t>(std::llround(std::max(0.0f, clip.startBeat) * spb));
             const std::uint64_t clipFrames = static_cast<std::uint64_t>(std::llround(clip.lengthBeats * spb));
             for (std::uint64_t f = 0; f < clipFrames && (clipStart + f) < endFrame; ++f) {
                 float l = 0.0f;
                 float r = 0.0f;
-                if (!ReadClipSampleAtProjectFrame(a, f, state.project.projectSampleRate, clip.sourceOffsetFrames, &l, &r)) {
+                if (!ReadClipSampleAtProjectFrame(a, f, core.project.projectSampleRate, clip.sourceOffsetFrames, &l, &r)) {
                     continue;
                 }
                 const size_t dst = static_cast<size_t>(clipStart + f) * 2;
@@ -376,16 +372,16 @@ bool RenderFullMixToStereoLocked(const UiState& state, std::vector<float>* outSt
         }
 
         // Apply track insert chain
-        if (ti < static_cast<int>(state.project.tracks.size()) &&
-            ti < static_cast<int>(state.project.tracks.size()) &&
-            ti < static_cast<int>(state.project.tracks.size()) &&
-            ti < static_cast<int>(state.project.tracks.size())) {
-            DspApplyInsertChain(trackBuf, static_cast<float>(state.project.projectSampleRate),
-                state.project.tracks[static_cast<size_t>(ti)].insertEffects,
-                state.project.tracks[static_cast<size_t>(ti)].insertBypass,
-                state.project.tracks[static_cast<size_t>(ti)].insertConfig,
-                state.trackInsertDspState[static_cast<size_t>(ti)],
-                state.project.tracks[static_cast<size_t>(ti)].insertSlots);
+        if (ti < static_cast<int>(core.project.tracks.size()) &&
+            ti < static_cast<int>(core.project.tracks.size()) &&
+            ti < static_cast<int>(core.project.tracks.size()) &&
+            ti < static_cast<int>(core.project.tracks.size())) {
+            DspApplyInsertChain(trackBuf, static_cast<float>(core.project.projectSampleRate),
+                core.project.tracks[static_cast<size_t>(ti)].insertEffects,
+                core.project.tracks[static_cast<size_t>(ti)].insertBypass,
+                core.project.tracks[static_cast<size_t>(ti)].insertConfig,
+                audio.trackInsertDspState[static_cast<size_t>(ti)],
+                core.project.tracks[static_cast<size_t>(ti)].insertSlots);
         }
 
         // Mix into master with gain+pan
@@ -398,30 +394,30 @@ bool RenderFullMixToStereoLocked(const UiState& state, std::vector<float>* outSt
 
     // Apply bus insert chains per bus
     for (int b = 0; b < kBusCount; ++b) {
-        if (b >= static_cast<int>(state.project.buses.size())) continue;
-        if (b >= static_cast<int>(state.project.buses.size()))  continue;
-        if (b >= static_cast<int>(state.project.buses.size()))  continue;
-        if (b >= static_cast<int>(state.project.buses.size()))   continue;
-        if (state.project.buses[static_cast<size_t>(b)].insertSlots <= 0)    continue;
+        if (b >= static_cast<int>(core.project.buses.size())) continue;
+        if (b >= static_cast<int>(core.project.buses.size()))  continue;
+        if (b >= static_cast<int>(core.project.buses.size()))  continue;
+        if (b >= static_cast<int>(core.project.buses.size()))   continue;
+        if (core.project.buses[static_cast<size_t>(b)].insertSlots <= 0)    continue;
         // Collect all tracks on this bus into a sub-mix
         std::vector<float> busBuf(static_cast<size_t>(endFrame) * 2, 0.0f);
         bool hasContent = false;
         for (int ti2 = 0; ti2 < trackCount; ++ti2) {
-            const int tbus = (ti2 < static_cast<int>(state.project.tracks.size()))
-                ? std::clamp(state.project.tracks[static_cast<size_t>(ti2)].busIndex, 0, kBusCount - 1) : 0;
+            const int tbus = (ti2 < static_cast<int>(core.project.tracks.size()))
+                ? std::clamp(core.project.tracks[static_cast<size_t>(ti2)].busIndex, 0, kBusCount - 1) : 0;
             if (tbus != b) continue;
-            const bool muted = (ti2 < static_cast<int>(state.project.tracks.size())) && state.project.tracks[static_cast<size_t>(ti2)].mute;
+            const bool muted = (ti2 < static_cast<int>(core.project.tracks.size())) && core.project.tracks[static_cast<size_t>(ti2)].mute;
             if (muted) continue;
             hasContent = true;
-            for (const ClipItem& clip : state.project.clips) {
-                if (clip.trackIndex != ti2 || clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.project.audio.size())) continue;
-                const LoadedAudio& a2 = state.project.audio[static_cast<size_t>(clip.audioIndex)];
+            for (const ClipItem& clip : core.project.clips) {
+                if (clip.trackIndex != ti2 || clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(core.project.audio.size())) continue;
+                const LoadedAudio& a2 = core.project.audio[static_cast<size_t>(clip.audioIndex)];
                 const std::uint64_t cs = static_cast<std::uint64_t>(std::llround(std::max(0.0f, clip.startBeat) * spb));
                 const std::uint64_t cf = static_cast<std::uint64_t>(std::llround(clip.lengthBeats * spb));
                 for (std::uint64_t f = 0; f < cf && (cs + f) < endFrame; ++f) {
                     float l = 0.0f;
                     float r = 0.0f;
-                    if (!ReadClipSampleAtProjectFrame(a2, f, state.project.projectSampleRate, clip.sourceOffsetFrames, &l, &r)) {
+                    if (!ReadClipSampleAtProjectFrame(a2, f, core.project.projectSampleRate, clip.sourceOffsetFrames, &l, &r)) {
                         continue;
                     }
                     const size_t dst = static_cast<size_t>(cs + f) * 2;
@@ -434,13 +430,13 @@ bool RenderFullMixToStereoLocked(const UiState& state, std::vector<float>* outSt
         // Apply bus inserts — result is a differential that we add back to mix
         // (subtract unprocessed, add processed)
         std::vector<float> busBufPre = busBuf;
-        DspApplyInsertChain(busBuf, static_cast<float>(state.project.projectSampleRate),
-            state.project.buses[static_cast<size_t>(b)].insertEffects,
-            state.project.buses[static_cast<size_t>(b)].insertBypass,
-            state.project.buses[static_cast<size_t>(b)].insertConfig,
-            state.busInsertDspState[static_cast<size_t>(b)],
-            state.project.buses[static_cast<size_t>(b)].insertSlots);
-        const float busGainLin = std::pow(10.0f, BusGainDbAt(state, b) / 20.0f);
+        DspApplyInsertChain(busBuf, static_cast<float>(core.project.projectSampleRate),
+            core.project.buses[static_cast<size_t>(b)].insertEffects,
+            core.project.buses[static_cast<size_t>(b)].insertBypass,
+            core.project.buses[static_cast<size_t>(b)].insertConfig,
+            audio.busInsertDspState[static_cast<size_t>(b)],
+            core.project.buses[static_cast<size_t>(b)].insertSlots);
+        const float busGainLin = std::pow(10.0f, BusGainDbAt(core, b) / 20.0f);
         for (std::uint64_t f = 0; f < endFrame; ++f) {
             const size_t i = f*2;
             mix[i]   += (busBuf[i]   - busBufPre[i])   * busGainLin;
@@ -454,44 +450,44 @@ bool RenderFullMixToStereoLocked(const UiState& state, std::vector<float>* outSt
     }
 
     *outStereo     = std::move(mix);
-    *outSampleRate = state.project.projectSampleRate;
+    *outSampleRate = core.project.projectSampleRate;
     return true;
 }
 
 // Renders all tracks routed to busIndex (with track+bus gain/pan applied) into a stereo buffer.
 // Must NOT be called with audioStateLock held.
-bool RenderBusStemToStereoLocked(const UiState& state, int busIndex, std::vector<float>* outStereo, int* outSampleRate) {
-        EnsureInsertDspStateStorage(state);
+bool RenderBusStemToStereoLocked(const CoreState& core, AudioRuntimeState& audio, int busIndex, std::vector<float>* outStereo, int* outSampleRate) {
+        EnsureInsertDspStateStorage(core, audio);
 
-    if (state.project.projectSampleRate <= 0 || state.project.clips.empty() || state.project.tracks.empty()) return false;
+    if (core.project.projectSampleRate <= 0 || core.project.clips.empty() || core.project.tracks.empty()) return false;
 
     std::uint64_t endFrame = 0;
-    const float spb = TimelineSamplesPerBeat(state);
-    for (const ClipItem& clip : state.project.clips) {
-        if (clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.project.audio.size())) continue;
+    const float spb = TimelineSamplesPerBeat(core);
+    for (const ClipItem& clip : core.project.clips) {
+        if (clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(core.project.audio.size())) continue;
         const std::uint64_t clipStart = static_cast<std::uint64_t>(std::llround(std::max(0.0f, clip.startBeat) * spb));
         endFrame = std::max(endFrame, clipStart + static_cast<std::uint64_t>(std::llround(clip.lengthBeats * spb)));
     }
     if (endFrame == 0) return false;
 
     std::vector<float> mix(static_cast<size_t>(endFrame) * 2, 0.0f);
-    const int trackCount = static_cast<int>(state.project.tracks.size());
+    const int trackCount = static_cast<int>(core.project.tracks.size());
 
     for (int ti = 0; ti < trackCount; ++ti) {
-        const int tbus = (ti < static_cast<int>(state.project.tracks.size()))
-            ? std::clamp(state.project.tracks[static_cast<size_t>(ti)].busIndex, 0, kBusCount - 1) : 0;
+        const int tbus = (ti < static_cast<int>(core.project.tracks.size()))
+            ? std::clamp(core.project.tracks[static_cast<size_t>(ti)].busIndex, 0, kBusCount - 1) : 0;
         if (tbus != busIndex) continue;
 
-        const bool trackMuted = (ti < static_cast<int>(state.project.tracks.size())) && state.project.tracks[static_cast<size_t>(ti)].mute;
-        const bool busMuted   = (busIndex < static_cast<int>(state.project.buses.size())) && state.project.buses[static_cast<size_t>(busIndex)].mute;
+        const bool trackMuted = (ti < static_cast<int>(core.project.tracks.size())) && core.project.tracks[static_cast<size_t>(ti)].mute;
+        const bool busMuted   = (busIndex < static_cast<int>(core.project.buses.size())) && core.project.buses[static_cast<size_t>(busIndex)].mute;
         if (trackMuted || busMuted) continue;
 
-        const float trackDb = (ti < static_cast<int>(state.project.tracks.size())) ? state.project.tracks[static_cast<size_t>(ti)].gainDb : 0.0f;
-        const float busDb   = BusGainDbAt(state, busIndex);
+        const float trackDb = (ti < static_cast<int>(core.project.tracks.size())) ? core.project.tracks[static_cast<size_t>(ti)].gainDb : 0.0f;
+        const float busDb   = BusGainDbAt(core, busIndex);
         const float gain    = std::pow(10.0f, (trackDb + busDb) / 20.0f);
 
-        const float trackPan = (ti < static_cast<int>(state.project.tracks.size())) ? state.project.tracks[static_cast<size_t>(ti)].pan : 0.0f;
-        const float busPan   = BusPanAt(state, busIndex);
+        const float trackPan = (ti < static_cast<int>(core.project.tracks.size())) ? core.project.tracks[static_cast<size_t>(ti)].pan : 0.0f;
+        const float busPan   = BusPanAt(core, busIndex);
         const float pan      = std::clamp(trackPan + busPan, -1.0f, 1.0f);
         const float panRad   = (pan + 1.0f) * 0.5f * 3.14159265f * 0.5f;
         const float gainL    = gain * std::cos(panRad);
@@ -499,15 +495,15 @@ bool RenderBusStemToStereoLocked(const UiState& state, int busIndex, std::vector
 
         // Build per-track buffer for DSP
         std::vector<float> trackBuf(static_cast<size_t>(endFrame) * 2, 0.0f);
-        for (const ClipItem& clip : state.project.clips) {
-            if (clip.trackIndex != ti || clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.project.audio.size())) continue;
-            const LoadedAudio& a = state.project.audio[static_cast<size_t>(clip.audioIndex)];
+        for (const ClipItem& clip : core.project.clips) {
+            if (clip.trackIndex != ti || clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(core.project.audio.size())) continue;
+            const LoadedAudio& a = core.project.audio[static_cast<size_t>(clip.audioIndex)];
             const std::uint64_t clipStart = static_cast<std::uint64_t>(std::llround(std::max(0.0f, clip.startBeat) * spb));
             const std::uint64_t clipFrames = static_cast<std::uint64_t>(std::llround(clip.lengthBeats * spb));
             for (std::uint64_t f = 0; f < clipFrames && (clipStart + f) < endFrame; ++f) {
                 float l = 0.0f;
                 float r = 0.0f;
-                if (!ReadClipSampleAtProjectFrame(a, f, state.project.projectSampleRate, clip.sourceOffsetFrames, &l, &r)) {
+                if (!ReadClipSampleAtProjectFrame(a, f, core.project.projectSampleRate, clip.sourceOffsetFrames, &l, &r)) {
                     continue;
                 }
                 const size_t dst = static_cast<size_t>(clipStart + f) * 2;
@@ -517,30 +513,30 @@ bool RenderBusStemToStereoLocked(const UiState& state, int busIndex, std::vector
         }
 
         // Apply track insert chain
-        if (ti < static_cast<int>(state.project.tracks.size()) &&
-            ti < static_cast<int>(state.project.tracks.size()) &&
-            ti < static_cast<int>(state.project.tracks.size()) &&
-            ti < static_cast<int>(state.project.tracks.size())) {
-            DspApplyInsertChain(trackBuf, static_cast<float>(state.project.projectSampleRate),
-                state.project.tracks[static_cast<size_t>(ti)].insertEffects,
-                state.project.tracks[static_cast<size_t>(ti)].insertBypass,
-                state.project.tracks[static_cast<size_t>(ti)].insertConfig,
-                state.trackInsertDspState[static_cast<size_t>(ti)],
-                state.project.tracks[static_cast<size_t>(ti)].insertSlots);
+        if (ti < static_cast<int>(core.project.tracks.size()) &&
+            ti < static_cast<int>(core.project.tracks.size()) &&
+            ti < static_cast<int>(core.project.tracks.size()) &&
+            ti < static_cast<int>(core.project.tracks.size())) {
+            DspApplyInsertChain(trackBuf, static_cast<float>(core.project.projectSampleRate),
+                core.project.tracks[static_cast<size_t>(ti)].insertEffects,
+                core.project.tracks[static_cast<size_t>(ti)].insertBypass,
+                core.project.tracks[static_cast<size_t>(ti)].insertConfig,
+                audio.trackInsertDspState[static_cast<size_t>(ti)],
+                core.project.tracks[static_cast<size_t>(ti)].insertSlots);
         }
 
         // Apply bus insert chain as post-fader processing
-        if (busIndex < static_cast<int>(state.project.buses.size()) &&
-            busIndex < static_cast<int>(state.project.buses.size()) &&
-            busIndex < static_cast<int>(state.project.buses.size()) &&
-            busIndex < static_cast<int>(state.project.buses.size()) &&
-            state.project.buses[static_cast<size_t>(busIndex)].insertSlots > 0) {
-            DspApplyInsertChain(trackBuf, static_cast<float>(state.project.projectSampleRate),
-                state.project.buses[static_cast<size_t>(busIndex)].insertEffects,
-                state.project.buses[static_cast<size_t>(busIndex)].insertBypass,
-                state.project.buses[static_cast<size_t>(busIndex)].insertConfig,
-                state.busInsertDspState[static_cast<size_t>(busIndex)],
-                state.project.buses[static_cast<size_t>(busIndex)].insertSlots);
+        if (busIndex < static_cast<int>(core.project.buses.size()) &&
+            busIndex < static_cast<int>(core.project.buses.size()) &&
+            busIndex < static_cast<int>(core.project.buses.size()) &&
+            busIndex < static_cast<int>(core.project.buses.size()) &&
+            core.project.buses[static_cast<size_t>(busIndex)].insertSlots > 0) {
+            DspApplyInsertChain(trackBuf, static_cast<float>(core.project.projectSampleRate),
+                core.project.buses[static_cast<size_t>(busIndex)].insertEffects,
+                core.project.buses[static_cast<size_t>(busIndex)].insertBypass,
+                core.project.buses[static_cast<size_t>(busIndex)].insertConfig,
+                audio.busInsertDspState[static_cast<size_t>(busIndex)],
+                core.project.buses[static_cast<size_t>(busIndex)].insertSlots);
         }
 
         for (std::uint64_t f = 0; f < endFrame; ++f) {
@@ -551,6 +547,7 @@ bool RenderBusStemToStereoLocked(const UiState& state, int busIndex, std::vector
     }
     for (float& s : mix) s = std::clamp(s, -1.0f, 1.0f);
     *outStereo     = std::move(mix);
-    *outSampleRate = state.project.projectSampleRate;
+    *outSampleRate = core.project.projectSampleRate;
     return true;
 }
+

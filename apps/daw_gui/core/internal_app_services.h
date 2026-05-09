@@ -4,11 +4,18 @@
 #error "This header is internal-only."
 #endif
 
-#include "core/state.h"
+#include "core/CoreState.h"
+#include "dsp/insert_types.h"
+
+#include <filesystem>
+#include <string>
+
+struct HWND__;
+using HWND = HWND__*;
 
 namespace daw::internal::core {
 
-void UpdateWindowTitle(HWND hwnd, const UiState& state);
+void UpdateWindowTitle(HWND hwnd, const CoreState& core);
 
 InsertEffectArray DefaultInsertEffects();
 InsertBypassArray DefaultInsertBypass();

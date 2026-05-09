@@ -1,5 +1,8 @@
 #include "ui/layout.h"
 
+#include <algorithm>
+#include <cmath>
+
 // ── Left panel / track row rects ─────────────────────────────────────────────
 
 void UiLayoutGetTrackFaderRects(const RECT& leftPanel, int trackIndex, RECT* rail, RECT* knob) {
@@ -32,11 +35,11 @@ void UiLayoutGetTrackRoutingRects(const RECT& leftPanel, int trackIndex, RECT* b
     *fxRect = RECT{leftPanel.left + 154, rowTop + 35, leftPanel.left + 190, rowTop + 53};
 }
 
-int UiLayoutBusPanelTop(const RECT& leftPanel, const UiState& state) {
-    return leftPanel.top + kRulerHeight + static_cast<int>(state.project.tracks.size()) * kTrackRowHeight + 6;
+int UiLayoutBusPanelTop(const RECT& leftPanel, const AppState& state) {
+    return leftPanel.top + kRulerHeight + static_cast<int>(state.core.project.tracks.size()) * kTrackRowHeight + 6;
 }
 
-void UiLayoutGetBusControlRects(const RECT& leftPanel, const UiState& state, int busIndex,
+void UiLayoutGetBusControlRects(const RECT& leftPanel, const AppState& state, int busIndex,
                         RECT* rowRect, RECT* muteRect, RECT* gainDownRect, RECT* gainUpRect,
                         RECT* panKnobRect, RECT* panValRect, RECT* fxRect) {
     constexpr int kBusRowHeight = 28;
@@ -86,30 +89,30 @@ float UiLayoutSnapBeat(float beat) {
     return std::round(beat / grid) * grid;
 }
 
-float UiLayoutXToBeat(const RECT& arrange, const UiState& state, int x) {
+float UiLayoutXToBeat(const RECT& arrange, const AppState& state, int x) {
     const int width = std::max(1, static_cast<int>(arrange.right - arrange.left));
     const float t = static_cast<float>(x - arrange.left) / static_cast<float>(width);
-    return state.viewStartBeat + t * state.viewBeatsVisible;
+    return state.ui.viewStartBeat + t * state.ui.viewBeatsVisible;
 }
 
-int UiLayoutBeatToX(const RECT& area, const UiState& state, float beat) {
+int UiLayoutBeatToX(const RECT& area, const AppState& state, float beat) {
     const int width = std::max(1, static_cast<int>(area.right - area.left));
-    const float t = (beat - state.viewStartBeat) / state.viewBeatsVisible;
+    const float t = (beat - state.ui.viewStartBeat) / state.ui.viewBeatsVisible;
     return area.left + static_cast<int>(t * static_cast<float>(width));
 }
 
-int UiLayoutTrackIndexFromY(const RECT& arrange, const UiState& state, int y) {
-    if (state.project.tracks.empty()) {
+int UiLayoutTrackIndexFromY(const RECT& arrange, const AppState& state, int y) {
+    if (state.core.project.tracks.empty()) {
         return 0;
     }
     if (y < arrange.top) {
         return 0;
     }
     const int idx = (y - arrange.top) / kTrackRowHeight;
-    return std::clamp(idx, 0, static_cast<int>(state.project.tracks.size()) - 1);
+    return std::clamp(idx, 0, static_cast<int>(state.core.project.tracks.size()) - 1);
 }
 
-bool UiLayoutClipRectForDraw(const RECT& arrange, const UiState& state, const ClipItem& clip, RECT* outRect) {
+bool UiLayoutClipRectForDraw(const RECT& arrange, const AppState& state, const ClipItem& clip, RECT* outRect) {
     const int rowTop = arrange.top + clip.trackIndex * kTrackRowHeight + kClipInsetY;
     const int rowBottom = rowTop + (kTrackRowHeight - 2 * kClipInsetY);
     const int left = UiLayoutBeatToX(arrange, state, clip.startBeat);

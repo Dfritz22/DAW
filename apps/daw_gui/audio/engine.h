@@ -6,15 +6,16 @@
 
 #include <cstdint>
 
-struct UiState;
+struct CoreState;
+struct AudioRuntimeState;
 
 // ── Audio engine – realtime and offline render entry points ──────────────────
-// These functions contain the core mix/render logic.  They operate on UiState
-// and must not depend on any Win32 UI, drawing, or layout code.
+// These functions contain the core mix/render logic and operate on core/audio
+// runtime state only. They must not depend on UI or Win32 UI APIs.
 
 // Realtime path
-bool EngineFillRealtimeBufferLocked(UiState& state, std::int16_t* outInterleaved, int frames, bool* reachedEnd);
-bool EngineFillRealtimeForDeviceLocked(UiState& state, std::int16_t* outInterleaved, int deviceFrames, int deviceSampleRate, bool* reachedEnd);
+bool EngineFillRealtimeBufferLocked(CoreState& core, AudioRuntimeState& audio, std::int16_t* outInterleaved, int frames, bool* reachedEnd);
+bool EngineFillRealtimeForDeviceLocked(CoreState& core, AudioRuntimeState& audio, std::int16_t* outInterleaved, int deviceFrames, int deviceSampleRate, bool* reachedEnd);
 
 // Offline render path (also declared in state.h for other consumers)
 // bool RenderTrackToStereoLocked(...)    – see state.h
