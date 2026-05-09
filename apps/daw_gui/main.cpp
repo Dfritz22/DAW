@@ -1243,6 +1243,23 @@ bool StartRecording(HWND hwnd, AppState& state) {
         return false;
     }
 
+    // Ensure sample rate is set before starting playback (needed for metronome/count-in)
+    // Refresh input devices to get the latest available rates
+    DeviceRefreshInputDevices(state);
+    if (state.core.project.projectSampleRate <= 0) {
+        // Try to use a sensible default sample rate for playback/metronome
+        if (state.audio.preferredSampleRate > 0) {
+            state.core.project.projectSampleRate = state.audio.preferredSampleRate;
+        } else if (state.audio.lastOpenedOutputSampleRate > 0) {
+            state.core.project.projectSampleRate = state.audio.lastOpenedOutputSampleRate;
+        } else if (state.audio.lastOpenedInputSampleRate > 0) {
+            state.core.project.projectSampleRate = state.audio.lastOpenedInputSampleRate;
+        } else {
+            // Final fallback to standard rate
+            state.core.project.projectSampleRate = 44100;
+        }
+    }
+
     const bool wasPlaying = state.audio.playing;
 
     if (!state.audio.playing && (!state.core.project.clips.empty() || state.audio.metronomeRecord || state.audio.countInEnabled)) {
