@@ -1,5 +1,6 @@
 #include "layout.h"
 #include "../core/automation.h"
+#include "../core/automation_types.h"
 #include "../core/timeline.h"
 
 // ── Left panel / track row rects ─────────────────────────────────────────────

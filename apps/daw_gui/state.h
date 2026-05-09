@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "daw_core/Engine.hpp"
+#include "core/automation_types.h"
 
 #pragma comment(lib, "Comdlg32.lib")
 #pragma comment(lib, "Winmm.lib")
@@ -415,6 +416,11 @@ struct UiState {
     // Runtime-only DSP state for insert chains (not serialized)
     mutable std::vector<InsertDspStateArray> trackInsertDspState;
     mutable std::array<InsertDspStateArray, kBusCount> busInsertDspState{};
+
+    // Track automation curves (single source of truth for automation data)
+    std::vector<TrackAutomationCurve> trackGainCurves;
+    std::vector<TrackAutomationCurve> trackPanCurves;
+    std::vector<TrackAutomationCurve> trackBusCurves;
 };
 
 // ── Forward declarations ────────────────────────────────────────────────────
