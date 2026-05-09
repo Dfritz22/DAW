@@ -1,7 +1,7 @@
 #pragma once
 #include <string>
 #include <vector>
-#include "../state.h"
+#include "core/state.h"
 
 // WAV file I/O helpers.
 // LoadedAudio is defined in state.h.

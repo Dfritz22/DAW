@@ -1,5 +1,5 @@
 #include "automix_bridge.h"
-#include "../io/wav_io.h"
+#include "io/wav_io.h"
 
 // ── Forward declarations for helpers defined in main.cpp ──────────────────
 std::wstring QuoteArg(const std::wstring& s);

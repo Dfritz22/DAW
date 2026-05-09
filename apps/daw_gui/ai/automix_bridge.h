@@ -1,5 +1,5 @@
 #pragma once
-#include "../state.h"
+#include "core/state.h"
 
 // ── AutoMix per-track settings returned by the AI script ──────────────────
 struct AutoMixTrackSettings {

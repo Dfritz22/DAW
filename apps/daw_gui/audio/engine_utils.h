@@ -1,5 +1,5 @@
 #pragma once
-#include "../state.h"
+#include "core/state.h"
 
 // ── Audio-domain utilities ────────────────────────────────────────────────────
 // These helpers are used exclusively by the audio engine (engine.cpp) and by

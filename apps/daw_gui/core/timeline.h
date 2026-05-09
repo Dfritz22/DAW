@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../state.h"
+#include "core/state.h"
 
 // ── Shared timeline math helpers ─────────────────────────────────────────────
 // These helpers are backend/UI agnostic and safe to use from orchestration,

@@ -1,6 +1,6 @@
 #include "timeline_edit.h"
-#include "../state.h"
-#include "timeline.h"
+#include "core/state.h"
+#include "core/timeline.h"
 #include <algorithm>
 
 static constexpr int kMaxUndoLevels = 50;

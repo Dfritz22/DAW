@@ -1,5 +1,5 @@
 #pragma once
-#include "../state.h"
+#include "core/state.h"
 
 // ── Backend-agnostic audio device utilities ───────────────────────────────────
 // This module owns all logic that is shared across MME and WASAPI backends.

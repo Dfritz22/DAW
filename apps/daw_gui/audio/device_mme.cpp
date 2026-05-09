@@ -1,8 +1,8 @@
 #include "device_mme.h"
 #include "device_common.h"
 #include "engine.h"
-#include "../core/automation.h"
-#include "../core/timeline.h"
+#include "core/automation.h"
+#include "core/timeline.h"
 
 // ── Forward declarations for orchestration functions in main.cpp ─────────────
 // These are defined in main.cpp and called by StartMmeAudio / StartMmeRecording

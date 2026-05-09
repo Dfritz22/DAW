@@ -1,6 +1,6 @@
 add_executable(daw_gui WIN32
     main.cpp
-    draw.cpp
+    ui/draw.cpp
     io/wav_io.cpp
     io/project_io.cpp
     ai/automix_bridge.cpp

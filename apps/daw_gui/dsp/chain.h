@@ -1,6 +1,6 @@
 #pragma once
 #include <vector>
-#include "../state.h"
+#include "core/state.h"
 
 // DSP insert chain processing.
 // All types (InsertParams, EqBand, InsertEffectArray, etc.) are defined in state.h.

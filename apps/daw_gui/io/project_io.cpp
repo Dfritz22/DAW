@@ -1,7 +1,7 @@
 #include "project_io.h"
 
 #include "wav_io.h"
-#include "../audio/device_common.h"
+#include "audio/device_common.h"
 
 void UpdateWindowTitle(HWND hwnd, const UiState& state);
 InsertEffectArray DefaultInsertEffects();

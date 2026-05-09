@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../state.h"
+#include "core/state.h"
 
 // ── Track automation curve evaluation ────────────────────────────────────────
 // Single authoritative source for gain/pan/bus value lookup at timeline beat.

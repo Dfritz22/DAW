@@ -1,5 +1,5 @@
 #pragma once
-#include "../state.h"
+#include "core/state.h"
 
 // ── MME audio device backend ─────────────────────────────────────────────────
 // All waveIn / waveOut operations live here. No UI headers are included.

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../state.h"
+#include "core/state.h"
 
 bool SaveProject(const std::wstring& path, UiState& state);
 bool LoadProject(const std::wstring& path, UiState& state);

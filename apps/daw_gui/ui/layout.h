@@ -1,5 +1,5 @@
 #pragma once
-#include "../state.h"
+#include "core/state.h"
 
 // ── Layout / coordinate math ─────────────────────────────────────────────────
 // Defined in ui/layout.cpp; used by draw.cpp and WndProc in main.cpp.
