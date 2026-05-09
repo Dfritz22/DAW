@@ -359,7 +359,9 @@ bool DeviceStartMmeRecording(HWND hwnd, CoreState& core, AudioRuntimeState& audi
     if (!wasPlaying && audio.countInEnabled) {
         audio.recordPrerollFrames = TimelineFramesFromBeats(core, 4.0f * static_cast<float>(audio.countInBars));
     }
-    audio.recordStartFrame = timelineStartFrame + audio.recordPrerollFrames;
+    // Count-in is absolute: record starts at the original playhead, clicks play before it
+    audio.recordStartFrame = timelineStartFrame;
+    audio.countInEndFrame = timelineStartFrame + audio.recordPrerollFrames;
     audio.countingIn = (audio.recordPrerollFrames > 0);
 
     audio.recordStopRequested.store(false);
@@ -372,12 +374,15 @@ bool DeviceStartMmeRecording(HWND hwnd, CoreState& core, AudioRuntimeState& audi
     }
 
     waveInStart(audio.waveIn);
-    {
-        const std::uint64_t captureNow = audio.playing ? DeviceGetRenderedPlaybackFrame(core, audio) : 0;
-        const std::uint64_t scheduledStart = audio.recordStartFrame;
-        const std::uint64_t actualSkip = (captureNow < scheduledStart) ? (scheduledStart - captureNow) : 0;
-        audio.recordPrerollFrames = actualSkip;
-        audio.recordStartFrame = captureNow + actualSkip;
+    // Only recalculate timing if playback was already running (recording during playback)
+    if (audio.playing) {
+        const std::uint64_t captureNow = DeviceGetRenderedPlaybackFrame(core, audio);
+        // If we're behind the scheduled start, add preroll
+        if (captureNow < audio.recordStartFrame && audio.countInEnabled && audio.recordPrerollFrames == 0) {
+            audio.recordPrerollFrames = audio.recordStartFrame - captureNow;
+            audio.countInEndFrame = audio.recordStartFrame;
+            audio.countingIn = true;
+        }
     }
 
     audio.lastOpenedInputSampleRate = static_cast<int>(audio.waveInFormat.nSamplesPerSec);

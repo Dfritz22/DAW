@@ -102,6 +102,7 @@ struct AudioRuntimeState {
     bool countInEnabled {true};
     int countInBars {1};
     std::uint64_t recordPrerollFrames {0};
+    std::uint64_t countInEndFrame {0};  // When count-in clicks stop (absolute frame position)
     bool countingIn {false};
     std::vector<std::int16_t> monitorInputPcm;
     size_t monitorInputReadPos {0};

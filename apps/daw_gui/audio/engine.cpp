@@ -19,13 +19,18 @@ bool EngineFillRealtimeBufferLocked(CoreState& core, AudioRuntimeState& audio, s
         return false;
     }
 
+    // Check if count-in has finished and clear the flag
+    if (audio.countingIn && audio.playbackFrameCursor.load() >= audio.countInEndFrame) {
+        audio.countingIn = false;
+    }
+
     EnsureInsertDspStateStorage(core, audio);
 
     const bool runMetPlay = audio.playing && !audio.recording && audio.metronomePlay;
     const bool runMetRec = audio.recording && audio.metronomeRecord;
-    // Play count-in click from Record-press until preroll ends (recordStartFrame).
+    // Play count-in clicks while in the preroll window (before countInEndFrame)
     const bool runCountInClick = audio.countingIn
-        && audio.playbackFrameCursor.load() < audio.recordStartFrame;
+        && audio.playbackFrameCursor.load() < audio.countInEndFrame;
     const bool allowNoClipPlayback = runMetPlay || runMetRec || runCountInClick || (audio.recording && audio.inputMonitoring);
 
     if (core.project.clips.empty() && !allowNoClipPlayback) {
@@ -63,27 +68,29 @@ bool EngineFillRealtimeBufferLocked(CoreState& core, AudioRuntimeState& audio, s
 
         const int busIdx = std::clamp(AutomationTrackBusIndexAt(core, ti), 0, kBusCount - 1);
 
-        // Fill track buffer from clips
+        // Fill track buffer from clips (but not during count-in)
         std::vector<float> trackBuf(static_cast<size_t>(activeFrames) * 2, 0.0f);
-        for (const ClipItem& clip : core.project.clips) {
-            if (clip.trackIndex != ti) continue;
-            if (clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(core.project.audio.size())) continue;
-            const LoadedAudio& a = core.project.audio[static_cast<size_t>(clip.audioIndex)];
-            const std::uint64_t clipStart = static_cast<std::uint64_t>(
-                std::llround(std::max(0.0f, clip.startBeat) * samplesPerBeat));
-            const std::uint64_t clipEnd = clipStart + static_cast<std::uint64_t>(
-                std::llround(clip.lengthBeats * samplesPerBeat));
+        if (!runCountInClick) {
+            for (const ClipItem& clip : core.project.clips) {
+                if (clip.trackIndex != ti) continue;
+                if (clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(core.project.audio.size())) continue;
+                const LoadedAudio& a = core.project.audio[static_cast<size_t>(clip.audioIndex)];
+                const std::uint64_t clipStart = static_cast<std::uint64_t>(
+                    std::llround(std::max(0.0f, clip.startBeat) * samplesPerBeat));
+                const std::uint64_t clipEnd = clipStart + static_cast<std::uint64_t>(
+                    std::llround(clip.lengthBeats * samplesPerBeat));
 
-            for (int i = 0; i < activeFrames; ++i) {
-                const std::uint64_t gf = startCursor + static_cast<std::uint64_t>(i);
-                if (gf < clipStart || gf >= clipEnd) continue;
-                float l = 0.0f;
-                float r = 0.0f;
-                if (!ReadClipSampleAtProjectFrame(a, gf - clipStart, core.project.projectSampleRate, clip.sourceOffsetFrames, &l, &r)) {
-                    continue;
+                for (int i = 0; i < activeFrames; ++i) {
+                    const std::uint64_t gf = startCursor + static_cast<std::uint64_t>(i);
+                    if (gf < clipStart || gf >= clipEnd) continue;
+                    float l = 0.0f;
+                    float r = 0.0f;
+                    if (!ReadClipSampleAtProjectFrame(a, gf - clipStart, core.project.projectSampleRate, clip.sourceOffsetFrames, &l, &r)) {
+                        continue;
+                    }
+                    trackBuf[static_cast<size_t>(i)*2]   += l;
+                    trackBuf[static_cast<size_t>(i)*2+1] += r;
                 }
-                trackBuf[static_cast<size_t>(i)*2]   += l;
-                trackBuf[static_cast<size_t>(i)*2+1] += r;
             }
         }
 
