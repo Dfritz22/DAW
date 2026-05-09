@@ -8,7 +8,7 @@
 #include "dsp/insert_types.h"
 
 // DSP insert chain processing.
-// All types (InsertParams, EqBand, InsertEffectArray, etc.) are defined in state.h.
+// All insert types are defined in dsp/insert_types.h.
 
 void DspApplyInsertChain(
     std::vector<float>& buf, float sampleRate,

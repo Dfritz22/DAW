@@ -25,7 +25,13 @@ target_link_libraries(daw_gui
 target_include_directories(daw_gui
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 target_compile_definitions(daw_gui PRIVATE UNICODE _UNICODE)
+
+if(MSVC)
+    target_compile_options(daw_gui PRIVATE /W4 /WX /permissive-)
+else()
+    target_compile_options(daw_gui PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()

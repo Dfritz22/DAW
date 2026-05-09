@@ -1,5 +1,7 @@
 #include "ui/draw.h"
 #include "ui/layout.h"
+#include "daw_automation.h"
+#include "daw_timeline.h"
 
 namespace daw::internal::ui {
 
