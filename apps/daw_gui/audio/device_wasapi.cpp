@@ -429,7 +429,8 @@ static DWORD WINAPI WasapiRecordThreadProc(LPVOID param) {
                 }
 
                 const bool silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0;
-                if (!silent && data != nullptr && frames > 0) {
+                if (!silent && data != nullptr && frames > 0 && !audio->countingIn) {
+                    // Skip recording during count-in (only record after count-in ends)
                     const bool isFloat = (mixFmt->wFormatTag == WAVE_FORMAT_IEEE_FLOAT) ||
                         (mixFmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE && reinterpret_cast<WAVEFORMATEXTENSIBLE*>(mixFmt)->SubFormat == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT);
                     const bool isPcm16 = (mixFmt->wBitsPerSample == 16) &&
@@ -591,6 +592,23 @@ bool DeviceStartWasapiRecording(HWND hwnd, CoreState& core, AudioRuntimeState& a
     audio.monitorInputReadPos = 0;
     audio.recordTrackIndex = armedTrack;
     audio.recordCaptureStartTickMs = GetTickCount64();
+
+    // Ensure project sample rate is set before computing preroll duration
+    // Will be set from input device format or from output device when playback starts
+    if (core.project.projectSampleRate <= 0) {
+        // Try to get from the last successfully opened input/output format
+        if (audio.lastOpenedInputSampleRate > 0) {
+            core.project.projectSampleRate = audio.lastOpenedInputSampleRate;
+        } else if (audio.lastOpenedOutputSampleRate > 0) {
+            core.project.projectSampleRate = audio.lastOpenedOutputSampleRate;
+        } else if (audio.preferredSampleRate > 0) {
+            core.project.projectSampleRate = audio.preferredSampleRate;
+        } else {
+            // Fallback to sensible default
+            core.project.projectSampleRate = 44100;
+        }
+    }
+
     const std::uint64_t timelineStartFrame = audio.playing
         ? DeviceGetRenderedPlaybackFrame(core, audio)
         : TimelineFramesFromBeats(core, std::max(0.0f, playheadBeat));

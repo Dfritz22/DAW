@@ -82,14 +82,17 @@ static DWORD WINAPI RecordThreadProc(LPVOID param) {
             if (hdr.dwBytesRecorded > 0) {
                 const size_t sampleCount = static_cast<size_t>(hdr.dwBytesRecorded / sizeof(std::int16_t));
                 const std::int16_t* samples = reinterpret_cast<const std::int16_t*>(hdr.lpData);
-                audio->recordedInputPcm.insert(audio->recordedInputPcm.end(), samples, samples + sampleCount);
+                // Only record audio after count-in ends (do not capture during count-in)
+                if (!audio->countingIn) {
+                    audio->recordedInputPcm.insert(audio->recordedInputPcm.end(), samples, samples + sampleCount);
+                }
                 hdr.dwBytesRecorded = 0;
                 hdr.dwFlags &= ~WHDR_DONE;
                 if (!audio->recordStopRequested.load() && audio->waveIn != nullptr) {
                     waveInAddBuffer(audio->waveIn, &hdr, sizeof(WAVEHDR));
                 }
 
-                if (audio->inputMonitoring) {
+                if (audio->inputMonitoring && !audio->countingIn) {
                     EnterCriticalSection(&audio->audioStateLock);
                     audio->monitorInputPcm.insert(audio->monitorInputPcm.end(), samples, samples + sampleCount);
                     LeaveCriticalSection(&audio->audioStateLock);
@@ -350,6 +353,11 @@ bool DeviceStartMmeRecording(HWND hwnd, CoreState& core, AudioRuntimeState& audi
     audio.recordInputChannels = audio.waveInFormat.nChannels;
     audio.recordTrackIndex = armedTrack;
     audio.recordCaptureStartTickMs = GetTickCount64();
+
+    // Ensure project sample rate is set before computing preroll duration
+    if (core.project.projectSampleRate <= 0) {
+        core.project.projectSampleRate = static_cast<int>(audio.waveInFormat.nSamplesPerSec);
+    }
 
     const std::uint64_t timelineStartFrame = audio.playing
         ? DeviceGetRenderedPlaybackFrame(core, audio)
