@@ -1,4 +1,5 @@
 #include "ui/draw.h"
+#include "ui/layout.h"
 #include "io/wav_io.h"
 #include "io/project_io.h"
 #include "dsp/chain.h"
@@ -7,6 +8,7 @@
 #include "core/timeline_edit.h"
 #include "ai/automix_bridge.h"
 #include "audio/engine.h"
+#include "audio/engine_utils.h"
 #include "audio/device_mme.h"
 #include "audio/device_wasapi.h"
 #include "audio/device_common.h"
@@ -315,8 +317,8 @@ static LRESULT CALLBACK AudioSettingsDlgProc(HWND hwnd, UINT msg, WPARAM wParam,
 }
 
 static void ShowAudioSettingsDialog(HWND hwndParent, UiState& state) {
-    RefreshInputDevices(state);
-    RefreshOutputDevices(state);
+    DeviceRefreshInputDevices(state);
+    DeviceRefreshOutputDevices(state);
 
     AudioSettingsDlgData dlgData;
     dlgData.appState             = &state;
@@ -406,8 +408,8 @@ void ShowTopMenu(HWND hwnd, UiState& state, int menuKind, const RECT& menuRect) 
         AppendMenuW(menu, MF_STRING, kCmdViewZoomOut, L"Zoom Out");
         AppendMenuW(menu, MF_STRING, kCmdViewReset, L"Reset View");
     } else if (menuKind == 2) {
-        RefreshInputDevices(state);
-        RefreshOutputDevices(state);
+        DeviceRefreshInputDevices(state);
+        DeviceRefreshOutputDevices(state);
         HMENU inputSub = CreatePopupMenu();
         if (inputSub != nullptr) {
             for (size_t i = 0; i < state.inputDeviceNames.size(); ++i) {
@@ -499,12 +501,12 @@ void ShowTopMenu(HWND hwnd, UiState& state, int menuKind, const RECT& menuRect) 
     const UINT cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY, p.x, p.y, 0, hwnd, nullptr);
 
     if (cmd == kCmdFileOpen) {
-        DoOpen(hwnd, state);
+        IoDoOpen(hwnd, state);
         EnsureInsertDspStateStorage(state);
     } else if (cmd == kCmdFileSave) {
-        DoSave(hwnd, state);
+        IoDoSave(hwnd, state);
     } else if (cmd == kCmdFileSaveAs) {
-        DoSaveAs(hwnd, state);
+        IoDoSaveAs(hwnd, state);
     } else if (cmd == kCmdFileImportWav) {
         ImportWavFiles(hwnd, state);
         state.projectModified = true;
@@ -525,10 +527,10 @@ void ShowTopMenu(HWND hwnd, UiState& state, int menuKind, const RECT& menuRect) 
         state.viewStartBeat = 0.0f;
         state.viewBeatsVisible = 32.0f;
     } else if (cmd == kCmdAudioRefreshInputs) {
-        RefreshInputDevices(state);
-        RefreshOutputDevices(state);
+        DeviceRefreshInputDevices(state);
+        DeviceRefreshOutputDevices(state);
     } else if (cmd == kCmdAudioDiagnostics) {
-        const std::wstring diag = BuildAudioDiagnosticsReport(state);
+        const std::wstring diag = DeviceBuildAudioDiagnosticsReport(state);
         MessageBoxW(hwnd, diag.c_str(), L"Audio Diagnostics", MB_OK | MB_ICONINFORMATION);
     } else if (cmd == kCmdAudioSettings) {
         ShowAudioSettingsDialog(hwnd, state);
@@ -718,7 +720,7 @@ static bool ChooseAutoMasterSettings(HWND hwnd, float* outTargetLufs, float* out
 static bool ReplaceProjectWithSingleWav(UiState& state, const std::wstring& wavPath, std::wstring* outError) {
     LoadedAudio audio{};
     std::wstring error;
-    if (!LoadWavStereo(wavPath, &audio, &error)) {
+    if (!IoLoadWavStereo(wavPath, &audio, &error)) {
         if (outError) *outError = error;
         return false;
     }
@@ -741,7 +743,7 @@ static bool ReplaceProjectWithSingleWav(UiState& state, const std::wstring& wavP
     }
         state.project.audio.push_back(std::move(audio));
 
-        const float lengthBeats = BeatsFromFrames(state, state.project.audio.back().frames);
+        const float lengthBeats = TimelineBeatsFromFrames(state, state.project.audio.back().frames);
         state.project.clips.push_back(ClipItem{
             0,
             0,
@@ -911,7 +913,7 @@ bool DoMixReadiness(HWND hwnd, UiState& state) {
         LeaveCriticalSection(&state.audioStateLock);
         if (!ok || stereo.empty()) continue;
         const std::wstring wavPath = std::wstring(stemsDir) + L"\\" + kBusWavNames[b] + L".wav";
-        if (WriteWavPcm16Stereo(wavPath, stereo, sr)) ++exported;
+        if (IoWriteWavPcm16Stereo(wavPath, stereo, sr)) ++exported;
     }
 
     if (exported == 0) {
@@ -1077,7 +1079,7 @@ bool DoExportMix(HWND hwnd, UiState& state) {
         return false;
     }
 
-    if (!WriteWavPcm16Stereo(filePath, stereo, sampleRate)) {
+    if (!IoWriteWavPcm16Stereo(filePath, stereo, sampleRate)) {
         MessageBoxW(hwnd, L"Could not write WAV file. Check the output path.", L"Export Mix", MB_OK | MB_ICONERROR);
         return false;
     }
@@ -1136,7 +1138,7 @@ void ImportWavFiles(HWND hwnd, UiState& state) {
     for (const std::wstring& path : files) {
         LoadedAudio audio{};
         std::wstring error;
-        if (!LoadWavStereo(path, &audio, &error)) {
+        if (!IoLoadWavStereo(path, &audio, &error)) {
             skipped += std::filesystem::path(path).filename().wstring() + L": " + error + L"\n";
             continue;
         }
@@ -1160,7 +1162,7 @@ void ImportWavFiles(HWND hwnd, UiState& state) {
         }
         state.project.audio.push_back(std::move(audio));
 
-        const float lengthBeats = BeatsFromFrames(state, state.project.audio.back().frames);
+        const float lengthBeats = TimelineBeatsFromFrames(state, state.project.audio.back().frames);
         state.project.clips.push_back(ClipItem{
             trackIndex,
             audioIndex,
@@ -1193,9 +1195,9 @@ void ImportWavFiles(HWND hwnd, UiState& state) {
 
 void StopPlayback(UiState& state, bool rewind) {
     if (state.playingViaWasapi) {
-        StopWasapiAudio(state);
+        DeviceStopWasapiAudio(state);
     } else {
-        StopMmeAudio(state);
+        DeviceStopMmeAudio(state);
     }
 
     state.playing = false;
@@ -1212,9 +1214,9 @@ void StopRecording(UiState& state, bool commitTake) {
     }
 
     if (state.recordUsingWasapi) {
-        StopWasapiRecording(state);
+        DeviceStopWasapiRecording(state);
     } else {
-        StopMmeRecording(state);
+        DeviceStopMmeRecording(state);
     }
 
     if (commitTake && state.recordTrackIndex >= 0 && !state.recordedInputPcm.empty()) {
@@ -1286,8 +1288,8 @@ void StopRecording(UiState& state, bool commitTake) {
             const int audioIndex = static_cast<int>(state.project.audio.size());
             state.project.audio.push_back(std::move(take));
 
-            const float startBeat = BeatsFromFrames(state, state.recordStartFrame);
-            const float lengthBeats = BeatsFromFrames(state, frames);
+            const float startBeat = TimelineBeatsFromFrames(state, state.recordStartFrame);
+            const float lengthBeats = TimelineBeatsFromFrames(state, frames);
 
             if (state.recordTrackIndex >= 0 && state.recordTrackIndex < static_cast<int>(state.project.tracks.size())) {
                 state.project.clips.push_back(ClipItem{
@@ -1345,18 +1347,18 @@ bool StartRecording(HWND hwnd, UiState& state) {
     }
 
     if (IsWasapiBackend(state.audioBackend)) {
-        if (StartWasapiRecording(hwnd, state, armedTrack, wasPlaying)) {
+        if (DeviceStartWasapiRecording(hwnd, state, armedTrack, wasPlaying)) {
             return true;
         }
     }
 
-    return StartMmeRecording(hwnd, state, armedTrack, wasPlaying);
+    return DeviceStartMmeRecording(hwnd, state, armedTrack, wasPlaying);
 }
 
 bool StartPlayback(HWND hwnd, UiState& state) {
     state.lastPlaybackInitError.clear();
 
-    RefreshOutputDevices(state);
+    DeviceRefreshOutputDevices(state);
     if (state.outputDeviceIds.empty()) {
         MessageBoxW(hwnd, L"No audio output devices detected.", L"Playback error", MB_OK | MB_ICONERROR);
         return false;
@@ -1370,12 +1372,12 @@ bool StartPlayback(HWND hwnd, UiState& state) {
     StopPlayback(state, false);
 
     if (IsWasapiBackend(state.audioBackend)) {
-        if (StartWasapiAudio(hwnd, state)) {
+        if (DeviceStartWasapiAudio(hwnd, state)) {
             return true;
         }
     }
 
-    return StartMmeAudio(hwnd, state);
+    return DeviceStartMmeAudio(hwnd, state);
 }
 
 
@@ -1386,8 +1388,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_CREATE: {
         auto* initial = new UiState();
         initial->hwnd = hwnd;
-        RefreshInputDevices(*initial);
-        RefreshOutputDevices(*initial);
+        DeviceRefreshInputDevices(*initial);
+        DeviceRefreshOutputDevices(*initial);
         InitializeCriticalSection(&initial->audioStateLock);
         SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(initial));
         SetTimer(hwnd, kPlaybackTimerId, kPlaybackTimerMs, nullptr);
@@ -1428,8 +1430,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     case WM_TIMER:
         if (state != nullptr && wParam == kPlaybackTimerId && state->playing) {
-            const std::uint64_t absoluteFrame = GetRenderedPlaybackFrame(*state);
-            state->playheadBeat = BeatsFromFrames(*state, absoluteFrame);
+            const std::uint64_t absoluteFrame = DeviceGetRenderedPlaybackFrame(*state);
+            state->playheadBeat = TimelineBeatsFromFrames(*state, absoluteFrame);
 
             const float viewRight = state->viewStartBeat + state->viewBeatsVisible;
             if (state->playheadBeat > viewRight - 1.0f) {
@@ -1468,16 +1470,16 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         if (wParam == 'O' && (GetKeyState(VK_CONTROL) & 0x8000)) {
-            DoOpen(hwnd, *state);
+            IoDoOpen(hwnd, *state);
             EnsureInsertDspStateStorage(*state);
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
         if (wParam == 'S' && (GetKeyState(VK_CONTROL) & 0x8000)) {
             if (GetKeyState(VK_SHIFT) & 0x8000) {
-                DoSaveAs(hwnd, *state);
+                IoDoSaveAs(hwnd, *state);
             } else {
-                DoSave(hwnd, *state);
+                IoDoSave(hwnd, *state);
             }
             return 0;
         }
@@ -1684,11 +1686,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
             RECT client{};
             GetClientRect(hwnd, &client);
-            const LayoutRects layout = ComputeLayout(client);
+            const LayoutRects layout = UiLayoutComputeLayout(client);
 
             // ── Insert inspector click handling ──────────────────────────
             if (state->fxInspectorOpen && state->fxInspectorIndex >= 0) {
-                const RECT inspPanel = GetInspectorPanelRect(client, *state);
+                const RECT inspPanel = UiDrawGetInspectorPanelRect(client, *state);
                 if (!PtInRect(&inspPanel, pt)) {
                     // Click outside → close
                     state->fxInspectorOpen = false;
@@ -1724,7 +1726,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     const int slotCount = pSlots ? std::clamp(*pSlots, 0, kMaxInsertSlots) : 0;
 
                     // Close button
-                    RECT closeBtn{inspPanel.right - 24, inspPanel.top + 4, inspPanel.right - 4, inspPanel.top + kInspHeaderH - 4};
+                    RECT closeBtn{inspPanel.right - 24, inspPanel.top + 4, inspPanel.right - 4, inspPanel.top + kUiDrawInspHeaderH - 4};
                     if (PtInRect(&closeBtn, pt)) {
                         state->fxInspectorOpen = false;
                         InvalidateRect(hwnd, nullptr, FALSE);
@@ -1732,9 +1734,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     }
 
                     // ADD / REM buttons
-                    const int ctrlTop = inspPanel.top + kInspHeaderH;
-                    RECT addBtn{inspPanel.left + 6,  ctrlTop + 4, inspPanel.left + 66,  ctrlTop + kInspCtrlH - 4};
-                    RECT remBtn{inspPanel.left + 72, ctrlTop + 4, inspPanel.left + 132, ctrlTop + kInspCtrlH - 4};
+                    const int ctrlTop = inspPanel.top + kUiDrawInspHeaderH;
+                    RECT addBtn{inspPanel.left + 6,  ctrlTop + 4, inspPanel.left + 66,  ctrlTop + kUiDrawInspCtrlH - 4};
+                    RECT remBtn{inspPanel.left + 72, ctrlTop + 4, inspPanel.left + 132, ctrlTop + kUiDrawInspCtrlH - 4};
                     if (PtInRect(&addBtn, pt) && pSlots && slotCount < kMaxInsertSlots) {
                         EnterCriticalSection(&state->audioStateLock);
                         (*pSlots)++;
@@ -1757,10 +1759,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     }
 
                     // Per-slot rows
-                    const int slotsTop = ctrlTop + kInspCtrlH;
+                    const int slotsTop = ctrlTop + kUiDrawInspCtrlH;
                     for (int s = 0; s < slotCount; ++s) {
-                        const int rowTop = slotsTop + s * kInspSlotH;
-                        const int rowBot = rowTop + kInspSlotH;
+                        const int rowTop = slotsTop + s * kUiDrawInspSlotH;
+                        const int rowBot = rowTop + kUiDrawInspSlotH;
                         RECT typeBtn  {inspPanel.left + 26, rowTop + 2, inspPanel.left + 84, rowBot - 2};
                         RECT bypassBtn{inspPanel.left + 88, rowTop + 2, inspPanel.left + 130, rowBot - 2};
                         RECT arrowBtn {inspPanel.left + 134, rowTop + 2, inspPanel.left + 154, rowBot - 2};
@@ -1793,9 +1795,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     // Param knob clicks in the expanded strip
                     if (state->fxInspectorSelectedSlot >= 0 && state->fxInspectorSelectedSlot < slotCount && pParams && pEffects) {
                         const int selSlot = state->fxInspectorSelectedSlot;
-                        const int paramTop = slotsTop + slotCount * kInspSlotH;
+                        const int paramTop = slotsTop + slotCount * kUiDrawInspSlotH;
                         const int ky = paramTop + 16;
-                        const int kw = (kInspW - 12) / 4;
+                        const int kw = (kUiDrawInspW - 12) / 4;
                         const int fxT = std::clamp(static_cast<int>((*pEffects)[static_cast<size_t>(selSlot)]), 0, kInsertEffectTypeCount - 1);
 
                         // Build same knob list as in Draw
@@ -1815,7 +1817,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
                         for (int k = 0; k < knobCount; ++k) {
                             const int kx = inspPanel.left + 6 + k * kw;
-                            const RECT kRect{kx, ky, kx + kw - 2, ky + kInspParamH - 18};
+                            const RECT kRect{kx, ky, kx + kw - 2, ky + kUiDrawInspParamH - 18};
                             if (PtInRect(&kRect, pt)) {
                                 // Get current value for this paramId
                                 const InsertConfig& P = (*pParams)[static_cast<size_t>(selSlot)];
@@ -1848,8 +1850,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
             // ── Ruler click → set playhead ───────────────────────────────
             if (PtInRect(&layout.ruler, pt)) {
-                const float beat = std::max(0.0f, XToBeat(layout.ruler, *state, pt.x));
-                state->playheadBeat = SnapBeat(beat);
+                const float beat = std::max(0.0f, UiLayoutXToBeat(layout.ruler, *state, pt.x));
+                state->playheadBeat = UiLayoutSnapBeat(beat);
                 state->draggingPlayhead = true;
                 SetCapture(hwnd);
                 InvalidateRect(hwnd, nullptr, FALSE);
@@ -1857,7 +1859,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
 
             if (PtInRect(&layout.leftPanel, pt) && pt.y > layout.leftPanel.top + kRulerHeight && !state->project.tracks.empty()) {
-                const int trackIndex = TrackIndexFromY(layout.arrange, *state, pt.y);
+                const int trackIndex = UiLayoutTrackIndexFromY(layout.arrange, *state, pt.y);
                 if (trackIndex >= 0 && trackIndex < static_cast<int>(state->project.tracks.size())) {
                     state->selectedTrackIndex = trackIndex;
                     state->selectedClipIndex = -1;
@@ -1866,11 +1868,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     RECT panKnobRect{};
                     RECT panValRect{};
                     RECT fxRect{};
-                    GetTrackRoutingRects(layout.leftPanel, trackIndex, &busRect, &panKnobRect, &panValRect, &fxRect);
+                    UiLayoutGetTrackRoutingRects(layout.leftPanel, trackIndex, &busRect, &panKnobRect, &panValRect, &fxRect);
                     if (PtInRect(&busRect, pt)) {
                         EnterCriticalSection(&state->audioStateLock);
                         if (trackIndex < static_cast<int>(state->project.tracks.size())) {
-                            const int cur = TrackBusIndexAt(*state, trackIndex);
+                            const int cur = AutomationTrackBusIndexAt(*state, trackIndex);
                             state->project.tracks[static_cast<size_t>(trackIndex)].busIndex = (cur + 1) % kBusCount;
                             state->projectModified = true;
                             UpdateWindowTitle(hwnd, *state);
@@ -1912,7 +1914,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     RECT muteRect{};
                     RECT soloRect{};
                     RECT recRect{};
-                    GetTrackButtonRects(layout.leftPanel, trackIndex, &muteRect, &soloRect, &recRect);
+                    UiLayoutGetTrackButtonRects(layout.leftPanel, trackIndex, &muteRect, &soloRect, &recRect);
                     if (PtInRect(&muteRect, pt)) {
                         EnterCriticalSection(&state->audioStateLock);
                         if (trackIndex < static_cast<int>(state->project.tracks.size())) {
@@ -1943,7 +1945,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
                     RECT rail{};
                     RECT knob{};
-                    GetTrackFaderRects(layout.leftPanel, trackIndex, &rail, &knob);
+                    UiLayoutGetTrackFaderRects(layout.leftPanel, trackIndex, &rail, &knob);
                     RECT hitRect{rail.left - 12, rail.top, rail.right + 12, rail.bottom};
                     if (PtInRect(&hitRect, pt)) {
                         PushUndo(*state);
@@ -1951,7 +1953,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         state->dragFaderTrack = trackIndex;
                         state->dragFaderStartY = pt.y;
                         EnterCriticalSection(&state->audioStateLock);
-                        state->dragFaderStartDb = GainFromFaderY(rail, pt.y);
+                        state->dragFaderStartDb = UiLayoutGainFromFaderY(rail, pt.y);
                         state->project.tracks[static_cast<size_t>(trackIndex)].gainDb = state->dragFaderStartDb;
                         LeaveCriticalSection(&state->audioStateLock);
                         SetCapture(hwnd);
@@ -1960,7 +1962,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     }
                 }
 
-                const int busTop = BusPanelTop(layout.leftPanel, *state);
+                const int busTop = UiLayoutBusPanelTop(layout.leftPanel, *state);
                 if (pt.y >= busTop + 18) {
                     for (int b = 0; b < kBusCount; ++b) {
                         RECT rowRect{};
@@ -1970,7 +1972,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         RECT panKnobRect{};
                         RECT panValRect{};
                         RECT fxRect{};
-                        GetBusControlRects(layout.leftPanel, *state, b, &rowRect, &muteRect, &gainDownRect, &gainUpRect, &panKnobRect, &panValRect, &fxRect);
+                        UiLayoutGetBusControlRects(layout.leftPanel, *state, b, &rowRect, &muteRect, &gainDownRect, &gainUpRect, &panKnobRect, &panValRect, &fxRect);
                         if (!PtInRect(&rowRect, pt)) {
                             continue;
                         }
@@ -2015,7 +2017,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 state->selectedClipIndex = -1;
                 for (int i = static_cast<int>(state->project.clips.size()) - 1; i >= 0; --i) {
                     RECT r{};
-                    if (!ClipRectForDraw(layout.arrange, *state, state->project.clips[static_cast<size_t>(i)], &r)) {
+                    if (!UiLayoutClipRectForDraw(layout.arrange, *state, state->project.clips[static_cast<size_t>(i)], &r)) {
                         continue;
                     }
                     if (PtInRect(&r, pt)) {
@@ -2023,8 +2025,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         state->selectedTrackIndex = state->project.clips[static_cast<size_t>(i)].trackIndex;
 
                         constexpr int kEdgeThresh = 7;
-                        const int fullLeft  = BeatToX(layout.arrange, *state, state->project.clips[static_cast<size_t>(i)].startBeat);
-                        const int fullRight = BeatToX(layout.arrange, *state, state->project.clips[static_cast<size_t>(i)].startBeat + state->project.clips[static_cast<size_t>(i)].lengthBeats);
+                        const int fullLeft  = UiLayoutBeatToX(layout.arrange, *state, state->project.clips[static_cast<size_t>(i)].startBeat);
+                        const int fullRight = UiLayoutBeatToX(layout.arrange, *state, state->project.clips[static_cast<size_t>(i)].startBeat + state->project.clips[static_cast<size_t>(i)].lengthBeats);
                         const bool nearLeft  = (pt.x - fullLeft)  <= kEdgeThresh && (pt.x - fullLeft)  >= 0;
                         const bool nearRight = (fullRight - pt.x)  <= kEdgeThresh && (fullRight - pt.x) >= 0;
 
@@ -2043,7 +2045,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                             PushUndo(*state);
                             state->draggingClip = true;
                             state->dragClipIndex = i;
-                            state->dragOffsetBeats = XToBeat(layout.arrange, *state, pt.x) - state->project.clips[static_cast<size_t>(i)].startBeat;
+                            state->dragOffsetBeats = UiLayoutXToBeat(layout.arrange, *state, pt.x) - state->project.clips[static_cast<size_t>(i)].startBeat;
                             SetCapture(hwnd);
                         }
                         break;
@@ -2060,7 +2062,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         {
             RECT client{};
             GetClientRect(hwnd, &client);
-            const LayoutRects layout = ComputeLayout(client);
+            const LayoutRects layout = UiLayoutComputeLayout(client);
             const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
 
             if (!PtInRect(&layout.leftPanel, pt) && !PtInRect(&layout.arrange, pt)) {
@@ -2076,7 +2078,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
             int trackIndex = -1;
             if (pt.y > layout.leftPanel.top + kRulerHeight && !state->project.tracks.empty()) {
-                trackIndex = TrackIndexFromY(layout.arrange, *state, pt.y);
+                trackIndex = UiLayoutTrackIndexFromY(layout.arrange, *state, pt.y);
             }
             if (trackIndex >= 0 && trackIndex < static_cast<int>(state->project.tracks.size())) {
                 const bool armed = state->project.tracks[static_cast<size_t>(trackIndex)].recordArm;
@@ -2110,9 +2112,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (state->draggingPlayhead) {
             RECT client{};
             GetClientRect(hwnd, &client);
-            const LayoutRects layout = ComputeLayout(client);
-            const float beat = std::max(0.0f, XToBeat(layout.ruler, *state, GET_X_LPARAM(lParam)));
-            state->playheadBeat = SnapBeat(beat);
+            const LayoutRects layout = UiLayoutComputeLayout(client);
+            const float beat = std::max(0.0f, UiLayoutXToBeat(layout.ruler, *state, GET_X_LPARAM(lParam)));
+            state->playheadBeat = UiLayoutSnapBeat(beat);
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
@@ -2121,15 +2123,15 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             state->trimClipIndex < static_cast<int>(state->project.clips.size())) {
             RECT client{};
             GetClientRect(hwnd, &client);
-            const LayoutRects layout = ComputeLayout(client);
-            const float mouseBeat = SnapBeat(std::max(0.0f, XToBeat(layout.arrange, *state, GET_X_LPARAM(lParam))));
+            const LayoutRects layout = UiLayoutComputeLayout(client);
+            const float mouseBeat = UiLayoutSnapBeat(std::max(0.0f, UiLayoutXToBeat(layout.arrange, *state, GET_X_LPARAM(lParam))));
             ClipItem& clip = state->project.clips[static_cast<size_t>(state->trimClipIndex)];
             if (state->trimIsLeft) {
                 const float newStart = std::min(mouseBeat, state->trimOrigStart + state->trimOrigLen - 0.25f);
                 const float delta = newStart - state->trimOrigStart;
                 clip.startBeat   = std::max(0.0f, state->trimOrigStart + delta);
                 clip.lengthBeats = std::max(0.25f, state->trimOrigLen   - delta);
-                const float spb = SamplesPerBeat(*state);
+                const float spb = TimelineSamplesPerBeat(*state);
                 const std::int64_t offsetDelta = static_cast<std::int64_t>(delta * spb);
                 const std::int64_t newOff = static_cast<std::int64_t>(state->trimOrigSourceOffset) + offsetDelta;
                 clip.sourceOffsetFrames = static_cast<std::uint64_t>(std::max<std::int64_t>(0, newOff));
@@ -2144,10 +2146,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (state->draggingFader && state->dragFaderTrack >= 0) {
             RECT client{};
             GetClientRect(hwnd, &client);
-            const LayoutRects layout = ComputeLayout(client);
+            const LayoutRects layout = UiLayoutComputeLayout(client);
             RECT rail{};
             RECT knob{};
-            GetTrackFaderRects(layout.leftPanel, state->dragFaderTrack, &rail, &knob);
+            UiLayoutGetTrackFaderRects(layout.leftPanel, state->dragFaderTrack, &rail, &knob);
             const int mouseY = GET_Y_LPARAM(lParam);
             const bool shiftFine = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
             float newDb;
@@ -2156,7 +2158,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 const int dy = mouseY - state->dragFaderStartY;
                 newDb = std::clamp(state->dragFaderStartDb - dy * 0.05f, kFaderMinDb, kFaderMaxDb);
             } else {
-                newDb = GainFromFaderY(rail, mouseY);
+                newDb = UiLayoutGainFromFaderY(rail, mouseY);
             }
             EnterCriticalSection(&state->audioStateLock);
             state->project.tracks[static_cast<size_t>(state->dragFaderTrack)].gainDb = newDb;
@@ -2254,17 +2256,17 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         {
             RECT client{};
             GetClientRect(hwnd, &client);
-            const LayoutRects layout = ComputeLayout(client);
+            const LayoutRects layout = UiLayoutComputeLayout(client);
 
             const int mouseX = GET_X_LPARAM(lParam);
             const int mouseY = GET_Y_LPARAM(lParam);
-            float newStart = XToBeat(layout.arrange, *state, mouseX) - state->dragOffsetBeats;
-            newStart = std::max(0.0f, SnapBeat(newStart));
+            float newStart = UiLayoutXToBeat(layout.arrange, *state, mouseX) - state->dragOffsetBeats;
+            newStart = std::max(0.0f, UiLayoutSnapBeat(newStart));
 
             EnterCriticalSection(&state->audioStateLock);
             ClipItem& clip = state->project.clips[static_cast<size_t>(state->dragClipIndex)];
             clip.startBeat = newStart;
-            clip.trackIndex = TrackIndexFromY(layout.arrange, *state, mouseY);
+            clip.trackIndex = UiLayoutTrackIndexFromY(layout.arrange, *state, mouseY);
             LeaveCriticalSection(&state->audioStateLock);
 
             InvalidateRect(hwnd, nullptr, FALSE);
@@ -2329,11 +2331,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
                 RECT client{};
                 GetClientRect(hwnd, &client);
-                const LayoutRects layout = ComputeLayout(client);
+                const LayoutRects layout = UiLayoutComputeLayout(client);
                 POINT p{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
                 ScreenToClient(hwnd, &p);
                 const int focusX = std::clamp(p.x, layout.arrange.left, layout.arrange.right);
-                const float beatAtCursor = XToBeat(layout.arrange, *state, focusX);
+                const float beatAtCursor = UiLayoutXToBeat(layout.arrange, *state, focusX);
                 const float ratio = (beatAtCursor - state->viewStartBeat) / oldVisible;
                 state->viewStartBeat = beatAtCursor - ratio * state->viewBeatsVisible;
             } else {
@@ -2385,7 +2387,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         HBITMAP backBmp = CreateCompatibleBitmap(hdc, backWidth, backHeight);
         HGDIOBJ oldBmp = SelectObject(memDc, backBmp);
 
-        Fill(memDc, client, kPalette.windowBg);
+        {
+            HBRUSH bgBrush = CreateSolidBrush(kPalette.windowBg);
+            FillRect(memDc, &client, bgBrush);
+            DeleteObject(bgBrush);
+        }
 
         if (state != nullptr) {
             HFONT uiFont = CreateFontW(
@@ -2400,18 +2406,18 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             );
 
             HGDIOBJ oldFont = SelectObject(memDc, uiFont);
-            DrawTopBar(memDc, client, *state);
+            UiDrawTopBar(memDc, client, *state);
 
             SelectObject(memDc, smallFont);
 
-            const LayoutRects layout = ComputeLayout(client);
-            DrawLeftTrackPanel(memDc, layout.leftPanel, *state);
-            DrawRuler(memDc, layout.ruler, *state);
-            DrawArrangeLanes(memDc, layout.arrange, *state);
+            const LayoutRects layout = UiLayoutComputeLayout(client);
+            UiDrawLeftTrackPanel(memDc, layout.leftPanel, *state);
+            UiDrawRuler(memDc, layout.ruler, *state);
+            UiDrawArrangeLanes(memDc, layout.arrange, *state);
 
             // Inspector panel floats on top of everything
             if (state->fxInspectorOpen)
-                DrawInsertInspector(memDc, client, *state);
+                UiDrawInsertInspector(memDc, client, *state);
 
             SelectObject(memDc, oldFont);
             DeleteObject(uiFont);
@@ -2480,7 +2486,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdSho
         auto* initialState = reinterpret_cast<UiState*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
         if (initialState != nullptr) {
             EnterCriticalSection(&initialState->audioStateLock);
-            LoadProject(startupProjectPath, *initialState);
+            IoLoadProject(startupProjectPath, *initialState);
             LeaveCriticalSection(&initialState->audioStateLock);
             EnsureInsertDspStateStorage(*initialState);
             UpdateWindowTitle(hwnd, *initialState);

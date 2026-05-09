@@ -69,8 +69,8 @@ std::uint64_t ComputeProjectEndFrameLocked(const UiState& state) {
         if (clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(state.project.audio.size())) {
             continue;
         }
-        const std::uint64_t clipStartTL   = FramesFromBeats(state, clip.startBeat);
-        const std::uint64_t clipLenFrames = FramesFromBeats(state, clip.lengthBeats);
+        const std::uint64_t clipStartTL   = TimelineFramesFromBeats(state, clip.startBeat);
+        const std::uint64_t clipLenFrames = TimelineFramesFromBeats(state, clip.lengthBeats);
         maxFrame = std::max(maxFrame, clipStartTL + clipLenFrames);
     }
     return maxFrame;

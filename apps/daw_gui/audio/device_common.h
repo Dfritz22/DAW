@@ -1,23 +1,28 @@
 #pragma once
-#include "core/state.h"
+
+#include <cstdint>
+#include <string>
+
+enum class AudioBackend;
+struct UiState;
 
 // ── Backend-agnostic audio device utilities ───────────────────────────────────
 // This module owns all logic that is shared across MME and WASAPI backends.
 // It must not include any UI headers (ui/layout.h, draw.h, etc.).
 
 // ── Backend labels ────────────────────────────────────────────────────────────
-const wchar_t*  AudioBackendLabel(AudioBackend backend);
-std::string     AudioBackendToJson(AudioBackend backend);
-AudioBackend    AudioBackendFromJson(const std::string& value);
+const wchar_t*  DeviceAudioBackendLabel(AudioBackend backend);
+std::string     DeviceAudioBackendToJson(AudioBackend backend);
+AudioBackend    DeviceAudioBackendFromJson(const std::string& value);
 
 // ── Device enumeration ────────────────────────────────────────────────────────
-void RefreshInputDevices(UiState& state);
-void RefreshOutputDevices(UiState& state);
+void DeviceRefreshInputDevices(UiState& state);
+void DeviceRefreshOutputDevices(UiState& state);
 
 // ── Diagnostics ───────────────────────────────────────────────────────────────
-std::wstring BuildAudioDiagnosticsReport(const UiState& state);
+std::wstring DeviceBuildAudioDiagnosticsReport(const UiState& state);
 
 // ── Playback cursor ───────────────────────────────────────────────────────────
 // Returns the current absolute project-frame position of the playhead,
 // taking into account both WASAPI and MME waveOut timing paths.
-std::uint64_t GetRenderedPlaybackFrame(const UiState& state);
+std::uint64_t DeviceGetRenderedPlaybackFrame(const UiState& state);

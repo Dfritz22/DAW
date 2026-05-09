@@ -1,11 +1,12 @@
 #include "ui/layout.h"
+#include "core/state.h"
 #include "core/automation.h"
 #include "core/automation_types.h"
 #include "core/timeline.h"
 
 // ── Left panel / track row rects ─────────────────────────────────────────────
 
-void GetTrackFaderRects(const RECT& leftPanel, int trackIndex, RECT* rail, RECT* knob) {
+void UiLayoutGetTrackFaderRects(const RECT& leftPanel, int trackIndex, RECT* rail, RECT* knob) {
     const int rowTop = leftPanel.top + kRulerHeight + trackIndex * kTrackRowHeight;
     const int rowBottom = rowTop + kTrackRowHeight;
 
@@ -19,7 +20,7 @@ void GetTrackFaderRects(const RECT& leftPanel, int trackIndex, RECT* rail, RECT*
                  railTop + kFaderKnobHeight};
 }
 
-void GetTrackButtonRects(const RECT& leftPanel, int trackIndex, RECT* muteRect, RECT* soloRect, RECT* recRect) {
+void UiLayoutGetTrackButtonRects(const RECT& leftPanel, int trackIndex, RECT* muteRect, RECT* soloRect, RECT* recRect) {
     const int rowTop = leftPanel.top + kRulerHeight + trackIndex * kTrackRowHeight;
     const int buttonTop = rowTop + 34;
     *muteRect = RECT{leftPanel.left + 10, buttonTop, leftPanel.left + 28, buttonTop + 18};
@@ -27,7 +28,7 @@ void GetTrackButtonRects(const RECT& leftPanel, int trackIndex, RECT* muteRect, 
     *recRect = RECT{leftPanel.left + 50, buttonTop, leftPanel.left + 68, buttonTop + 18};
 }
 
-void GetTrackRoutingRects(const RECT& leftPanel, int trackIndex, RECT* busRect, RECT* panKnobRect, RECT* panValRect, RECT* fxRect) {
+void UiLayoutGetTrackRoutingRects(const RECT& leftPanel, int trackIndex, RECT* busRect, RECT* panKnobRect, RECT* panValRect, RECT* fxRect) {
     const int rowTop = leftPanel.top + kRulerHeight + trackIndex * kTrackRowHeight;
     *busRect = RECT{leftPanel.left + 74, rowTop + 9, leftPanel.left + 156, rowTop + 27};
     *panKnobRect = RECT{leftPanel.left + 85, rowTop + 29, leftPanel.left + 113, rowTop + 57};
@@ -35,15 +36,15 @@ void GetTrackRoutingRects(const RECT& leftPanel, int trackIndex, RECT* busRect, 
     *fxRect = RECT{leftPanel.left + 154, rowTop + 35, leftPanel.left + 190, rowTop + 53};
 }
 
-int BusPanelTop(const RECT& leftPanel, const UiState& state) {
+int UiLayoutBusPanelTop(const RECT& leftPanel, const UiState& state) {
     return leftPanel.top + kRulerHeight + static_cast<int>(state.project.tracks.size()) * kTrackRowHeight + 6;
 }
 
-void GetBusControlRects(const RECT& leftPanel, const UiState& state, int busIndex,
+void UiLayoutGetBusControlRects(const RECT& leftPanel, const UiState& state, int busIndex,
                         RECT* rowRect, RECT* muteRect, RECT* gainDownRect, RECT* gainUpRect,
                         RECT* panKnobRect, RECT* panValRect, RECT* fxRect) {
     constexpr int kBusRowHeight = 28;
-    const int top = BusPanelTop(leftPanel, state) + 18 + busIndex * kBusRowHeight;
+    const int top = UiLayoutBusPanelTop(leftPanel, state) + 18 + busIndex * kBusRowHeight;
     *rowRect = RECT{leftPanel.left + 8, top, leftPanel.right - 8, top + kBusRowHeight - 2};
     *muteRect = RECT{leftPanel.left + 98, top + 4, leftPanel.left + 116, top + 22};
     *gainDownRect = RECT{leftPanel.left + 120, top + 4, leftPanel.left + 136, top + 22};
@@ -55,14 +56,14 @@ void GetBusControlRects(const RECT& leftPanel, const UiState& state, int busInde
 
 // ── Track audibility / fader math ────────────────────────────────────────────
 
-int FaderKnobTopFromGain(const RECT& rail, float gainDb) {
+int UiLayoutFaderKnobTopFromGain(const RECT& rail, float gainDb) {
     const float t = (std::clamp(gainDb, kFaderMinDb, kFaderMaxDb) - kFaderMinDb) / (kFaderMaxDb - kFaderMinDb);
     const int railHeight = static_cast<int>(rail.bottom - rail.top);
     const int travel = std::max(1, railHeight - kFaderKnobHeight);
     return rail.bottom - kFaderKnobHeight - static_cast<int>(t * static_cast<float>(travel));
 }
 
-float GainFromFaderY(const RECT& rail, int mouseY) {
+float UiLayoutGainFromFaderY(const RECT& rail, int mouseY) {
     const int railTop = static_cast<int>(rail.top);
     const int railHeight = static_cast<int>(rail.bottom - rail.top);
     const int travel = std::max(1, railHeight - kFaderKnobHeight);
@@ -73,7 +74,7 @@ float GainFromFaderY(const RECT& rail, int mouseY) {
 
 // ── Window layout ─────────────────────────────────────────────────────────────
 
-LayoutRects ComputeLayout(const RECT& client) {
+LayoutRects UiLayoutComputeLayout(const RECT& client) {
     LayoutRects l{};
     l.topBar = RECT{client.left, client.top, client.right, client.top + kTopBarHeight};
     l.leftPanel = RECT{client.left, l.topBar.bottom, client.left + kLeftPanelWidth, client.bottom};
@@ -84,24 +85,24 @@ LayoutRects ComputeLayout(const RECT& client) {
 
 // ── Beat / coordinate math ────────────────────────────────────────────────────
 
-float SnapBeat(float beat) {
+float UiLayoutSnapBeat(float beat) {
     const float grid = 0.25f;
     return std::round(beat / grid) * grid;
 }
 
-float XToBeat(const RECT& arrange, const UiState& state, int x) {
+float UiLayoutXToBeat(const RECT& arrange, const UiState& state, int x) {
     const int width = std::max(1, static_cast<int>(arrange.right - arrange.left));
     const float t = static_cast<float>(x - arrange.left) / static_cast<float>(width);
     return state.viewStartBeat + t * state.viewBeatsVisible;
 }
 
-int BeatToX(const RECT& area, const UiState& state, float beat) {
+int UiLayoutBeatToX(const RECT& area, const UiState& state, float beat) {
     const int width = std::max(1, static_cast<int>(area.right - area.left));
     const float t = (beat - state.viewStartBeat) / state.viewBeatsVisible;
     return area.left + static_cast<int>(t * static_cast<float>(width));
 }
 
-int TrackIndexFromY(const RECT& arrange, const UiState& state, int y) {
+int UiLayoutTrackIndexFromY(const RECT& arrange, const UiState& state, int y) {
     if (state.project.tracks.empty()) {
         return 0;
     }
@@ -112,11 +113,11 @@ int TrackIndexFromY(const RECT& arrange, const UiState& state, int y) {
     return std::clamp(idx, 0, static_cast<int>(state.project.tracks.size()) - 1);
 }
 
-bool ClipRectForDraw(const RECT& arrange, const UiState& state, const ClipItem& clip, RECT* outRect) {
+bool UiLayoutClipRectForDraw(const RECT& arrange, const UiState& state, const ClipItem& clip, RECT* outRect) {
     const int rowTop = arrange.top + clip.trackIndex * kTrackRowHeight + kClipInsetY;
     const int rowBottom = rowTop + (kTrackRowHeight - 2 * kClipInsetY);
-    const int left = BeatToX(arrange, state, clip.startBeat);
-    const int right = BeatToX(arrange, state, clip.startBeat + clip.lengthBeats);
+    const int left = UiLayoutBeatToX(arrange, state, clip.startBeat);
+    const int right = UiLayoutBeatToX(arrange, state, clip.startBeat + clip.lengthBeats);
 
     RECT r{left, rowTop, right, rowBottom};
     if (r.right < arrange.left || r.left > arrange.right || r.bottom < arrange.top || r.top > arrange.bottom) {

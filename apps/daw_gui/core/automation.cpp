@@ -42,7 +42,7 @@ static int EvaluateBusCurveAtBeat(const TrackAutomationCurve& curve, float beat,
 
 } // namespace
 
-float TrackGainDbAt(const UiState& state, int trackIndex, float beat) {
+float AutomationTrackGainDbAt(const UiState& state, int trackIndex, float beat) {
     if (trackIndex < 0 || trackIndex >= static_cast<int>(state.project.tracks.size())) {
         return 0.0f;
     }
@@ -55,7 +55,7 @@ float TrackGainDbAt(const UiState& state, int trackIndex, float beat) {
     return EvaluateCurveAtBeat(state.trackGainCurves[static_cast<size_t>(trackIndex)], beat, defaultValue);
 }
 
-float TrackPanAt(const UiState& state, int trackIndex, float beat) {
+float AutomationTrackPanAt(const UiState& state, int trackIndex, float beat) {
     if (trackIndex < 0 || trackIndex >= static_cast<int>(state.project.tracks.size())) {
         return 0.0f;
     }
@@ -71,7 +71,7 @@ float TrackPanAt(const UiState& state, int trackIndex, float beat) {
         1.0f);
 }
 
-int TrackBusIndexAt(const UiState& state, int trackIndex, float beat) {
+int AutomationTrackBusIndexAt(const UiState& state, int trackIndex, float beat) {
     if (trackIndex < 0 || trackIndex >= static_cast<int>(state.project.tracks.size())) {
         return 1;  // default to Music bus
     }

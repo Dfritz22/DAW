@@ -360,7 +360,7 @@ static void DspApplyLimiter(std::vector<float>& buf, const InsertConfig& config,
 }
 
 // Apply a full insert chain to an interleaved stereo buffer.
-void ApplyInsertChain(
+void DspApplyInsertChain(
     std::vector<float>& buf, float sampleRate,
     const InsertEffectArray& effects,
     const InsertBypassArray& bypass,

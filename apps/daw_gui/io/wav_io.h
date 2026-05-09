@@ -1,10 +1,11 @@
 #pragma once
 #include <string>
 #include <vector>
-#include "core/state.h"
+
+struct LoadedAudio;
 
 // WAV file I/O helpers.
 // LoadedAudio is defined in state.h.
 
-bool LoadWavStereo(const std::wstring& path, LoadedAudio* out, std::wstring* error);
-bool WriteWavPcm16Stereo(const std::wstring& path, const std::vector<float>& stereo, int sampleRate);
+bool IoLoadWavStereo(const std::wstring& path, LoadedAudio* out, std::wstring* error);
+bool IoWriteWavPcm16Stereo(const std::wstring& path, const std::vector<float>& stereo, int sampleRate);

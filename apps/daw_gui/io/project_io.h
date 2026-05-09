@@ -2,8 +2,8 @@
 
 #include "core/state.h"
 
-bool SaveProject(const std::wstring& path, UiState& state);
-bool LoadProject(const std::wstring& path, UiState& state);
-bool DoSaveAs(HWND hwnd, UiState& state);
-bool DoSave(HWND hwnd, UiState& state);
-bool DoOpen(HWND hwnd, UiState& state);
+bool IoSaveProject(const std::wstring& path, UiState& state);
+bool IoLoadProject(const std::wstring& path, UiState& state);
+bool IoDoSaveAs(HWND hwnd, UiState& state);
+bool IoDoSave(HWND hwnd, UiState& state);
+bool IoDoOpen(HWND hwnd, UiState& state);

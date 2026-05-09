@@ -1,10 +1,11 @@
 #include "device_common.h"
+#include "core/state.h"
 #include "core/automation.h"
 #include "core/timeline.h"
 
 // ── Backend labels ────────────────────────────────────────────────────────────
 
-const wchar_t* AudioBackendLabel(AudioBackend backend) {
+const wchar_t* DeviceAudioBackendLabel(AudioBackend backend) {
     switch (backend) {
     case AudioBackend::MME:             return L"MME";
     case AudioBackend::WasapiShared:    return L"WASAPI Shared";
@@ -14,7 +15,7 @@ const wchar_t* AudioBackendLabel(AudioBackend backend) {
     }
 }
 
-std::string AudioBackendToJson(AudioBackend backend) {
+std::string DeviceAudioBackendToJson(AudioBackend backend) {
     switch (backend) {
     case AudioBackend::MME:             return "mme";
     case AudioBackend::WasapiShared:    return "wasapi_shared";
@@ -24,7 +25,7 @@ std::string AudioBackendToJson(AudioBackend backend) {
     }
 }
 
-AudioBackend AudioBackendFromJson(const std::string& value) {
+AudioBackend DeviceAudioBackendFromJson(const std::string& value) {
     if (value == "mme")              return AudioBackend::MME;
     if (value == "wasapi_exclusive") return AudioBackend::WasapiExclusive;
     if (value == "asio")             return AudioBackend::Asio;
@@ -33,7 +34,7 @@ AudioBackend AudioBackendFromJson(const std::string& value) {
 
 // ── Device enumeration ────────────────────────────────────────────────────────
 
-void RefreshInputDevices(UiState& state) {
+void DeviceRefreshInputDevices(UiState& state) {
     state.inputDeviceIds.clear();
     state.inputDeviceNames.clear();
 
@@ -81,7 +82,7 @@ void RefreshInputDevices(UiState& state) {
     }
 }
 
-void RefreshOutputDevices(UiState& state) {
+void DeviceRefreshOutputDevices(UiState& state) {
     state.outputDeviceIds.clear();
     state.outputDeviceNames.clear();
 
@@ -131,7 +132,7 @@ void RefreshOutputDevices(UiState& state) {
 
 // ── Diagnostics ───────────────────────────────────────────────────────────────
 
-std::wstring BuildAudioDiagnosticsReport(const UiState& state) {
+std::wstring DeviceBuildAudioDiagnosticsReport(const UiState& state) {
     auto queryInputFmt = [](UINT dev, int sr, int ch) {
         WAVEFORMATEX fmt{};
         fmt.wFormatTag = WAVE_FORMAT_PCM;
@@ -162,7 +163,7 @@ std::wstring BuildAudioDiagnosticsReport(const UiState& state) {
 
     std::wstringstream ss;
     ss << L"Project SR: " << state.project.projectSampleRate << L"\n";
-    ss << L"Audio Backend: " << AudioBackendLabel(state.audioBackend)
+    ss << L"Audio Backend: " << DeviceAudioBackendLabel(state.audioBackend)
        << (state.playingViaWasapi ? L" (output: WASAPI)" : L" (output: MME)") << L"\n";
     ss << L"Preferred SR: " << state.preferredSampleRate << L"\n";
     ss << L"Preferred Buffer: " << state.preferredBufferFrames << L" frames\n";
@@ -212,7 +213,7 @@ std::wstring BuildAudioDiagnosticsReport(const UiState& state) {
 
 // ── Playback cursor ───────────────────────────────────────────────────────────
 
-std::uint64_t GetRenderedPlaybackFrame(const UiState& state) {
+std::uint64_t DeviceGetRenderedPlaybackFrame(const UiState& state) {
     auto clockFrame = [&state]() -> std::uint64_t {
         if (state.project.projectSampleRate <= 0 || state.playbackStartTick == 0) {
             return 0;
@@ -221,7 +222,7 @@ std::uint64_t GetRenderedPlaybackFrame(const UiState& state) {
         return static_cast<std::uint64_t>((elapsedMs * static_cast<ULONGLONG>(state.project.projectSampleRate)) / 1000ULL);
     };
 
-    const std::uint64_t startFrame = FramesFromBeats(state, std::max(0.0f, state.playbackStartBeat));
+    const std::uint64_t startFrame = TimelineFramesFromBeats(state, std::max(0.0f, state.playbackStartBeat));
 
     // Return absolute project frames. Audio generation may queue ahead, so clamp to elapsed transport time.
     if (state.playingViaWasapi || state.waveOut == nullptr || state.project.projectSampleRate <= 0) {

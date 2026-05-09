@@ -1,6 +1,11 @@
 #include "ui/draw.h"
+#include "core/automation.h"
+#include "core/timeline.h"
+#include "ui/layout.h"
 
-const wchar_t* InsertEffectName(int effectType) {
+namespace {
+
+static const wchar_t* InsertEffectName(int effectType) {
     static const wchar_t* kNames[kInsertEffectTypeCount] = {
         L"EQ", L"CMP", L"SAT", L"DLY", L"REV", L"GATE", L"DEE", L"LIM"
     };
@@ -10,13 +15,13 @@ const wchar_t* InsertEffectName(int effectType) {
     return kNames[effectType];
 }
 
-void Fill(HDC hdc, const RECT& rect, COLORREF color) {
+static void Fill(HDC hdc, const RECT& rect, COLORREF color) {
     HBRUSH brush = CreateSolidBrush(color);
     FillRect(hdc, &rect, brush);
     DeleteObject(brush);
 }
 
-void StrokeRect(HDC hdc, const RECT& rect, COLORREF color) {
+static void StrokeRect(HDC hdc, const RECT& rect, COLORREF color) {
     HPEN pen = CreatePen(PS_SOLID, 1, color);
     HGDIOBJ oldPen = SelectObject(hdc, pen);
     HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
@@ -26,7 +31,7 @@ void StrokeRect(HDC hdc, const RECT& rect, COLORREF color) {
     DeleteObject(pen);
 }
 
-void DrawButton(HDC hdc, const RECT& rect, const wchar_t* label, bool active) {
+static void DrawButton(HDC hdc, const RECT& rect, const wchar_t* label, bool active) {
     Fill(hdc, rect, active ? kPalette.transportBtnActive : kPalette.transportBtn);
     StrokeRect(hdc, rect, RGB(80, 86, 95));
 
@@ -35,7 +40,7 @@ void DrawButton(HDC hdc, const RECT& rect, const wchar_t* label, bool active) {
     DrawTextW(hdc, label, -1, const_cast<RECT*>(&rect), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 }
 
-void DrawPanKnob(HDC hdc, const RECT& rect, float pan, bool active) {
+static void DrawPanKnob(HDC hdc, const RECT& rect, float pan, bool active) {
     const int w = rect.right - rect.left;
     const int h = rect.bottom - rect.top;
     const int radius = std::max(2, std::min(w, h) / 2 - 2);
@@ -76,7 +81,7 @@ void DrawPanKnob(HDC hdc, const RECT& rect, float pan, bool active) {
     DeleteObject(ringPen);
 }
 
-void DrawMenuTab(HDC hdc, const RECT& rect, const wchar_t* label) {
+static void DrawMenuTab(HDC hdc, const RECT& rect, const wchar_t* label) {
     Fill(hdc, rect, RGB(39, 44, 50));
     StrokeRect(hdc, rect, RGB(70, 76, 86));
     SetBkMode(hdc, TRANSPARENT);
@@ -84,7 +89,9 @@ void DrawMenuTab(HDC hdc, const RECT& rect, const wchar_t* label) {
     DrawTextW(hdc, label, -1, const_cast<RECT*>(&rect), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 }
 
-void DrawTopBar(HDC hdc, const RECT& client, UiState& state) {
+} // namespace
+
+void UiDrawTopBar(HDC hdc, const RECT& client, UiState& state) {
     RECT top{client.left, client.top, client.right, client.top + kTopBarHeight};
     Fill(hdc, top, kPalette.topBar);
     RECT edge{client.left, top.bottom - 1, client.right, top.bottom};
@@ -145,7 +152,7 @@ void DrawTopBar(HDC hdc, const RECT& client, UiState& state) {
 
 // ── Insert-chain inspector panel ─────────────────────────────────────────────
 // Returns the outer panel rect in client coordinates (declared in draw.h).
-RECT GetInspectorPanelRect(const RECT& client, const UiState& state) {
+RECT UiDrawGetInspectorPanelRect(const RECT& client, const UiState& state) {
     const int idx = state.fxInspectorIndex;
     int slotCount = 0;
     if (state.fxInspectorIsTrack) {
@@ -157,17 +164,17 @@ RECT GetInspectorPanelRect(const RECT& client, const UiState& state) {
     }
     const bool hasSelected = (state.fxInspectorSelectedSlot >= 0 && state.fxInspectorSelectedSlot < slotCount);
     RECT r{};
-    r.left   = client.left + kInspPadX;
+    r.left   = client.left + kUiDrawInspPadX;
     r.top    = client.top  + kTopBarHeight + kRulerHeight + 6;
-    r.right  = r.left + kInspW;
-    r.bottom = r.top + kInspHeaderH + kInspCtrlH + slotCount * kInspSlotH + (hasSelected ? kInspParamH : 0) + 6;
+    r.right  = r.left + kUiDrawInspW;
+    r.bottom = r.top + kUiDrawInspHeaderH + kUiDrawInspCtrlH + slotCount * kUiDrawInspSlotH + (hasSelected ? kUiDrawInspParamH : 0) + 6;
     return r;
 }
 
-void DrawInsertInspector(HDC hdc, const RECT& client, const UiState& state) {
+void UiDrawInsertInspector(HDC hdc, const RECT& client, const UiState& state) {
     if (!state.fxInspectorOpen || state.fxInspectorIndex < 0) return;
 
-    const RECT panel = GetInspectorPanelRect(client, state);
+    const RECT panel = UiDrawGetInspectorPanelRect(client, state);
 
     // Shadow / outer border
     RECT shadow{panel.left + 2, panel.top + 2, panel.right + 2, panel.bottom + 2};
@@ -178,7 +185,7 @@ void DrawInsertInspector(HDC hdc, const RECT& client, const UiState& state) {
     SetBkMode(hdc, TRANSPARENT);
 
     // ── Header row ──────────────────────────────────────────────────────────
-    RECT headerRow{panel.left, panel.top, panel.right, panel.top + kInspHeaderH};
+    RECT headerRow{panel.left, panel.top, panel.right, panel.top + kUiDrawInspHeaderH};
     Fill(hdc, headerRow, RGB(44, 48, 56));
 
     const int idx = state.fxInspectorIndex;
@@ -197,9 +204,9 @@ void DrawInsertInspector(HDC hdc, const RECT& client, const UiState& state) {
     DrawTextW(hdc, L"X", -1, &closeBtn, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
     // ── Controls row: [+ ADD] [- REM] ───────────────────────────────────────
-    const int ctrlTop = panel.top + kInspHeaderH;
-    RECT addBtn  {panel.left + 6,  ctrlTop + 4, panel.left + 66,  ctrlTop + kInspCtrlH - 4};
-    RECT remBtn  {panel.left + 72, ctrlTop + 4, panel.left + 132, ctrlTop + kInspCtrlH - 4};
+    const int ctrlTop = panel.top + kUiDrawInspHeaderH;
+    RECT addBtn  {panel.left + 6,  ctrlTop + 4, panel.left + 66,  ctrlTop + kUiDrawInspCtrlH - 4};
+    RECT remBtn  {panel.left + 72, ctrlTop + 4, panel.left + 132, ctrlTop + kUiDrawInspCtrlH - 4};
 
     int slotCount = 0;
     if (state.fxInspectorIsTrack) {
@@ -224,15 +231,15 @@ void DrawInsertInspector(HDC hdc, const RECT& client, const UiState& state) {
     // Slot count label
     wchar_t countLabel[32] = {};
     swprintf_s(countLabel, L"%d / %d slots", slotCount, kMaxInsertSlots);
-    RECT countRect{panel.left + 138, ctrlTop, panel.right - 6, ctrlTop + kInspCtrlH};
+    RECT countRect{panel.left + 138, ctrlTop, panel.right - 6, ctrlTop + kUiDrawInspCtrlH};
     SetTextColor(hdc, RGB(120, 126, 136));
     DrawTextW(hdc, countLabel, -1, &countRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
     // ── Slot rows ────────────────────────────────────────────────────────────
-    const int slotsTop = ctrlTop + kInspCtrlH;
+    const int slotsTop = ctrlTop + kUiDrawInspCtrlH;
     for (int s = 0; s < slotCount; ++s) {
-        const int rowTop = slotsTop + s * kInspSlotH;
-        const int rowBot = rowTop + kInspSlotH;
+        const int rowTop = slotsTop + s * kUiDrawInspSlotH;
+        const int rowBot = rowTop + kUiDrawInspSlotH;
 
         // Alternate row bg
         Fill(hdc, RECT{panel.left + 1, rowTop, panel.right - 1, rowBot},
@@ -306,8 +313,8 @@ void DrawInsertInspector(HDC hdc, const RECT& client, const UiState& state) {
         }
 
         // Position param strip after all slots
-        const int paramTop = slotsTop + slotCount * kInspSlotH;
-        const int paramBot = paramTop + kInspParamH;
+        const int paramTop = slotsTop + slotCount * kUiDrawInspSlotH;
+        const int paramBot = paramTop + kUiDrawInspParamH;
         Fill(hdc, RECT{panel.left + 1, paramTop, panel.right - 1, paramBot}, RGB(24, 28, 36));
         StrokeRect(hdc, RECT{panel.left + 1, paramTop, panel.right - 1, paramBot}, RGB(80, 120, 180));
 
@@ -381,11 +388,11 @@ void DrawInsertInspector(HDC hdc, const RECT& client, const UiState& state) {
             }
 
             // Draw knobs evenly spaced
-            const int kw = (kInspW - 12) / 4;
+            const int kw = (kUiDrawInspW - 12) / 4;
             for (int k = 0; k < knobCount; ++k) {
                 const int kx = panel.left + 6 + k * kw;
                 const int ky = paramTop + 16;
-                const RECT kRect{kx, ky, kx + kw - 2, ky + kInspParamH - 18};
+                const RECT kRect{kx, ky, kx + kw - 2, ky + kUiDrawInspParamH - 18};
 
                 // Knob background
                 Fill(hdc, kRect, RGB(36, 42, 52));
@@ -414,7 +421,7 @@ void DrawInsertInspector(HDC hdc, const RECT& client, const UiState& state) {
     Fill(hdc, bottomLine, RGB(90, 96, 108));
 }
 
-void DrawLeftTrackPanel(HDC hdc, const RECT& rect, const UiState& state) {
+void UiDrawLeftTrackPanel(HDC hdc, const RECT& rect, const UiState& state) {
     Fill(hdc, rect, kPalette.leftPanel);
 
     RECT header{rect.left, rect.top, rect.right, rect.top + kRulerHeight};
@@ -447,15 +454,15 @@ void DrawLeftTrackPanel(HDC hdc, const RECT& rect, const UiState& state) {
         RECT panKnobRect{};
         RECT panValRect{};
         RECT fxRect{};
-        GetTrackRoutingRects(rect, static_cast<int>(i), &busRect, &panKnobRect, &panValRect, &fxRect);
+        UiLayoutGetTrackRoutingRects(rect, static_cast<int>(i), &busRect, &panKnobRect, &panValRect, &fxRect);
 
         Fill(hdc, busRect, RGB(49, 54, 61));
         StrokeRect(hdc, busRect, RGB(82, 88, 97));
         SetTextColor(hdc, RGB(220, 224, 230));
-        DrawTextW(hdc, BusName(TrackBusIndexAt(state, static_cast<int>(i))), -1, &busRect,
+        DrawTextW(hdc, BusName(AutomationTrackBusIndexAt(state, static_cast<int>(i))), -1, &busRect,
                   DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
-        const float trPan = TrackPanAt(state, static_cast<int>(i));
+        const float trPan = AutomationTrackPanAt(state, static_cast<int>(i));
         DrawPanKnob(hdc, panKnobRect, trPan, static_cast<int>(i) == state.selectedTrackIndex);
         Fill(hdc, panValRect, RGB(40, 44, 49));
         StrokeRect(hdc, panValRect, RGB(82, 88, 97));
@@ -491,7 +498,7 @@ void DrawLeftTrackPanel(HDC hdc, const RECT& rect, const UiState& state) {
         RECT muteRect{};
         RECT soloRect{};
         RECT recRect{};
-        GetTrackButtonRects(rect, static_cast<int>(i), &muteRect, &soloRect, &recRect);
+        UiLayoutGetTrackButtonRects(rect, static_cast<int>(i), &muteRect, &soloRect, &recRect);
 
         const bool muted = i < state.project.tracks.size() && state.project.tracks[i].mute;
         const bool soloed = i < state.project.tracks.size() && state.project.tracks[i].solo;
@@ -509,7 +516,7 @@ void DrawLeftTrackPanel(HDC hdc, const RECT& rect, const UiState& state) {
         DrawTextW(hdc, L"S", -1, &soloRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         DrawTextW(hdc, L"R", -1, &recRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-        const float gainDb = TrackGainDbAt(state, static_cast<int>(i));
+        const float gainDb = AutomationTrackGainDbAt(state, static_cast<int>(i));
         wchar_t dbText[32] = {};
         swprintf_s(dbText, L"%+.1f dB", gainDb);
         RECT gainRect{row.right - 106, row.top + 34, row.right - 56, row.bottom - 12};
@@ -518,11 +525,11 @@ void DrawLeftTrackPanel(HDC hdc, const RECT& rect, const UiState& state) {
 
         RECT rail{};
         RECT knob{};
-        GetTrackFaderRects(rect, static_cast<int>(i), &rail, &knob);
+        UiLayoutGetTrackFaderRects(rect, static_cast<int>(i), &rail, &knob);
         Fill(hdc, rail, RGB(26, 29, 33));
         StrokeRect(hdc, rail, RGB(60, 64, 72));
 
-        const int knobTop = FaderKnobTopFromGain(rail, gainDb);
+        const int knobTop = UiLayoutFaderKnobTopFromGain(rail, gainDb);
         knob.top = knobTop;
         knob.bottom = knobTop + kFaderKnobHeight;
         Fill(hdc, knob, RGB(214, 218, 224));
@@ -535,7 +542,7 @@ void DrawLeftTrackPanel(HDC hdc, const RECT& rect, const UiState& state) {
         Fill(hdc, meterLevel, RGB(78, 162, 121));
     }
 
-    const int busTop = BusPanelTop(rect, state);
+    const int busTop = UiLayoutBusPanelTop(rect, state);
     if (busTop + 20 < rect.bottom) {
         RECT bHeader{rect.left, busTop, rect.right, busTop + 16};
         Fill(hdc, bHeader, RGB(48, 52, 58));
@@ -551,7 +558,7 @@ void DrawLeftTrackPanel(HDC hdc, const RECT& rect, const UiState& state) {
             RECT panKnobRect{};
             RECT panValRect{};
             RECT fxRect{};
-            GetBusControlRects(rect, state, b, &rowRect, &muteRect, &gainDownRect, &gainUpRect, &panKnobRect, &panValRect, &fxRect);
+            UiLayoutGetBusControlRects(rect, state, b, &rowRect, &muteRect, &gainDownRect, &gainUpRect, &panKnobRect, &panValRect, &fxRect);
             if (rowRect.bottom > rect.bottom) break;
 
             Fill(hdc, rowRect, (b % 2 == 0) ? RGB(39, 43, 49) : RGB(42, 47, 53));
@@ -614,7 +621,7 @@ void DrawLeftTrackPanel(HDC hdc, const RECT& rect, const UiState& state) {
     }
 }
 
-void DrawRuler(HDC hdc, const RECT& rect, const UiState& state) {
+void UiDrawRuler(HDC hdc, const RECT& rect, const UiState& state) {
     Fill(hdc, rect, kPalette.rulerBg);
 
     HPEN barPen = CreatePen(PS_SOLID, 1, kPalette.barLine);
@@ -665,7 +672,7 @@ void DrawRuler(HDC hdc, const RECT& rect, const UiState& state) {
     }
 }
 
-void DrawClipWaveform(HDC hdc, const RECT& clipRect, const LoadedAudio& audio, std::uint64_t sourceStartFrame, std::uint64_t sourceEndFrame) {
+static void DrawClipWaveform(HDC hdc, const RECT& clipRect, const LoadedAudio& audio, std::uint64_t sourceStartFrame, std::uint64_t sourceEndFrame) {
     const int width = std::max(1, static_cast<int>(clipRect.right - clipRect.left));
     const int height = std::max(1, static_cast<int>(clipRect.bottom - clipRect.top));
     if (width < 2 || height < 4 || audio.frames == 0 || audio.stereo.empty()) {
@@ -714,7 +721,7 @@ void DrawClipWaveform(HDC hdc, const RECT& clipRect, const LoadedAudio& audio, s
     DeleteObject(wavePen);
 }
 
-void DrawArrangeLanes(HDC hdc, const RECT& rect, const UiState& state) {
+void UiDrawArrangeLanes(HDC hdc, const RECT& rect, const UiState& state) {
     Fill(hdc, rect, kPalette.arrangeBg);
 
     const int width = std::max(1, static_cast<int>(rect.right - rect.left));
@@ -744,12 +751,12 @@ void DrawArrangeLanes(HDC hdc, const RECT& rect, const UiState& state) {
 
     for (size_t i = 0; i < state.project.clips.size(); ++i) {
         RECT clipRect{};
-        if (!ClipRectForDraw(rect, state, state.project.clips[i], &clipRect)) {
+        if (!UiLayoutClipRectForDraw(rect, state, state.project.clips[i], &clipRect)) {
             continue;
         }
 
-        const int clipUnclippedLeft = BeatToX(rect, state, state.project.clips[i].startBeat);
-        const int clipUnclippedRight = BeatToX(rect, state, state.project.clips[i].startBeat + state.project.clips[i].lengthBeats);
+        const int clipUnclippedLeft = UiLayoutBeatToX(rect, state, state.project.clips[i].startBeat);
+        const int clipUnclippedRight = UiLayoutBeatToX(rect, state, state.project.clips[i].startBeat + state.project.clips[i].lengthBeats);
         const int fullClipPx = std::max(1, clipUnclippedRight - clipUnclippedLeft);
         const int clippedLeft = static_cast<int>(clipRect.left);
         const int clippedRight = static_cast<int>(clipRect.right);
@@ -774,7 +781,7 @@ void DrawArrangeLanes(HDC hdc, const RECT& rect, const UiState& state) {
         if (state.project.clips[i].audioIndex >= 0 && state.project.clips[i].audioIndex < static_cast<int>(state.project.audio.size()) && waveRect.right > waveRect.left && waveRect.bottom > waveRect.top) {
             const LoadedAudio& audio = state.project.audio[static_cast<size_t>(state.project.clips[i].audioIndex)];
             const std::uint64_t totalFrames = static_cast<std::uint64_t>(audio.frames);
-            const float spb = SamplesPerBeat(state);
+            const float spb = TimelineSamplesPerBeat(state);
             const std::uint64_t srcOffset = state.project.clips[i].sourceOffsetFrames;
             const std::uint64_t clipLenFrames = std::min(
                 static_cast<std::uint64_t>(state.project.clips[i].lengthBeats * spb),
@@ -804,7 +811,7 @@ void DrawArrangeLanes(HDC hdc, const RECT& rect, const UiState& state) {
         DrawTextW(hdc, state.project.clips[i].name.c_str(), -1, &textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     }
 
-    const int playheadX = BeatToX(rect, state, state.playheadBeat);
+    const int playheadX = UiLayoutBeatToX(rect, state, state.playheadBeat);
     HPEN playheadPen = CreatePen(PS_SOLID, 2, kPalette.playhead);
     SelectObject(hdc, playheadPen);
     MoveToEx(hdc, playheadX, rect.top, nullptr);

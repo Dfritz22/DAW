@@ -309,7 +309,7 @@ bool ApplyAutoMixToFaders(HWND hwnd, UiState& state) {
 
         const std::wstring fileName = L"track_" + std::to_wstring(ti + 1) + L"_" + safeTrackName + L".wav";
         const std::filesystem::path wavPath = inputDir / fileName;
-        if (!WriteWavPcm16Stereo(wavPath.wstring(), trackStereo, trackSr)) {
+        if (!IoWriteWavPcm16Stereo(wavPath.wstring(), trackStereo, trackSr)) {
             continue;
         }
         exportedTracks.push_back({fileName, ti});
@@ -602,14 +602,14 @@ bool AnalyzeSelectedTrackQuality(HWND hwnd, UiState& state) {
     const std::filesystem::path referencePath = outputDir / (safeTrackName + L"_vocal_check_reference.wav");
     const std::filesystem::path txtPath = outputDir / (safeTrackName + L"_vocal_check.txt");
 
-    if (!WriteWavPcm16Stereo(wavPath.wstring(), stereo, sampleRate)) {
+    if (!IoWriteWavPcm16Stereo(wavPath.wstring(), stereo, sampleRate)) {
         MessageBoxW(hwnd, L"Failed to write temporary audio for analysis.", L"Vocal Check", MB_OK | MB_ICONERROR);
         return false;
     }
 
     bool wroteReference = false;
     if (hasReference && !referenceStereo.empty() && referenceSampleRate == sampleRate) {
-        wroteReference = WriteWavPcm16Stereo(referencePath.wstring(), referenceStereo, referenceSampleRate);
+        wroteReference = IoWriteWavPcm16Stereo(referencePath.wstring(), referenceStereo, referenceSampleRate);
     }
 
     std::wstring cmd =

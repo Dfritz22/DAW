@@ -1,11 +1,13 @@
 #include "device_mme.h"
 #include "device_common.h"
 #include "engine.h"
+#include "engine_utils.h"
+#include "core/state.h"
 #include "core/automation.h"
 #include "core/timeline.h"
 
 // ── Forward declarations for orchestration functions in main.cpp ─────────────
-// These are defined in main.cpp and called by StartMmeAudio / StartMmeRecording
+// These are defined in main.cpp and called by DeviceStartMmeAudio / DeviceStartMmeRecording
 // on error paths or when playback must be started alongside recording.
 bool StartPlayback(HWND hwnd, UiState& state);
 void StopPlayback(UiState& state, bool rewind);
@@ -36,7 +38,7 @@ static DWORD WINAPI AudioThreadProc(LPVOID param) {
 
             bool reachedEnd = false;
             EnterCriticalSection(&state->audioStateLock);
-            FillRealtimeForDeviceLocked(
+            EngineFillRealtimeForDeviceLocked(
                 *state,
                 state->waveData[static_cast<size_t>(i)].data(),
                 kAudioBufferFrames,
@@ -114,10 +116,10 @@ static DWORD WINAPI RecordThreadProc(LPVOID param) {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-// BuildAudioDiagnosticsReport, RefreshInputDevices, RefreshOutputDevices,
-// GetRenderedPlaybackFrame are defined in device_common.cpp.
+// DeviceBuildAudioDiagnosticsReport, DeviceRefreshInputDevices, DeviceRefreshOutputDevices,
+// DeviceGetRenderedPlaybackFrame are defined in device_common.cpp.
 
-void StopMmeAudio(UiState& state) {
+void DeviceStopMmeAudio(UiState& state) {
     state.audioStopRequested.store(true);
 
     if (state.audioThread != nullptr) {
@@ -138,7 +140,7 @@ void StopMmeAudio(UiState& state) {
     state.waveData.clear();
 }
 
-bool StartMmeAudio(HWND hwnd, UiState& state) {
+bool DeviceStartMmeAudio(HWND hwnd, UiState& state) {
     int mmeSampleRate = 0;
     if (state.preferredSampleRate > 0) {
         mmeSampleRate = state.preferredSampleRate;
@@ -202,14 +204,14 @@ bool StartMmeAudio(HWND hwnd, UiState& state) {
 
     EnterCriticalSection(&state.audioStateLock);
     const float startBeat = std::max(0.0f, state.playheadBeat);
-    const std::uint64_t startFrame = FramesFromBeats(state, startBeat);
+    const std::uint64_t startFrame = TimelineFramesFromBeats(state, startBeat);
     state.playbackFrameCursor.store(startFrame);
     const std::uint64_t endFrame = ComputeProjectEndFrameLocked(state);
     LeaveCriticalSection(&state.audioStateLock);
 
     state.playbackStartTick = GetTickCount64();
     state.playbackStartBeat = startBeat;
-    state.playbackEndBeat = BeatsFromFrames(state, endFrame);
+    state.playbackEndBeat = TimelineBeatsFromFrames(state, endFrame);
     state.playing = true;
     state.audioStopRequested.store(false);
     state.audioThreadRunning.store(true);
@@ -224,7 +226,7 @@ bool StartMmeAudio(HWND hwnd, UiState& state) {
     return true;
 }
 
-void StopMmeRecording(UiState& state) {
+void DeviceStopMmeRecording(UiState& state) {
     state.recordStopRequested.store(true);
 
     if (state.recordThread != nullptr) {
@@ -247,7 +249,7 @@ void StopMmeRecording(UiState& state) {
     state.waveInData.clear();
 }
 
-bool StartMmeRecording(HWND hwnd, UiState& state, int armedTrack, bool wasPlaying) {
+bool DeviceStartMmeRecording(HWND hwnd, UiState& state, int armedTrack, bool wasPlaying) {
     std::vector<int> sampleRates;
     if (state.preferredSampleRate > 0) {
         sampleRates.push_back(state.preferredSampleRate);
@@ -349,15 +351,15 @@ bool StartMmeRecording(HWND hwnd, UiState& state, int armedTrack, bool wasPlayin
     state.recordInputChannels = state.waveInFormat.nChannels;
     state.recordTrackIndex = armedTrack;
     state.recordCaptureStartTickMs = GetTickCount64();
-    const float samplesPerBeat = std::max(1.0f, SamplesPerBeat(state));
+    const float samplesPerBeat = std::max(1.0f, TimelineSamplesPerBeat(state));
     const std::uint64_t timelineStartFrame = state.playing
-        ? GetRenderedPlaybackFrame(state)
-        : FramesFromBeats(state, std::max(0.0f, state.playheadBeat));
+        ? DeviceGetRenderedPlaybackFrame(state)
+        : TimelineFramesFromBeats(state, std::max(0.0f, state.playheadBeat));
 
     // Set preroll + tentative placement before starting capture.
     state.recordPrerollFrames = 0;
     if (!wasPlaying && state.countInEnabled) {
-        state.recordPrerollFrames = FramesFromBeats(state, 4.0f * static_cast<float>(state.countInBars));
+        state.recordPrerollFrames = TimelineFramesFromBeats(state, 4.0f * static_cast<float>(state.countInBars));
     }
     state.recordStartFrame = timelineStartFrame + state.recordPrerollFrames;
     state.countingIn = (state.recordPrerollFrames > 0);
@@ -375,7 +377,7 @@ bool StartMmeRecording(HWND hwnd, UiState& state, int armedTrack, bool wasPlayin
     // Sample playback position right as capture goes live for accurate placement.
     waveInStart(state.waveIn);
     {
-        const std::uint64_t captureNow = state.playing ? GetRenderedPlaybackFrame(state) : 0;
+        const std::uint64_t captureNow = state.playing ? DeviceGetRenderedPlaybackFrame(state) : 0;
         const std::uint64_t scheduledStart = state.recordStartFrame;
         const std::uint64_t actualSkip = (captureNow < scheduledStart) ? (scheduledStart - captureNow) : 0;
         state.recordPrerollFrames = actualSkip;

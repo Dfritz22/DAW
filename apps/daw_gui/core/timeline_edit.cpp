@@ -85,7 +85,7 @@ void SplitSelectedClip(UiState& state) {
     ClipItem& orig = state.project.clips[static_cast<size_t>(state.selectedClipIndex)];
     ClipItem right = orig;
     const float splitDelta = splitBeat - orig.startBeat;
-    const float spb = SamplesPerBeat(state);
+    const float spb = TimelineSamplesPerBeat(state);
     right.startBeat         = splitBeat;
     right.lengthBeats       = orig.lengthBeats - splitDelta;
     right.sourceOffsetFrames = orig.sourceOffsetFrames + static_cast<std::uint64_t>(splitDelta * spb);

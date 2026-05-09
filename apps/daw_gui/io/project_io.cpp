@@ -1,5 +1,6 @@
 #include "project_io.h"
 
+#include "core/state.h"
 #include "wav_io.h"
 #include "audio/device_common.h"
 
@@ -236,7 +237,7 @@ static void DecodeInsertBypassCsv(const std::string& csv, int slotCount, InsertB
     }
 }
 
-bool SaveProject(const std::wstring& path, UiState& state) {
+bool IoSaveProject(const std::wstring& path, UiState& state) {
 
     // Materialize recorded in-memory takes so they survive save/load round-trips.
     {
@@ -258,7 +259,7 @@ bool SaveProject(const std::wstring& path, UiState& state) {
                 return false;
             }
             const std::filesystem::path takePath = takeDir / (L"take_" + std::to_wstring(i + 1) + L".wav");
-            if (!WriteWavPcm16Stereo(takePath.wstring(), a.stereo, a.sampleRate)) {
+            if (!IoWriteWavPcm16Stereo(takePath.wstring(), a.stereo, a.sampleRate)) {
                 return false;
             }
             a.sourcePath = takePath.wstring();
@@ -270,7 +271,7 @@ bool SaveProject(const std::wstring& path, UiState& state) {
     js << "  \"version\": 1,\n";
     js << "  \"bpm\": " << state.project.bpm << ",\n";
     js << "  \"sample_rate\": " << state.project.projectSampleRate << ",\n";
-    js << "  \"audio_backend\": \"" << AudioBackendToJson(state.audioBackend) << "\",\n";
+    js << "  \"audio_backend\": \"" << DeviceAudioBackendToJson(state.audioBackend) << "\",\n";
     js << "  \"audio_preferred_sample_rate\": " << state.preferredSampleRate << ",\n";
     js << "  \"audio_preferred_buffer_frames\": " << state.preferredBufferFrames << ",\n";
     js << "  \"audio_input_device_name\": \"" << JsonEscape(WstrToUtf8(state.selectedInputDeviceName)) << "\",\n";
@@ -382,7 +383,7 @@ static bool JsonReadDouble(const std::string& json, const std::string& key, doub
     try { *val = std::stod(json.substr(pos + search.size())); return true; } catch (...) { return false; }
 }
 
-bool LoadProject(const std::wstring& path, UiState& state) {
+bool IoLoadProject(const std::wstring& path, UiState& state) {
     std::ifstream in(path, std::ios::binary);
     if (!in) return false;
     const std::string json((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
@@ -403,7 +404,7 @@ bool LoadProject(const std::wstring& path, UiState& state) {
     std::string sval;
     if (JsonReadDouble(json, "bpm", &dval))                state.project.bpm               = static_cast<float>(dval);
     if (JsonReadDouble(json, "sample_rate", &dval))        state.project.projectSampleRate  = static_cast<int>(dval);
-    if (JsonReadString(json, "audio_backend", &sval))      state.audioBackend       = AudioBackendFromJson(sval);
+    if (JsonReadString(json, "audio_backend", &sval))      state.audioBackend       = DeviceAudioBackendFromJson(sval);
     if (JsonReadDouble(json, "audio_preferred_sample_rate", &dval)) state.preferredSampleRate = std::max(0, static_cast<int>(dval));
     if (JsonReadDouble(json, "audio_preferred_buffer_frames", &dval)) state.preferredBufferFrames = std::max(64, static_cast<int>(dval));
     if (JsonReadString(json, "audio_input_device_name", &sval)) state.selectedInputDeviceName = Utf8ToWstr(sval);
@@ -560,7 +561,7 @@ bool LoadProject(const std::wstring& path, UiState& state) {
                 const std::wstring srcPath = Utf8ToWstr(JsonUnescape(json.substr(q1 + 1, q2 - q1 - 1)));
                 LoadedAudio audio{};
                 std::wstring err;
-                if (std::filesystem::exists(srcPath) && LoadWavStereo(srcPath, &audio, &err)) {
+                if (std::filesystem::exists(srcPath) && IoLoadWavStereo(srcPath, &audio, &err)) {
                     if (state.project.projectSampleRate == 0) state.project.projectSampleRate = audio.sampleRate;
                     state.project.audio.push_back(std::move(audio));
                 } else {
@@ -647,7 +648,7 @@ bool LoadProject(const std::wstring& path, UiState& state) {
     return true;
 }
 
-bool DoSaveAs(HWND hwnd, UiState& state) {
+bool IoDoSaveAs(HWND hwnd, UiState& state) {
     wchar_t buf[MAX_PATH] = {};
     if (!state.projectFilePath.empty()) {
         wcsncpy_s(buf, state.projectFilePath.c_str(), MAX_PATH - 1);
@@ -663,7 +664,7 @@ bool DoSaveAs(HWND hwnd, UiState& state) {
     ofn.lpstrDefExt = L"dawproj";
     ofn.Flags       = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
     if (!GetSaveFileNameW(&ofn)) return false;
-    if (!SaveProject(buf, state)) {
+    if (!IoSaveProject(buf, state)) {
         MessageBoxW(hwnd, L"Failed to save project.", L"Save", MB_OK | MB_ICONERROR);
         return false;
     }
@@ -673,9 +674,9 @@ bool DoSaveAs(HWND hwnd, UiState& state) {
     return true;
 }
 
-bool DoSave(HWND hwnd, UiState& state) {
-    if (state.projectFilePath.empty()) return DoSaveAs(hwnd, state);
-    if (!SaveProject(state.projectFilePath, state)) {
+bool IoDoSave(HWND hwnd, UiState& state) {
+    if (state.projectFilePath.empty()) return IoDoSaveAs(hwnd, state);
+    if (!IoSaveProject(state.projectFilePath, state)) {
         MessageBoxW(hwnd, L"Failed to save project.", L"Save", MB_OK | MB_ICONERROR);
         return false;
     }
@@ -684,7 +685,7 @@ bool DoSave(HWND hwnd, UiState& state) {
     return true;
 }
 
-bool DoOpen(HWND hwnd, UiState& state) {
+bool IoDoOpen(HWND hwnd, UiState& state) {
     wchar_t buf[MAX_PATH] = {};
     OPENFILENAMEW ofn{};
     ofn.lStructSize = sizeof(ofn);
@@ -695,7 +696,7 @@ bool DoOpen(HWND hwnd, UiState& state) {
     ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
     if (!GetOpenFileNameW(&ofn)) return false;
     EnterCriticalSection(&state.audioStateLock);
-    const bool ok = LoadProject(buf, state);
+    const bool ok = IoLoadProject(buf, state);
     LeaveCriticalSection(&state.audioStateLock);
     if (!ok) {
         MessageBoxW(hwnd, L"Failed to open project.", L"Open", MB_OK | MB_ICONERROR);

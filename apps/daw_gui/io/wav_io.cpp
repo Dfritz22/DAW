@@ -1,4 +1,6 @@
 #include "wav_io.h"
+
+#include "core/state.h"
 #include <fstream>
 #include <cstdint>
 #include <cstring>
@@ -6,7 +8,7 @@
 #include <algorithm>
 #include <cmath>
 
-bool LoadWavStereo(const std::wstring& path, LoadedAudio* out, std::wstring* error) {
+bool IoLoadWavStereo(const std::wstring& path, LoadedAudio* out, std::wstring* error) {
     std::ifstream f(path, std::ios::binary);
     if (!f) {
         *error = L"Could not open file.";
@@ -148,7 +150,7 @@ bool LoadWavStereo(const std::wstring& path, LoadedAudio* out, std::wstring* err
     return true;
 }
 
-bool WriteWavPcm16Stereo(const std::wstring& path, const std::vector<float>& stereo, int sampleRate) {
+bool IoWriteWavPcm16Stereo(const std::wstring& path, const std::vector<float>& stereo, int sampleRate) {
     if (sampleRate <= 0 || stereo.empty() || (stereo.size() % 2 != 0)) {
         return false;
     }

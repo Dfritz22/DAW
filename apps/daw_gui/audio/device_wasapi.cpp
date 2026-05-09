@@ -1,6 +1,8 @@
 #include "device_wasapi.h"
 #include "engine.h"
-#include "device_common.h"  // GetRenderedPlaybackFrame
+#include "engine_utils.h"
+#include "device_common.h"  // DeviceGetRenderedPlaybackFrame
+#include "core/state.h"
 #include "core/automation.h"
 #include "core/timeline.h"
 
@@ -285,7 +287,7 @@ static DWORD WINAPI WasapiRenderThreadProc(LPVOID param) {
         pcmBuf.assign(static_cast<size_t>(available) * 2, 0);
         bool reachedEnd = false;
         EnterCriticalSection(&state->audioStateLock);
-        FillRealtimeForDeviceLocked(*state, pcmBuf.data(), static_cast<int>(available), static_cast<int>(state->wasapiOutFormat.nSamplesPerSec), &reachedEnd);
+        EngineFillRealtimeForDeviceLocked(*state, pcmBuf.data(), static_cast<int>(available), static_cast<int>(state->wasapiOutFormat.nSamplesPerSec), &reachedEnd);
         LeaveCriticalSection(&state->audioStateLock);
 
         BYTE* pData = nullptr;
@@ -488,17 +490,17 @@ static DWORD WINAPI WasapiRecordThreadProc(LPVOID param) {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-bool StartWasapiAudio(HWND hwnd, UiState& state) {
+bool DeviceStartWasapiAudio(HWND hwnd, UiState& state) {
     EnterCriticalSection(&state.audioStateLock);
     const float startBeat  = std::max(0.0f, state.playheadBeat);
-    const std::uint64_t startFrame = FramesFromBeats(state, startBeat);
+    const std::uint64_t startFrame = TimelineFramesFromBeats(state, startBeat);
     state.playbackFrameCursor.store(startFrame);
     const std::uint64_t endFrame = ComputeProjectEndFrameLocked(state);
     LeaveCriticalSection(&state.audioStateLock);
 
     state.playbackStartTick = 0;
     state.playbackStartBeat = startBeat;
-    state.playbackEndBeat   = BeatsFromFrames(state, endFrame);
+    state.playbackEndBeat   = TimelineBeatsFromFrames(state, endFrame);
     state.playing           = true;
     state.playingViaWasapi  = true;
     state.audioStopRequested.store(false);
@@ -549,7 +551,7 @@ bool StartWasapiAudio(HWND hwnd, UiState& state) {
     return false;
 }
 
-void StopWasapiAudio(UiState& state) {
+void DeviceStopWasapiAudio(UiState& state) {
     state.audioStopRequested.store(true);
 
     if (state.audioThread != nullptr) {
@@ -562,20 +564,20 @@ void StopWasapiAudio(UiState& state) {
     state.audioThreadRunning.store(false);
 }
 
-bool StartWasapiRecording(HWND hwnd, UiState& state, int armedTrack, bool wasPlaying) {
+bool DeviceStartWasapiRecording(HWND hwnd, UiState& state, int armedTrack, bool wasPlaying) {
     state.recordedInputPcm.clear();
     state.monitorInputPcm.clear();
     state.monitorInputReadPos = 0;
     state.recordTrackIndex = armedTrack;
     state.recordCaptureStartTickMs = GetTickCount64();
     const std::uint64_t timelineStartFrame = state.playing
-        ? GetRenderedPlaybackFrame(state)
-        : FramesFromBeats(state, std::max(0.0f, state.playheadBeat));
+        ? DeviceGetRenderedPlaybackFrame(state)
+        : TimelineFramesFromBeats(state, std::max(0.0f, state.playheadBeat));
 
     // Compute preroll duration upfront so count-in click can play immediately.
     state.recordPrerollFrames = 0;
     if (!wasPlaying && state.countInEnabled) {
-        state.recordPrerollFrames = FramesFromBeats(state, 4.0f * static_cast<float>(state.countInBars));
+        state.recordPrerollFrames = TimelineFramesFromBeats(state, 4.0f * static_cast<float>(state.countInBars));
     }
     // Tentative placement: preroll end is deterministic regardless of init latency.
     state.recordStartFrame = timelineStartFrame + state.recordPrerollFrames;
@@ -612,7 +614,7 @@ bool StartWasapiRecording(HWND hwnd, UiState& state, int armedTrack, bool wasPla
     // Capture is now running. Refine skip based on actual capture-start position so
     // clip placement is deterministic (same beat) across all takes.
     {
-        const std::uint64_t captureNow = state.playing ? GetRenderedPlaybackFrame(state) : 0;
+        const std::uint64_t captureNow = state.playing ? DeviceGetRenderedPlaybackFrame(state) : 0;
         const std::uint64_t scheduledStart = state.recordStartFrame;
         const std::uint64_t actualSkip = (captureNow < scheduledStart) ? (scheduledStart - captureNow) : 0;
         state.recordPrerollFrames = actualSkip;          // strip only remaining preroll
@@ -623,7 +625,7 @@ bool StartWasapiRecording(HWND hwnd, UiState& state, int armedTrack, bool wasPla
     return true;
 }
 
-void StopWasapiRecording(UiState& state) {
+void DeviceStopWasapiRecording(UiState& state) {
     state.recordStopRequested.store(true);
 
     if (state.recordThread != nullptr) {
