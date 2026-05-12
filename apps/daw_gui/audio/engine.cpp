@@ -325,8 +325,10 @@ bool RenderTrackToStereoLocked(const CoreState& core, AudioRuntimeState& audio, 
     return true;
 }
 
-// Renders the full mix to stereo: all un-muted tracks summed with track gain,
-// track pan, bus gain, and bus mute applied. Bus pan is also applied.
+// Renders the full mix to stereo. Mirrors the realtime callback structure
+// so offline output matches what the user hears in realtime: per-bus
+// accumulator -> bus inserts on summed bus -> mix to master with bus
+// gain+pan (master bus skips pan, see ResolveBusRealtimeMix).
 bool RenderFullMixToStereoLocked(const CoreState& core, AudioRuntimeState& audio, std::vector<float>* outStereo, int* outSampleRate) {
     if (core.project.projectSampleRate <= 0 || core.project.clips.empty() || core.project.tracks.empty()) {
         return false;
@@ -334,20 +336,24 @@ bool RenderFullMixToStereoLocked(const CoreState& core, AudioRuntimeState& audio
 
     EnsureInsertDspStateStorage(core, audio);
 
-    // Determine total length across all clips
     const float spb = TimelineSamplesPerBeat(core);
     const std::uint64_t endFrame = ComputeProjectEndFrameLocked(core);
     if (endFrame == 0) return false;
 
-    std::vector<float> mix(static_cast<size_t>(endFrame) * 2, 0.0f);
-
+    const size_t stereoSamples = static_cast<size_t>(endFrame) * 2;
+    const float sampleRate = static_cast<float>(core.project.projectSampleRate);
     const int trackCount = static_cast<int>(core.project.tracks.size());
+
+    // Per-bus accumulators. Tracks mix in here with track-only gain+pan.
+    std::vector<std::vector<float>> busBuf(static_cast<size_t>(kBusCount));
+    for (auto& b : busBuf) b.assign(stereoSamples, 0.0f);
+
+    std::vector<float> trackBuf(stereoSamples, 0.0f);
     for (int ti = 0; ti < trackCount; ++ti) {
         const TrackBusMix tbm = ResolveTrackBusMix(core, ti);
         if (!tbm.audible) continue;
 
-        // Build per-track buffer for DSP
-        std::vector<float> trackBuf(static_cast<size_t>(endFrame) * 2, 0.0f);
+        std::fill(trackBuf.begin(), trackBuf.end(), 0.0f);
         daw::engine::RenderClipsForTrack(
             core.project.clips,
             core.project.audio,
@@ -358,49 +364,22 @@ bool RenderFullMixToStereoLocked(const CoreState& core, AudioRuntimeState& audio
             trackBuf.data(),
             endFrame);
 
-        // Apply track insert chain
-        ApplyTrackInsertChain(core, audio, ti, trackBuf, static_cast<float>(core.project.projectSampleRate));
-
-        // Mix into master with gain+pan
-        daw::dsp::MixAddStereoWithGain(trackBuf.data(), mix.data(), static_cast<int>(endFrame), tbm.gainL, tbm.gainR);
+        ApplyTrackInsertChain(core, audio, ti, trackBuf, sampleRate);
+        daw::dsp::MixAddStereoWithGain(trackBuf.data(), busBuf[static_cast<size_t>(tbm.busIndex)].data(),
+                                       static_cast<int>(endFrame), tbm.gainL, tbm.gainR);
     }
 
-    // Apply bus insert chains per bus
+    // Bus inserts on summed bus (matches realtime), then mix into master
+    // with bus gain+pan. Master bus skips pan via ResolveBusRealtimeMix.
+    std::vector<float> mix(stereoSamples, 0.0f);
     for (int b = 0; b < kBusCount; ++b) {
-        if (b >= static_cast<int>(core.project.buses.size())) continue;
-        if (core.project.buses[static_cast<size_t>(b)].insertSlots <= 0) continue;
-        // Collect all tracks on this bus into a sub-mix
-        std::vector<float> busBuf(static_cast<size_t>(endFrame) * 2, 0.0f);
-        bool hasContent = false;
-        for (int ti2 = 0; ti2 < trackCount; ++ti2) {
-            const int tbus = (ti2 < static_cast<int>(core.project.tracks.size()))
-                ? std::clamp(core.project.tracks[static_cast<size_t>(ti2)].busIndex, 0, kBusCount - 1) : 0;
-            if (tbus != b) continue;
-            const bool muted = (ti2 < static_cast<int>(core.project.tracks.size())) && core.project.tracks[static_cast<size_t>(ti2)].mute;
-            if (muted) continue;
-            hasContent = true;
-            daw::engine::RenderClipsForTrack(
-                core.project.clips,
-                core.project.audio,
-                ti2,
-                core.project.projectSampleRate,
-                spb,
-                /*bufferStartFrame*/ 0,
-                busBuf.data(),
-                endFrame);
-        }
-        if (!hasContent) continue;
-        // Apply bus inserts — result is a differential that we add back to mix
-        // (subtract unprocessed, add processed)
-        std::vector<float> busBufPre = busBuf;
-        ApplyBusInsertChain(core, audio, b, busBuf, static_cast<float>(core.project.projectSampleRate));
-        const float busGainLin = daw::dsp::DbToLinear(BusGainDbAt(core, b));
-        daw::dsp::MixDifferentialAddWithGain(
-            busBufPre.data(), busBuf.data(), mix.data(),
-            static_cast<int>(endFrame) * 2, busGainLin);
+        const BusRealtimeMix bm = ResolveBusRealtimeMix(core, b);
+        if (!bm.active) continue;
+        ApplyBusInsertChain(core, audio, b, busBuf[static_cast<size_t>(b)], sampleRate);
+        daw::dsp::MixAddStereoWithGain(busBuf[static_cast<size_t>(b)].data(), mix.data(),
+                                       static_cast<int>(endFrame), bm.gainL, bm.gainR);
     }
 
-    // Soft clip / clamp
     daw::dsp::ClampStereoBuffer(mix.data(), static_cast<int>(mix.size()));
 
     *outStereo     = std::move(mix);
@@ -408,27 +387,33 @@ bool RenderFullMixToStereoLocked(const CoreState& core, AudioRuntimeState& audio
     return true;
 }
 
-// Renders all tracks routed to busIndex (with track+bus gain/pan applied) into a stereo buffer.
+// Renders a single bus's contribution to master as a stereo stem.
+// Mirrors the realtime per-bus stage: sum tracks routed to busIndex into
+// busBuf (track inserts + track gain+pan), apply bus inserts on the
+// summed bus, then output with bus gain+pan via ResolveBusRealtimeMix.
 // Must NOT be called with audioStateLock held.
 bool RenderBusStemToStereoLocked(const CoreState& core, AudioRuntimeState& audio, int busIndex, std::vector<float>* outStereo, int* outSampleRate) {
-        EnsureInsertDspStateStorage(core, audio);
+    EnsureInsertDspStateStorage(core, audio);
 
     if (core.project.projectSampleRate <= 0 || core.project.clips.empty() || core.project.tracks.empty()) return false;
+    if (busIndex < 0 || busIndex >= kBusCount) return false;
 
     const float spb = TimelineSamplesPerBeat(core);
     const std::uint64_t endFrame = ComputeProjectEndFrameLocked(core);
     if (endFrame == 0) return false;
 
-    std::vector<float> mix(static_cast<size_t>(endFrame) * 2, 0.0f);
+    const size_t stereoSamples = static_cast<size_t>(endFrame) * 2;
+    const float sampleRate = static_cast<float>(core.project.projectSampleRate);
     const int trackCount = static_cast<int>(core.project.tracks.size());
 
+    std::vector<float> busBuf(stereoSamples, 0.0f);
+    std::vector<float> trackBuf(stereoSamples, 0.0f);
     for (int ti = 0; ti < trackCount; ++ti) {
         const TrackBusMix tbm = ResolveTrackBusMix(core, ti);
         if (tbm.busIndex != busIndex) continue;
         if (!tbm.audible) continue;
 
-        // Build per-track buffer for DSP
-        std::vector<float> trackBuf(static_cast<size_t>(endFrame) * 2, 0.0f);
+        std::fill(trackBuf.begin(), trackBuf.end(), 0.0f);
         daw::engine::RenderClipsForTrack(
             core.project.clips,
             core.project.audio,
@@ -439,14 +424,22 @@ bool RenderBusStemToStereoLocked(const CoreState& core, AudioRuntimeState& audio
             trackBuf.data(),
             endFrame);
 
-        // Apply track insert chain
-        ApplyTrackInsertChain(core, audio, ti, trackBuf, static_cast<float>(core.project.projectSampleRate));
-
-        // Apply bus insert chain as post-fader processing
-        ApplyBusInsertChain(core, audio, busIndex, trackBuf, static_cast<float>(core.project.projectSampleRate));
-
-        daw::dsp::MixAddStereoWithGain(trackBuf.data(), mix.data(), static_cast<int>(endFrame), tbm.gainL, tbm.gainR);
+        ApplyTrackInsertChain(core, audio, ti, trackBuf, sampleRate);
+        daw::dsp::MixAddStereoWithGain(trackBuf.data(), busBuf.data(),
+                                       static_cast<int>(endFrame), tbm.gainL, tbm.gainR);
     }
+
+    // Apply bus inserts on the summed bus (matches realtime), then output
+    // with bus gain+pan.
+    ApplyBusInsertChain(core, audio, busIndex, busBuf, sampleRate);
+
+    std::vector<float> mix(stereoSamples, 0.0f);
+    const BusRealtimeMix bm = ResolveBusRealtimeMix(core, busIndex);
+    if (bm.active) {
+        daw::dsp::MixAddStereoWithGain(busBuf.data(), mix.data(),
+                                       static_cast<int>(endFrame), bm.gainL, bm.gainR);
+    }
+
     daw::dsp::ClampStereoBuffer(mix.data(), static_cast<int>(mix.size()));
     *outStereo     = std::move(mix);
     *outSampleRate = core.project.projectSampleRate;

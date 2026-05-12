@@ -64,8 +64,11 @@ TrackBusMix ResolveTrackBusMix(const CoreState& core, int trackIndex) {
     if (r.busIndex >= static_cast<int>(core.project.buses.size())) return r;
     if (core.project.buses[static_cast<size_t>(r.busIndex)].mute) return r;
 
-    const float gain = daw::dsp::DbToLinear(t.gainDb + BusGainDbAt(core, r.busIndex));
-    const float pan  = std::clamp(t.pan + BusPanAt(core, r.busIndex), -1.0f, 1.0f);
+    // Track-only gain/pan. Bus dB/pan are applied later at the bus stage so
+    // offline output matches realtime (equal-power pan is non-linear, so
+    // folding bus pan per-track and after-sum produce different results).
+    const float gain = daw::dsp::DbToLinear(t.gainDb);
+    const float pan  = std::clamp(t.pan, -1.0f, 1.0f);
     daw::dsp::ApplyGainAndPan(gain, pan, &r.gainL, &r.gainR);
     r.audible = true;
     return r;

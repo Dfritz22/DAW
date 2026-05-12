@@ -29,13 +29,18 @@ void EnsureInsertDspStateStorage(const CoreState& core, AudioRuntimeState& audio
 // Track audibility (mute / solo logic – audio domain)
 bool IsTrackAudible(const CoreState& core, int trackIndex);
 
-// Resolved per-track routing for the offline mix-down path. Combines the
-// track's mute state, its bus's mute state, and computes equal-power
-// pan + (track dB + bus dB) gain coefficients.
+// Resolved per-track routing for the offline mix-down path. Returns the
+// track's *track-only* gain/pan (NOT folded with bus dB/pan) so the
+// caller can accumulate into a per-bus buffer and then apply bus
+// gain+pan at the bus stage — mirroring the realtime path. Equal-power
+// pan is non-linear, so folding bus pan per-track and folding it after
+// summing produce different output for any non-trivial bus pan; offline
+// must do the latter to match what the user hears in realtime.
 //   - audible: false when the track is out of range, the track is muted,
 //     the resolved bus is muted, or the bus index is out of range.
 //   - busIndex: the track's busIndex clamped to [0, kBusCount).
-//   - gainL/gainR: linear stereo gains (only valid when audible).
+//   - gainL/gainR: linear stereo gains from track gain + track pan only
+//     (only valid when audible).
 struct TrackBusMix {
     bool  audible;
     int   busIndex;
@@ -48,11 +53,9 @@ TrackBusMix ResolveTrackBusMix(const CoreState& core, int trackIndex);
 // ResolveTrackBusMix in that:
 //   - audibility uses the solo-aware IsTrackAudible (offline does not),
 //   - track gain/pan/bus come from automation accessors (offline reads
-//     the static struct fields),
-//   - bus dB/pan are NOT folded in (the realtime path applies bus gain
-//     in a separate per-bus stage that reads the bus-scratch buffer).
-// gainL/gainR are the track's stereo gain post-pan, ready to mix into
-// the per-bus scratch buffer. Only meaningful when audible == true.
+//     the static struct fields).
+// Both helpers return track-only gain/pan; bus dB/pan are applied at the
+// bus stage in both paths.
 TrackBusMix ResolveTrackRealtimeMix(const CoreState& core, int trackIndex);
 
 // Realtime per-bus resolve for the bus→master mix stage. Bus 3 is treated
