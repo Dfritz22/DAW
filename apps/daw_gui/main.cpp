@@ -2354,6 +2354,20 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             InvalidateRect(hwnd, nullptr, FALSE);
         }
         return 0;
+    case kMsgCountInComplete:
+        if (state != nullptr) {
+            // Engine signaled the count-in preroll has elapsed. The audio
+            // thread already cleared audio.countingIn for tight timing; this
+            // message lets the FSM observe the CountingIn → Recording
+            // transition. The resulting StartRecording action is idempotent
+            // (recording was armed at the start of count-in). Repaint so the
+            // transport buttons reflect the new state.
+            daw::app::DispatchTransportEvent(hwnd, *state,
+                daw::services::TransportEvent::CountInComplete,
+                /*rewindOnStop=*/false);
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
     case kMsgAutoMixFinished:
         if (state != nullptr) {
             if (state->audio.automixThread != nullptr) {

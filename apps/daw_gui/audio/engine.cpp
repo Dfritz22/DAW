@@ -15,6 +15,11 @@
 #include <cmath>
 #include <cstring>
 
+// Mirrors UiRuntimeState.h (UI headers are app-private; duplicating the
+// constant here matches the existing pattern in device_mme.cpp /
+// device_wasapi.cpp for kMsgPlaybackFinished).
+constexpr UINT kMsgCountInComplete = WM_APP + 3;
+
 // ── Engine function definitions ───────────────────────────────────────────────
 
 bool EngineFillRealtimeBufferLocked(CoreState& core, AudioRuntimeState& audio, std::int16_t* outInterleaved, int frames, bool* reachedEnd) {
@@ -28,8 +33,21 @@ bool EngineFillRealtimeBufferLocked(CoreState& core, AudioRuntimeState& audio, s
     // its OWN time domain (countInFrameCursor); the playback cursor is held
     // at recordStartFrame for the entire count-in so the playhead does not
     // move and captured audio lands exactly at the press position.
+    //
+    // The flag flip MUST happen on the audio thread for tight timing
+    // (next callback must immediately stop emitting count-in clicks). We
+    // also post a kMsgCountInComplete to the UI thread so the FSM observes
+    // the CountingIn → Recording transition through DispatchTransportEvent
+    // rather than only via state derivation. This keeps the FSM the single
+    // chokepoint for transport transitions even for engine-driven events.
+    // The dispatched StartRecording action is idempotent (StartRecording
+    // early-returns when audio.recording is already true, which it is —
+    // recording was armed at the start of count-in).
     if (audio.countingIn && audio.countInFrameCursor.load() >= audio.recordPrerollFrames) {
         audio.countingIn = false;
+        if (audio.hwnd) {
+            PostMessage(audio.hwnd, kMsgCountInComplete, 0, 0);
+        }
     }
 
     EnsureInsertDspStateStorage(core, audio);

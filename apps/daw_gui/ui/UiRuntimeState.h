@@ -17,6 +17,7 @@ constexpr UINT_PTR kPlaybackTimerId = 1;
 constexpr int kPlaybackTimerMs = 33;
 constexpr UINT kMsgPlaybackFinished = WM_APP + 1;
 constexpr UINT kMsgAutoMixFinished = WM_APP + 2;
+constexpr UINT kMsgCountInComplete = WM_APP + 3;
 constexpr UINT kCmdFileImportWav = 40001;
 constexpr UINT kCmdFileExit = 40002;
 constexpr UINT kCmdFileSave = 40003;
