@@ -19,9 +19,6 @@
 #include <algorithm>
 #include <cstdint>
 
-// Forward decl from automix_bridge â€” DoAutoMaster lives in main.cpp.
-bool DoAutoMaster(HWND hwnd, AppState& state);
-
 namespace {
 
 using daw::internal::core::UpdateWindowTitle;

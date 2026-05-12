@@ -32,6 +32,7 @@ add_executable(daw_gui WIN32
     audio/transport_adapter.cpp
     audio/transport_control.cpp
     audio/import.cpp
+    audio/orchestration.cpp
     audio/DeviceFacade.cpp
     audio/device_mme.cpp
     audio/device_wasapi.cpp
