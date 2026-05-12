@@ -1,6 +1,7 @@
 add_executable(test_engine
     test_clip_reader.cpp
     test_clip_render.cpp
+    test_mix_pipeline.cpp
     test_timeline_layout.cpp
 )
 

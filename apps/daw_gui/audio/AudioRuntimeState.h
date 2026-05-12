@@ -21,6 +21,7 @@
 
 #include "core/CoreState.h"
 #include "dsp/insert_types.h"
+#include "engine/mix_pipeline.h"
 
 constexpr int kAudioBufferFrames = 256;
 constexpr int kAudioBufferCount = 4;
@@ -184,4 +185,8 @@ struct AudioRuntimeState {
     std::array<std::vector<float>, kBusCount> engineBusScratch;
     std::vector<std::vector<float>>           engineTrackScratch;
     std::vector<float>                        engineMasterScratch;
+    // Pre-resolved per-track / per-bus mix parameters reused across
+    // realtime callbacks. Sized lazily in EngineFillRealtimeBufferLocked.
+    std::vector<daw::engine::TrackMix>        engineTrackMixScratch;
+    std::vector<daw::engine::BusMix>          engineBusMixScratch;
 };

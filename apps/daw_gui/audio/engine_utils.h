@@ -5,6 +5,7 @@
 
 #include "core/CoreState.h"
 #include "audio/AudioRuntimeState.h"
+#include "engine/mix_pipeline.h"
 
 #include <vector>
 
@@ -41,12 +42,10 @@ bool IsTrackAudible(const CoreState& core, int trackIndex);
 //   - busIndex: the track's busIndex clamped to [0, kBusCount).
 //   - gainL/gainR: linear stereo gains from track gain + track pan only
 //     (only valid when audible).
-struct TrackBusMix {
-    bool  audible;
-    int   busIndex;
-    float gainL;
-    float gainR;
-};
+// POD aliased from libs/engine so the shared mix-pipeline helpers
+// (MixTracksToBuses / MixBusesToMaster) can consume app-resolved mix
+// parameters without conversion.
+using TrackBusMix = daw::engine::TrackMix;
 TrackBusMix ResolveTrackBusMix(const CoreState& core, int trackIndex);
 
 // Realtime per-track resolve for the audio callback path. Differs from
@@ -62,11 +61,7 @@ TrackBusMix ResolveTrackRealtimeMix(const CoreState& core, int trackIndex);
 // as the master bus and skips the pan stage (gainL == gainR == busGain).
 //   - active: false when the bus is muted or out of range.
 //   - gainL/gainR: linear stereo gains (only valid when active).
-struct BusRealtimeMix {
-    bool  active;
-    float gainL;
-    float gainR;
-};
+using BusRealtimeMix = daw::engine::BusMix;
 BusRealtimeMix ResolveBusRealtimeMix(const CoreState& core, int busIndex);
 
 // Project-length calculation
