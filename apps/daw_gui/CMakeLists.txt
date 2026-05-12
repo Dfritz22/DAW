@@ -33,6 +33,7 @@ target_link_libraries(daw_gui
         daw::core
         daw::engine
         daw::services
+        daw::vm
     Winmm
     Comdlg32
     Ole32

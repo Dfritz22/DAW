@@ -1,8 +1,29 @@
 #include "ui/layout.h"
 #include "ui/dpi.h"
+#include "vm/timeline_view.h"
 
 #include <algorithm>
 #include <cmath>
+
+namespace {
+// Build the platform-free viewport that libs/vm expects from the app's
+// AppState + arrange/area rect. All DPI scaling lives in the app; libs/vm
+// is told the already-scaled row/inset pixel sizes.
+daw::vm::TimelineViewport MakeTimelineViewport(const RECT& arrange, const AppState& state) {
+    return daw::vm::TimelineViewport{
+        /*arrange*/ daw::vm::Rect{static_cast<int>(arrange.left),
+                                  static_cast<int>(arrange.top),
+                                  static_cast<int>(arrange.right),
+                                  static_cast<int>(arrange.bottom)},
+        /*viewStartBeat*/    state.ui.viewStartBeat,
+        /*viewBeatsVisible*/ state.ui.viewBeatsVisible,
+        /*tracksScrollY*/    state.ui.tracksScrollY,
+        /*rowHeightPx*/      Dpi(kTrackRowHeight),
+        /*clipInsetYPx*/     Dpi(kClipInsetY),
+        /*trackCount*/       static_cast<int>(state.core.project.tracks.size()),
+    };
+}
+} // namespace
 
 // ── Left panel / track row rects ─────────────────────────────────────────────
 // All literal pixel offsets are authored at 96-DPI baseline and scaled through
@@ -122,50 +143,40 @@ LayoutRects UiLayoutComputeLayout(const RECT& client) {
 }
 
 // ── Beat / coordinate math ────────────────────────────────────────────────────
+// Thin shims over daw::vm — both the draw path (ui/draw.cpp) and the
+// hit-test path (main.cpp WndProc) reach geometry through these helpers,
+// so they cannot drift from each other (mirrors libs/engine mix_pipeline).
 
 float UiLayoutSnapBeat(float beat) {
-    const float grid = 0.25f;
-    return std::round(beat / grid) * grid;
+    return daw::vm::SnapBeat(beat);
 }
 
 float UiLayoutXToBeat(const RECT& arrange, const AppState& state, int x) {
-    const int width = std::max(1, static_cast<int>(arrange.right - arrange.left));
-    const float t = static_cast<float>(x - arrange.left) / static_cast<float>(width);
-    return state.ui.viewStartBeat + t * state.ui.viewBeatsVisible;
+    const auto vp = MakeTimelineViewport(arrange, state);
+    return daw::vm::XToBeat(vp, x);
 }
 
 int UiLayoutBeatToX(const RECT& area, const AppState& state, float beat) {
-    const int width = std::max(1, static_cast<int>(area.right - area.left));
-    const float t = (beat - state.ui.viewStartBeat) / state.ui.viewBeatsVisible;
-    return area.left + static_cast<int>(t * static_cast<float>(width));
+    // BeatToX is allowed to project into a different rect than the arrange
+    // (e.g. the ruler strip), so build a viewport against the arrange-equivalent
+    // and hand the explicit area through BeatToXIn.
+    const auto vp = MakeTimelineViewport(area, state);
+    const daw::vm::Rect a{static_cast<int>(area.left),  static_cast<int>(area.top),
+                          static_cast<int>(area.right), static_cast<int>(area.bottom)};
+    return daw::vm::BeatToXIn(a, vp, beat);
 }
 
 int UiLayoutTrackIndexFromY(const RECT& arrange, const AppState& state, int y) {
-    if (state.core.project.tracks.empty()) {
-        return 0;
-    }
-    if (y < arrange.top) {
-        return 0;
-    }
-    const int idx = (y - arrange.top + state.ui.tracksScrollY) / Dpi(kTrackRowHeight);
-    return std::clamp(idx, 0, static_cast<int>(state.core.project.tracks.size()) - 1);
+    const auto vp = MakeTimelineViewport(arrange, state);
+    return daw::vm::TrackIndexFromY(vp, y);
 }
 
 bool UiLayoutClipRectForDraw(const RECT& arrange, const AppState& state, const ClipItem& clip, RECT* outRect) {
-    const int rowH = Dpi(kTrackRowHeight);
-    const int insetY = Dpi(kClipInsetY);
-    const int rowTop = arrange.top + clip.trackIndex * rowH + insetY - state.ui.tracksScrollY;
-    const int rowBottom = rowTop + (rowH - 2 * insetY);
-    const int left = UiLayoutBeatToX(arrange, state, clip.startBeat);
-    const int right = UiLayoutBeatToX(arrange, state, clip.startBeat + clip.lengthBeats);
-
-    RECT r{left, rowTop, right, rowBottom};
-    if (r.right < arrange.left || r.left > arrange.right || r.bottom < arrange.top || r.top > arrange.bottom) {
+    const auto vp = MakeTimelineViewport(arrange, state);
+    daw::vm::Rect r{};
+    if (!daw::vm::ClipRectForDraw(vp, clip.trackIndex, clip.startBeat, clip.lengthBeats, &r)) {
         return false;
     }
-
-    r.left = std::max(r.left, arrange.left);
-    r.right = std::min(r.right, arrange.right);
-    *outRect = r;
+    *outRect = RECT{r.left, r.top, r.right, r.bottom};
     return true;
 }
