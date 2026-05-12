@@ -16,6 +16,7 @@ add_executable(daw_gui WIN32
     ui/wndproc/rbutton.cpp
     ui/wndproc/lbutton.cpp
     ui/wndproc/mousemove.cpp
+    ui/wndproc/paint.cpp
     ui/floating.cpp
     core/timeline.cpp
     core/timeline_edit.cpp
