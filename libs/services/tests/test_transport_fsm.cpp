@@ -41,8 +41,10 @@ TEST(TransportFsm, CountingInCompleteBeginsRecording) {
 }
 
 TEST(TransportFsm, CountingInStopGoesBackToStopped) {
+    // Recording subsystem is armed during count-in, so stopping must tear
+    // down recording (caller chains StopPlayback after).
     Expect(TransportState::CountingIn, TransportEvent::StopPressed,
-           TransportState::Stopped, TransportAction::StopPlayback);
+           TransportState::Stopped, TransportAction::StopRecording);
 }
 
 TEST(TransportFsm, PlayingStopStopsPlayback) {

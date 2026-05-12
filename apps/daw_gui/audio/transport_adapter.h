@@ -27,6 +27,12 @@ namespace daw::app {
 // playing invariant in the existing code).
 daw::services::TransportState TransportStateFromAudio(const AudioRuntimeState& a);
 
+// Predicate: would a record-press right now actually invoke a count-in
+// preroll? Mirrors the condition inside DeviceStartRecordingBackend
+// (recordPrerollFrames > 0 iff !wasPlaying && countInEnabled && countInBars > 0).
+// Used to decide whether to dispatch RecordPressed vs RecordPressedWithCountIn.
+bool WillCountIn(const AudioRuntimeState& a);
+
 // Run the FSM on (currentState, ev) and execute the resulting action.
 // `rewindOnStop` is forwarded to StopPlayback's rewind parameter when the
 // FSM emits StopPlayback or StopRecording (latter chains a StopPlayback to

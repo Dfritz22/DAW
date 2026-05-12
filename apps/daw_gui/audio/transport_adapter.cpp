@@ -15,6 +15,12 @@ daw::services::TransportState TransportStateFromAudio(const AudioRuntimeState& a
     return TransportState::Stopped;
 }
 
+bool WillCountIn(const AudioRuntimeState& a) {
+    // Matches DeviceStartRecordingBackend's preroll computation. Recording
+    // while already playing skips count-in (punch-in scenario).
+    return !a.playing && a.countInEnabled && a.countInBars > 0;
+}
+
 bool DispatchTransportEvent(HWND hwnd,
                             AppState& state,
                             daw::services::TransportEvent ev,
@@ -49,8 +55,12 @@ bool DispatchTransportEvent(HWND hwnd,
             return true;
 
         case TransportAction::StartCountIn:
-            // Not wired yet — no UI gesture currently emits
-            // RecordPressedWithCountIn. Reserved for a follow-up phase.
+            // Existing StartRecording already handles preroll setup internally
+            // (see DeviceStartRecordingBackend). The FSM split between
+            // StartCountIn and StartRecording is informational here — it
+            // gives observers a correct CountingIn state, but the side-effect
+            // path is the same single call.
+            StartRecording(hwnd, state);
             return true;
     }
     return false;

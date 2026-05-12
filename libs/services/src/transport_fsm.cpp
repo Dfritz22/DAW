@@ -44,7 +44,11 @@ TransportTransition TransportNext(TransportState state, TransportEvent ev) {
             return {TransportState::Recording, TransportAction::StartRecording};
         case TransportEvent::StopPressed:
         case TransportEvent::Failed:
-            return {TransportState::Stopped, TransportAction::StopPlayback};
+            // The recording subsystem is armed during count-in (preroll
+            // click + input capture both running), so stopping must tear
+            // down recording, not just playback. Callers typically chain
+            // a StopPlayback after StopRecording.
+            return {TransportState::Stopped, TransportAction::StopRecording};
         case TransportEvent::PlayPressed:
         case TransportEvent::RecordPressed:
         case TransportEvent::RecordPressedWithCountIn:

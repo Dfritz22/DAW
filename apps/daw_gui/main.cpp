@@ -2343,10 +2343,14 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     case kMsgPlaybackFinished:
         if (state != nullptr) {
-            if (state->audio.recording) {
-                StopRecording(*state, true);
-            }
-            StopPlayback(*state, false);
+            // Engine signaled natural end-of-song. Route through the FSM so
+            // it stays the single source of truth for transport transitions.
+            // From Recording → StopRecording (commits take + stops). From
+            // Playing/CountingIn → StopPlayback / StopRecording respectively.
+            // From Stopped (race) → no-op.
+            daw::app::DispatchTransportEvent(hwnd, *state,
+                daw::services::TransportEvent::StopPressed,
+                /*rewindOnStop=*/false);
             InvalidateRect(hwnd, nullptr, FALSE);
         }
         return 0;
@@ -2508,8 +2512,14 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         if (wParam == 'R') {
             using daw::services::TransportEvent;
-            const auto ev = state->audio.recording ? TransportEvent::StopPressed
-                                                   : TransportEvent::RecordPressed;
+            TransportEvent ev;
+            if (state->audio.recording || state->audio.countingIn) {
+                ev = TransportEvent::StopPressed;
+            } else if (daw::app::WillCountIn(state->audio)) {
+                ev = TransportEvent::RecordPressedWithCountIn;
+            } else {
+                ev = TransportEvent::RecordPressed;
+            }
             daw::app::DispatchTransportEvent(hwnd, *state, ev, /*rewindOnStop=*/true);
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
@@ -2632,8 +2642,14 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             if (PtInRect(&state->ui.recordRect, pt)) {
                 using daw::services::TransportEvent;
-                const auto ev = state->audio.recording ? TransportEvent::StopPressed
-                                                       : TransportEvent::RecordPressed;
+                TransportEvent ev;
+                if (state->audio.recording || state->audio.countingIn) {
+                    ev = TransportEvent::StopPressed;
+                } else if (daw::app::WillCountIn(state->audio)) {
+                    ev = TransportEvent::RecordPressedWithCountIn;
+                } else {
+                    ev = TransportEvent::RecordPressed;
+                }
                 daw::app::DispatchTransportEvent(hwnd, *state, ev, /*rewindOnStop=*/true);
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
