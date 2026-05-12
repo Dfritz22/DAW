@@ -3669,93 +3669,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             daw::ui::DockLayout(state->ui.dockRoot.get(), bodyRect,
                                 state->ui.dockLayout, &state->ui.dockSplitters);
 
-            SelectObject(memDc, smallFont);
-            const int tabH = Dpi(daw::ui::kDockTabStripHeightPx);
-            for (const auto& leaf : state->ui.dockLayout) {
-                const RECT leafRect = leaf.rect;
-
-                // Lone primary panels render full-bleed (no tab strip). As
-                // soon as another panel docks alongside, the strip appears
-                // — but the primary panel's own tab can't be dragged out.
-                if (!daw::ui::DockLeafShowsTabStrip(leaf.node)) {
-                    const daw::ui::PanelDef& def = daw::ui::PanelGet(leaf.activePanel);
-                    def.draw(memDc, leafRect, *state);
-                    continue;
-                }
-
-                // Reserve tab strip across the top of the leaf, then draw
-                // panel into the remaining content rect.
-                const int  stripH   = std::min<int>(tabH, leafRect.bottom - leafRect.top);
-                const RECT stripRect{leafRect.left, leafRect.top,
-                                     leafRect.right, leafRect.top + stripH};
-                const RECT contentRect{leafRect.left, leafRect.top + stripH,
-                                       leafRect.right, leafRect.bottom};
-
-                // Strip background
-                HBRUSH stripBg = CreateSolidBrush(RGB(38, 41, 46));
-                FillRect(memDc, &stripRect, stripBg);
-                DeleteObject(stripBg);
-                // 1px separator under the strip
-                HBRUSH sepBr = CreateSolidBrush(RGB(70, 74, 81));
-                RECT sep{stripRect.left, stripRect.bottom - 1, stripRect.right, stripRect.bottom};
-                FillRect(memDc, &sep, sepBr);
-                DeleteObject(sepBr);
-
-                // Tab buttons
-                const int tabPad = Dpi(10);
-                const int tabGap = Dpi(2);
-                int tabX = stripRect.left + Dpi(4);
-                SetBkMode(memDc, TRANSPARENT);
-                for (int ti = 0; ti < static_cast<int>(leaf.node->panels.size()); ++ti) {
-                    const daw::ui::PanelKind pk = leaf.node->panels[static_cast<size_t>(ti)];
-                    const daw::ui::PanelDef& pd = daw::ui::PanelGet(pk);
-                    SIZE sz{};
-                    GetTextExtentPoint32W(memDc, pd.title, lstrlenW(pd.title), &sz);
-                    const int tabW = sz.cx + 2 * tabPad;
-                    RECT tabRect{tabX, stripRect.top + 2, tabX + tabW, stripRect.bottom - 1};
-                    const bool isActive = (ti == leaf.node->activeTab);
-                    HBRUSH tabBg = CreateSolidBrush(isActive ? RGB(58, 62, 70) : RGB(46, 49, 55));
-                    FillRect(memDc, &tabRect, tabBg);
-                    DeleteObject(tabBg);
-                    if (isActive) {
-                        HBRUSH topAccent = CreateSolidBrush(RGB(110, 150, 220));
-                        RECT acc{tabRect.left, tabRect.top, tabRect.right, tabRect.top + Dpi(2)};
-                        FillRect(memDc, &acc, topAccent);
-                        DeleteObject(topAccent);
-                    }
-                    SetTextColor(memDc, isActive ? RGB(235, 238, 244) : RGB(170, 175, 184));
-                    DrawTextW(memDc, pd.title, -1, &tabRect,
-                              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-                    state->ui.dockTabs.push_back(daw::ui::DockTabHit{tabRect, leaf.node, ti});
-                    tabX += tabW + tabGap;
-                }
-
-                const daw::ui::PanelDef& def = daw::ui::PanelGet(leaf.activePanel);
-                def.draw(memDc, contentRect, *state);
-            }
-
-            // Draw splitters as a thin divider line (centered on the hit
-            // zone rect). Highlighted while being dragged.
-            for (const auto& sp : state->ui.dockSplitters) {
-                const bool active = (state->ui.draggingSplitter && state->ui.dragSplitterNode == sp.node);
-                const COLORREF col = active ? RGB(110, 150, 220) : RGB(70, 74, 81);
-                HBRUSH br = CreateSolidBrush(col);
-                if (sp.horizontal) {
-                    const int midY = (sp.rect.top + sp.rect.bottom) / 2;
-                    RECT line{sp.rect.left, midY, sp.rect.right, midY + 1};
-                    FillRect(memDc, &line, br);
-                } else {
-                    // Vertical splitter: draw the 1px divider one column to
-                    // the LEFT of the geometric center so it sits at the
-                    // right edge of the left leaf rather than at the first
-                    // column of the right leaf (which would overdraw
-                    // content like the playhead at its home position).
-                    const int midX = (sp.rect.left + sp.rect.right) / 2;
-                    RECT line{midX - 1, sp.rect.top, midX, sp.rect.bottom};
-                    FillRect(memDc, &line, br);
-                }
-                DeleteObject(br);
-            }
+            // Render dock leaves (panel content + per-leaf tab strip) and
+            // splitter dividers. Side effect: populates state.ui.dockTabs
+            // for the tab hit-test in WM_LBUTTONDOWN.
+            UiDrawDockLeavesAndSplitters(memDc, *state, smallFont);
 
             // ── Tab-drag drop preview (Phase 2.2c) ──────────────────────
             // Translucent accent fill over the resolved drop region plus a
