@@ -85,9 +85,13 @@ std::wstring DockGetLayoutFilePath();
 std::string DockSerializeToJson(const DockNode* root,
                                 const std::vector<DockFloatingPanel>& floating);
 
-// Parse a UTF-8 JSON string back into a document. Accepts both schema v2
-// (versioned wrapper) and schema v1 (bare dock tree). Returns a document
-// with `root == nullptr` on any parse / validation failure.
+// Parse a UTF-8 JSON string back into a document. Schema gate is strict:
+// only documents with `"version": 2` (and a valid root + floating list)
+// are accepted; anything else (missing version, version != 2, malformed,
+// failed validation) returns a document with `root == nullptr` so the
+// caller can fall back to `DockBuildDefault()`. There is no in-process
+// v1 → v2 migrator — pre-production removed all shipped v1 files; future
+// schema bumps must add an explicit migrator here.
 DockLayoutDocument DockDeserializeFromJson(const std::string& json);
 
 // ── Filesystem ops ──────────────────────────────────────────────────────────

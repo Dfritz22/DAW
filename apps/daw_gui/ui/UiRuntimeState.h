@@ -173,9 +173,10 @@ struct UiRuntimeState {
     std::uint64_t trimOrigSourceOffset {0};
 
     // ── Dock tree ────────────────────────────────────────────────────────
-    // Owns the panel layout. Built lazily on first WM_PAINT (or after a
-    // future "Reset Layout" command). Nullptr until then; renderer falls
-    // back to the legacy layout in that case.
+    // Owns the panel layout. Built lazily on first WM_PAINT (from the
+    // persisted layout.json or DockBuildDefault() if absent/invalid).
+    // Nullptr only during the first paint; the renderer early-returns in
+    // that window rather than rendering anything legacy.
     std::unique_ptr<daw::ui::DockNode>        dockRoot;
     std::vector<daw::ui::DockLeafLayout>      dockLayout;
     std::vector<daw::ui::DockSplitterLayout>  dockSplitters;

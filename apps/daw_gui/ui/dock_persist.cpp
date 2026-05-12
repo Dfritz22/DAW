@@ -474,8 +474,9 @@ DockLayoutDocument DockDeserializeFromJson(const std::string& json) {
             if (p.peek() == ',') { ++p.pos; continue; }
         }
         // Strict version gate: layout.json is owned by us, no shipped
-        // legacy versions exist. Anything missing or off-version is
-        // discarded so the caller falls back to DockBuildDefault().
+        // v1 files exist (the v1 bare-tree fallback was removed pre-
+        // production). Anything missing or off-version is discarded so
+        // the caller falls back to DockBuildDefault().
         if (!sawVersion || version != 2) return {};
         if (!root) return {};
         doc.root = std::move(root);
