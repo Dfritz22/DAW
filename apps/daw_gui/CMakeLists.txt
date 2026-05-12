@@ -4,6 +4,7 @@ add_executable(daw_gui WIN32
     ui/draw.cpp
     ui/panel.cpp
     ui/dock.cpp
+    ui/dock_drop.cpp
     ui/dock_persist.cpp
     io/wav_io.cpp
     io/project_io.cpp

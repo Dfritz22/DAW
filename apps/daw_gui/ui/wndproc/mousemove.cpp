@@ -1,19 +1,13 @@
 #include "ui/wndproc/mousemove.h"
 
 #include "daw_timeline.h"      // SamplesPerBeat
+#include "ui/dock_drop.h"      // ResolveDropTarget, kDragTabThresholdPx
 #include "ui/dpi.h"
 #include "ui/layout.h"
 #include "ui/UiRuntimeState.h" // kFaderMin/MaxDb, kTopBarHeight, kStatusBarHeight
 
 #include <windowsx.h>
 #include <algorithm>
-
-// Constant defined locally in main.cpp. Match the value there.
-namespace { constexpr int kDragTabThresholdPx = 4; }
-
-// Forward decl — defined in main.cpp until dock-drag-resolve moves
-// to its own module.
-bool ResolveDropTarget(AppState& state, POINT pt);
 
 LRESULT WndProcOnMouseMove(HWND hwnd, LPARAM lParam, AppState& state) {
     // ── Dock tab drag update ────────────────────────────────────────
