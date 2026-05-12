@@ -12,6 +12,7 @@
 #include "audio/engine_utils.h"
 #include "audio/transport_adapter.h"
 #include "vm/timeline_zoom.h"
+#include "ui/wndproc/wheel.h"
 
 using daw::internal::core::DefaultInsertBypass;
 using daw::internal::core::DefaultInsertConfig;
@@ -1853,41 +1854,10 @@ bool StartPlayback(HWND hwnd, AppState& state) {
 }
 
 // ── Dock-aware layout for hit-tests ─────────────────────────────────────────
-// Builds a LayoutRects from the cached dock leaf rects so mouse hit-testing
-// follows whatever the user has resized panels to (instead of the legacy
-// fixed UiLayoutComputeLayout). The Tracks panel takes over `leftPanel`'s
-// role; the Buses leaf gets remembered separately for bus hit-tests.
-static RECT FindDockLeafRect(const AppState& state, daw::ui::PanelKind kind, const RECT& fallback) {
-    for (const auto& leaf : state.ui.dockLayout) {
-        if (leaf.activePanel == kind) {
-            // Strip the tab strip from the top — that's painted by the dock
-            // chrome, not by the panel itself, so hit-tests must use the
-            // content rect to match the panel's drawn coordinates. Leaves
-            // without a tab strip (lone primary panel) need no adjustment.
-            RECT r = leaf.rect;
-            if (daw::ui::DockLeafShowsTabStrip(leaf.node)) {
-                const int stripH = std::min<int>(Dpi(daw::ui::kDockTabStripHeightPx),
-                                                 r.bottom - r.top);
-                r.top += stripH;
-            }
-            return r;
-        }
-    }
-    return fallback;
-}
-
-static LayoutRects ComputeHitTestLayout(HWND hwnd, const AppState& state) {
-    RECT client{};
-    GetClientRect(hwnd, &client);
-    LayoutRects fallback = UiLayoutComputeLayout(client);
-    if (state.ui.dockLayout.empty()) return fallback;
-    LayoutRects out{};
-    out.topBar    = fallback.topBar;
-    out.leftPanel = FindDockLeafRect(state, daw::ui::PanelKind::Tracks,  fallback.leftPanel);
-    out.ruler     = FindDockLeafRect(state, daw::ui::PanelKind::Ruler,   fallback.ruler);
-    out.arrange   = FindDockLeafRect(state, daw::ui::PanelKind::Arrange, fallback.arrange);
-    return out;
-}
+// FindDockLeafRect / ComputeHitTestLayout were hoisted to ui/layout.{h,cpp}
+// (UiLayoutFindDockLeafRect / UiLayoutComputeHitTestLayout) so per-message
+// handler files extracted from WindowProc can share the same dock-aware
+// layout without depending on main.cpp internals.
 
 // ── Tab drag drop-target resolution (Phase 2.2b) ────────────────────────────
 // Activate-distance threshold for promoting a tab click into a tab drag.
@@ -2725,7 +2695,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
             RECT client{};
             GetClientRect(hwnd, &client);
-            const LayoutRects layout = ComputeHitTestLayout(hwnd, *state);
+            const LayoutRects layout = UiLayoutComputeHitTestLayout(hwnd, *state);
 
             // ── Insert inspector click handling ──────────────────────────
             if (state->ui.fxInspectorOpen && state->ui.fxInspectorIndex >= 0) {
@@ -3124,7 +3094,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         {
             RECT client{};
             GetClientRect(hwnd, &client);
-            const LayoutRects layout = ComputeHitTestLayout(hwnd, *state);
+            const LayoutRects layout = UiLayoutComputeHitTestLayout(hwnd, *state);
             const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
 
             if (!PtInRect(&layout.leftPanel, pt) && !PtInRect(&layout.arrange, pt)) {
@@ -3244,7 +3214,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (state->ui.draggingPlayhead) {
             RECT client{};
             GetClientRect(hwnd, &client);
-            const LayoutRects layout = ComputeHitTestLayout(hwnd, *state);
+            const LayoutRects layout = UiLayoutComputeHitTestLayout(hwnd, *state);
             const float beat = std::max(0.0f, UiLayoutXToBeat(layout.ruler, *state, GET_X_LPARAM(lParam)));
             state->ui.playheadBeat = UiLayoutSnapBeat(beat);
             InvalidateRect(hwnd, nullptr, FALSE);
@@ -3255,7 +3225,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             state->ui.trimClipIndex < static_cast<int>(state->core.project.clips.size())) {
             RECT client{};
             GetClientRect(hwnd, &client);
-            const LayoutRects layout = ComputeHitTestLayout(hwnd, *state);
+            const LayoutRects layout = UiLayoutComputeHitTestLayout(hwnd, *state);
             const float mouseBeat = UiLayoutSnapBeat(std::max(0.0f, UiLayoutXToBeat(layout.arrange, *state, GET_X_LPARAM(lParam))));
             ClipItem& clip = state->core.project.clips[static_cast<size_t>(state->ui.trimClipIndex)];
             if (state->ui.trimIsLeft) {
@@ -3278,7 +3248,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (state->ui.draggingFader && state->ui.dragFaderTrack >= 0) {
             RECT client{};
             GetClientRect(hwnd, &client);
-            const LayoutRects layout = ComputeHitTestLayout(hwnd, *state);
+            const LayoutRects layout = UiLayoutComputeHitTestLayout(hwnd, *state);
             RECT rail{};
             RECT knob{};
             UiLayoutGetTrackFaderRects(layout.leftPanel, state->ui.dragFaderTrack, &rail, &knob, state->ui.tracksScrollY);
@@ -3388,7 +3358,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         {
             RECT client{};
             GetClientRect(hwnd, &client);
-            const LayoutRects layout = ComputeHitTestLayout(hwnd, *state);
+            const LayoutRects layout = UiLayoutComputeHitTestLayout(hwnd, *state);
 
             const int mouseX = GET_X_LPARAM(lParam);
             const int mouseY = GET_Y_LPARAM(lParam);
@@ -3525,80 +3495,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         return 0;
     case WM_MOUSEWHEEL:
-        if (state == nullptr) {
-            return 0;
-        }
-        {
-            const short delta = GET_WHEEL_DELTA_WPARAM(wParam);
-            const bool ctrl = (GET_KEYSTATE_WPARAM(wParam) & MK_CONTROL) != 0;
-
-            // Determine cursor location in client coords.
-            POINT wpt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-            ScreenToClient(hwnd, &wpt);
-            const LayoutRects wlayout = ComputeHitTestLayout(hwnd, *state);
-
-            // Wheel over the left panel scrolls the tracks list vertically.
-            if (PtInRect(&wlayout.leftPanel, wpt) &&
-                wpt.y >= UiLayoutTracksRegionTop(wlayout.leftPanel) &&
-                wpt.y <  UiLayoutTracksRegionBottom(wlayout.leftPanel)) {
-                const int step = Dpi(kTrackRowHeight);
-                const int notches = delta / WHEEL_DELTA;
-                state->ui.tracksScrollY -= notches * step;
-                const int maxScroll = UiLayoutMaxTracksScrollY(wlayout.leftPanel, *state);
-                state->ui.tracksScrollY = std::clamp(state->ui.tracksScrollY, 0, maxScroll);
-                InvalidateRect(hwnd, nullptr, FALSE);
-                return 0;
-            }
-
-            if (ctrl) {
-                const float factor = (delta > 0) ? daw::vm::kWheelZoomInFactor : daw::vm::kWheelZoomOutFactor;
-                const int focusX = std::clamp(wpt.x, wlayout.arrange.left, wlayout.arrange.right);
-                const float beatAtCursor = UiLayoutXToBeat(wlayout.arrange, *state, focusX);
-                const auto z = daw::vm::ZoomVisibleAround(state->ui.viewStartBeat,
-                                                           state->ui.viewBeatsVisible,
-                                                           beatAtCursor, factor);
-                state->ui.viewStartBeat    = z.viewStartBeat;
-                state->ui.viewBeatsVisible = z.viewBeatsVisible;
-            } else if ((GET_KEYSTATE_WPARAM(wParam) & MK_SHIFT) != 0) {
-                // Shift+wheel over arrange: vertical track scroll.
-                const int step = Dpi(kTrackRowHeight);
-                const int notches = delta / WHEEL_DELTA;
-                state->ui.tracksScrollY -= notches * step;
-                const int maxScroll = UiLayoutMaxTracksScrollY(wlayout.leftPanel, *state);
-                state->ui.tracksScrollY = std::clamp(state->ui.tracksScrollY, 0, maxScroll);
-            } else {
-                const float step = state->ui.viewBeatsVisible * daw::vm::kWheelPanStepFraction;
-                state->ui.viewStartBeat = daw::vm::PanViewStartBeat(state->ui.viewStartBeat,
-                                                                     (delta > 0) ? -step : step);
-            }
-            state->ui.viewStartBeat = std::max(0.0f, state->ui.viewStartBeat);
-            InvalidateRect(hwnd, nullptr, FALSE);
-        }
-        return 0;
+        if (state == nullptr) return 0;
+        return WndProcOnMouseWheel(hwnd, wParam, lParam, *state);
     case WM_MOUSEHWHEEL:
-        if (state == nullptr) {
-            return 0;
-        }
-        {
-            const short delta = GET_WHEEL_DELTA_WPARAM(wParam);
-            const float step = state->ui.viewBeatsVisible * 0.08f;
-            state->ui.viewStartBeat += (delta > 0) ? -step : step;
-            state->ui.viewStartBeat = std::max(0.0f, state->ui.viewStartBeat);
-            InvalidateRect(hwnd, nullptr, FALSE);
-        }
-        return 0;
+        if (state == nullptr) return 0;
+        return WndProcOnMouseHWheel(hwnd, wParam, *state);
     case WM_CAPTURECHANGED:
-        if (state != nullptr) {
-            state->ui.draggingClip = false;
-            state->ui.dragClipIndex = -1;
-            state->ui.draggingFader = false;
-            state->ui.dragFaderTrack = -1;
-            state->ui.draggingPan = false;
-            state->ui.dragPanIndex = -1;
-            state->ui.draggingPlayhead = false;
-            state->ui.trimmingClip = false;
-            state->ui.trimClipIndex = -1;
-        }
+        if (state != nullptr) WndProcOnCaptureChanged(*state);
         return 0;
     case WM_ERASEBKGND:
         // Fully repainted in WM_PAINT using backbuffer.

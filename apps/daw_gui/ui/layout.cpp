@@ -142,6 +142,38 @@ LayoutRects UiLayoutComputeLayout(const RECT& client) {
     return l;
 }
 
+RECT UiLayoutFindDockLeafRect(const AppState& state, daw::ui::PanelKind kind, const RECT& fallback) {
+    for (const auto& leaf : state.ui.dockLayout) {
+        if (leaf.activePanel == kind) {
+            // Strip the tab strip from the top — that's painted by the dock
+            // chrome, not by the panel itself, so hit-tests must use the
+            // content rect to match the panel's drawn coordinates. Leaves
+            // without a tab strip (lone primary panel) need no adjustment.
+            RECT r = leaf.rect;
+            if (daw::ui::DockLeafShowsTabStrip(leaf.node)) {
+                const int stripH = std::min<int>(Dpi(daw::ui::kDockTabStripHeightPx),
+                                                 r.bottom - r.top);
+                r.top += stripH;
+            }
+            return r;
+        }
+    }
+    return fallback;
+}
+
+LayoutRects UiLayoutComputeHitTestLayout(HWND hwnd, const AppState& state) {
+    RECT client{};
+    GetClientRect(hwnd, &client);
+    LayoutRects fallback = UiLayoutComputeLayout(client);
+    if (state.ui.dockLayout.empty()) return fallback;
+    LayoutRects out{};
+    out.topBar    = fallback.topBar;
+    out.leftPanel = UiLayoutFindDockLeafRect(state, daw::ui::PanelKind::Tracks,  fallback.leftPanel);
+    out.ruler     = UiLayoutFindDockLeafRect(state, daw::ui::PanelKind::Ruler,   fallback.ruler);
+    out.arrange   = UiLayoutFindDockLeafRect(state, daw::ui::PanelKind::Arrange, fallback.arrange);
+    return out;
+}
+
 // ── Beat / coordinate math ────────────────────────────────────────────────────
 // Thin shims over daw::vm — both the draw path (ui/draw.cpp) and the
 // hit-test path (main.cpp WndProc) reach geometry through these helpers,

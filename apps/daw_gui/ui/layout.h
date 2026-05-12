@@ -36,3 +36,15 @@ float UiLayoutXToBeat(const RECT& arrange, const AppState& state, int x);
 int   UiLayoutBeatToX(const RECT& area, const AppState& state, float beat);
 int   UiLayoutTrackIndexFromY(const RECT& arrange, const AppState& state, int y);
 bool  UiLayoutClipRectForDraw(const RECT& arrange, const AppState& state, const ClipItem& clip, RECT* outRect);
+
+// Returns the content-rect (tab strip stripped) of the dock leaf currently
+// hosting `kind`, or `fallback` if no leaf hosts it. Used by hit-tests so
+// they follow user dock resizes/rearrangements rather than the legacy
+// fixed UiLayoutComputeLayout.
+RECT UiLayoutFindDockLeafRect(const AppState& state, daw::ui::PanelKind kind, const RECT& fallback);
+
+// Builds a LayoutRects from cached dock leaf rects (Tracks/Ruler/Arrange).
+// Falls back to UiLayoutComputeLayout when no dock layout has been built
+// yet (first paint hasn't happened). Top bar always uses the fallback
+// strip rect.
+LayoutRects UiLayoutComputeHitTestLayout(HWND hwnd, const AppState& state);

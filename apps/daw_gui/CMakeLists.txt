@@ -10,6 +10,7 @@ add_executable(daw_gui WIN32
     ai/automix_bridge.cpp
     core/automation.cpp
     ui/layout.cpp
+    ui/wndproc/wheel.cpp
     core/timeline.cpp
     core/timeline_edit.cpp
     core/internal_app_services.cpp
