@@ -26,3 +26,10 @@ void UiDrawLeftTrackPanel(HDC hdc, const RECT& rect, const AppState& state);
 void UiDrawBusesPanel(HDC hdc, const RECT& rect, const AppState& state);
 void UiDrawRuler(HDC hdc, const RECT& rect, const AppState& state);
 void UiDrawArrangeLanes(HDC hdc, const RECT& rect, const AppState& state);
+
+// Renders the tab-drag drop preview overlay (translucent fill + 2 px accent
+// border around dropPreviewRect, plus the 5-square compass centered on the
+// target leaf). No-ops when state.ui.dragTabActive is false or no drop
+// target has been resolved yet. Pure GDI; lives in draw.cpp so the WM_PAINT
+// handler in main.cpp stays focused on dock walking + composition.
+void UiDrawDockDropOverlay(HDC hdc, const AppState& state);
