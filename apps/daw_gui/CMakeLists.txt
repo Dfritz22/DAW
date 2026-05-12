@@ -17,6 +17,7 @@ add_executable(daw_gui WIN32
     ui/wndproc/lbutton.cpp
     ui/wndproc/mousemove.cpp
     ui/wndproc/paint.cpp
+    ui/wndproc/command.cpp
     ui/menu_build.cpp
     ui/dialogs.cpp
     ui/floating.cpp
