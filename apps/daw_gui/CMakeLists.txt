@@ -16,6 +16,7 @@ add_executable(daw_gui WIN32
     engine/EngineFacade.cpp
     audio/engine_utils.cpp
     audio/engine.cpp
+    audio/transport_adapter.cpp
     audio/DeviceFacade.cpp
     audio/device_mme.cpp
     audio/device_wasapi.cpp
@@ -31,6 +32,7 @@ target_link_libraries(daw_gui
         daw::dsp
         daw::core
         daw::engine
+        daw::services
     Winmm
     Comdlg32
     Ole32

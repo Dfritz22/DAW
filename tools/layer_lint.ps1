@@ -20,8 +20,9 @@ $LayerOrder = @(
     'io',
     'dsp',
     'core',
-    'engine'
-    # Future: 'services', 'vm', 'ui',
+    'engine',
+    'services'
+    # Future: 'vm', 'ui',
     #         'shell', 'app'
 )
 

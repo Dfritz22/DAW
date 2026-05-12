@@ -8,6 +8,7 @@
 
 using daw::dsp::EqualPowerPan;
 using daw::dsp::FloatToPcm16Clamped;
+using daw::dsp::ApplyGainAndPan;
 
 TEST(Mix, EqualPowerPanCentreIsHalfPower) {
     float l = 0.0f, r = 0.0f;
@@ -64,4 +65,37 @@ TEST(Mix, FloatToPcm16ClampedClipsOverrange) {
     FloatToPcm16Clamped(src.data(), dst.data(), static_cast<int>(src.size()));
     EXPECT_EQ(dst[0], 32767);
     EXPECT_EQ(dst[1], -32767);
+}
+
+TEST(Mix, ApplyGainAndPanScalesEqualPowerByGain) {
+    float l = 0.0f, r = 0.0f;
+    ApplyGainAndPan(2.0f, 0.0f, &l, &r);
+    EXPECT_NEAR(l, 2.0f * 0.70710678f, 1e-5f);
+    EXPECT_NEAR(r, 2.0f * 0.70710678f, 1e-5f);
+}
+
+TEST(Mix, ApplyGainAndPanFullLeftAndRight) {
+    float l = 0.0f, r = 0.0f;
+    ApplyGainAndPan(0.5f, -1.0f, &l, &r);
+    EXPECT_NEAR(l, 0.5f, 1e-5f);
+    EXPECT_NEAR(r, 0.0f, 1e-5f);
+
+    ApplyGainAndPan(0.5f, 1.0f, &l, &r);
+    EXPECT_NEAR(l, 0.0f, 1e-5f);
+    EXPECT_NEAR(r, 0.5f, 1e-5f);
+}
+
+TEST(Mix, ApplyGainAndPanZeroGainIsSilent) {
+    float l = 1.0f, r = 1.0f;
+    ApplyGainAndPan(0.0f, 0.3f, &l, &r);
+    EXPECT_FLOAT_EQ(l, 0.0f);
+    EXPECT_FLOAT_EQ(r, 0.0f);
+}
+
+TEST(Mix, ApplyGainAndPanClampsPan) {
+    float la = 0.0f, ra = 0.0f, lb = 0.0f, rb = 0.0f;
+    ApplyGainAndPan(1.0f, -10.0f, &la, &ra);
+    ApplyGainAndPan(1.0f, -1.0f,  &lb, &rb);
+    EXPECT_FLOAT_EQ(la, lb);
+    EXPECT_FLOAT_EQ(ra, rb);
 }

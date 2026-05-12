@@ -19,6 +19,17 @@ void EqualPowerPan(float pan, float* outGainL, float* outGainR) {
     *outGainR = std::sin(panRad);
 }
 
+void ApplyGainAndPan(float gainLin, float pan, float* outGainL, float* outGainR) {
+    if (outGainL == nullptr || outGainR == nullptr) {
+        return;
+    }
+    float panL = 0.0f;
+    float panR = 0.0f;
+    EqualPowerPan(pan, &panL, &panR);
+    *outGainL = gainLin * panL;
+    *outGainR = gainLin * panR;
+}
+
 void FloatToPcm16Clamped(const float* src, std::int16_t* dst, int sampleCount) {
     if (src == nullptr || dst == nullptr || sampleCount <= 0) {
         return;

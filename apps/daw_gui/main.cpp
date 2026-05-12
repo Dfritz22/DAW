@@ -10,6 +10,7 @@
 #include "ui/panel.h"
 #include "ai/automix_bridge.h"
 #include "audio/engine_utils.h"
+#include "audio/transport_adapter.h"
 
 using daw::internal::core::DefaultInsertBypass;
 using daw::internal::core::DefaultInsertConfig;
@@ -2421,19 +2422,17 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         if (wParam == VK_SPACE) {
-            if (state->audio.playing) {
-                if (state->audio.recording) {
-                    StopRecording(*state, true);
-                }
-                StopPlayback(*state, false);
-            } else {
-                StartPlayback(hwnd, *state);
-            }
+            // Toggle play. FSM handles "if recording, commit take first".
+            using daw::services::TransportEvent;
+            const auto ev = state->audio.playing ? TransportEvent::StopPressed
+                                                 : TransportEvent::PlayPressed;
+            daw::app::DispatchTransportEvent(hwnd, *state, ev, /*rewindOnStop=*/false);
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
         if (wParam == VK_HOME) {
-            StopPlayback(*state, true);
+            daw::app::DispatchTransportEvent(hwnd, *state,
+                daw::services::TransportEvent::StopPressed, /*rewindOnStop=*/true);
             state->ui.viewStartBeat = 0.0f;
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
@@ -2508,12 +2507,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         if (wParam == 'R') {
-            if (state->audio.recording) {
-                StopRecording(*state, true);
-                StopPlayback(*state, true);  // rewind so next take starts from beat 0
-            } else {
-                StartRecording(hwnd, *state);
-            }
+            using daw::services::TransportEvent;
+            const auto ev = state->audio.recording ? TransportEvent::StopPressed
+                                                   : TransportEvent::RecordPressed;
+            daw::app::DispatchTransportEvent(hwnd, *state, ev, /*rewindOnStop=*/true);
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
@@ -2619,29 +2616,25 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
 
             if (PtInRect(&state->ui.playRect, pt)) {
-                if (state->audio.playing) {
-                    StopPlayback(*state, false);
-                } else {
-                    StartPlayback(hwnd, *state);
-                }
+                using daw::services::TransportEvent;
+                const auto ev = state->audio.playing ? TransportEvent::StopPressed
+                                                     : TransportEvent::PlayPressed;
+                daw::app::DispatchTransportEvent(hwnd, *state, ev, /*rewindOnStop=*/false);
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
             if (PtInRect(&state->ui.stopRect, pt)) {
-                if (state->audio.recording) {
-                    StopRecording(*state, true);
-                }
-                StopPlayback(*state, true);
+                // Stop button always rewinds.
+                daw::app::DispatchTransportEvent(hwnd, *state,
+                    daw::services::TransportEvent::StopPressed, /*rewindOnStop=*/true);
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
             if (PtInRect(&state->ui.recordRect, pt)) {
-                if (state->audio.recording) {
-                    StopRecording(*state, true);
-                    StopPlayback(*state, true);  // rewind so next take starts from beat 0
-                } else {
-                    StartRecording(hwnd, *state);
-                }
+                using daw::services::TransportEvent;
+                const auto ev = state->audio.recording ? TransportEvent::StopPressed
+                                                       : TransportEvent::RecordPressed;
+                daw::app::DispatchTransportEvent(hwnd, *state, ev, /*rewindOnStop=*/true);
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }

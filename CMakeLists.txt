@@ -36,6 +36,7 @@ add_subdirectory(libs/io)
 add_subdirectory(libs/dsp)
 add_subdirectory(libs/core)
 add_subdirectory(libs/engine)
+add_subdirectory(libs/services)
 
 # ── Existing packages / apps ─────────────────────────────────────────────────
 add_subdirectory(packages/daw_core)

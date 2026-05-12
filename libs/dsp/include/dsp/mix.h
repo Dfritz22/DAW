@@ -11,6 +11,13 @@ namespace daw::dsp {
 // `pan` is clamped internally to [-1, 1]. Output pointers must be non-null.
 void EqualPowerPan(float pan, float* outGainL, float* outGainR);
 
+// Combine a linear gain with an equal-power pan into final stereo gains:
+//   *outGainL = gainLin * EqualPowerPan(pan).L
+//   *outGainR = gainLin * EqualPowerPan(pan).R
+// `pan` is clamped to [-1, 1]. Output pointers must be non-null.
+// Pure; realtime-safe.
+void ApplyGainAndPan(float gainLin, float pan, float* outGainL, float* outGainR);
+
 // Convert a float buffer to interleaved int16 PCM with per-sample clamping
 // to [-1, 1]. `sampleCount` is the total number of float samples (= frames*2
 // for stereo). Pure; realtime-safe.

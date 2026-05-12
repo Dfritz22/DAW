@@ -29,6 +29,43 @@ void EnsureInsertDspStateStorage(const CoreState& core, AudioRuntimeState& audio
 // Track audibility (mute / solo logic – audio domain)
 bool IsTrackAudible(const CoreState& core, int trackIndex);
 
+// Resolved per-track routing for the offline mix-down path. Combines the
+// track's mute state, its bus's mute state, and computes equal-power
+// pan + (track dB + bus dB) gain coefficients.
+//   - audible: false when the track is out of range, the track is muted,
+//     the resolved bus is muted, or the bus index is out of range.
+//   - busIndex: the track's busIndex clamped to [0, kBusCount).
+//   - gainL/gainR: linear stereo gains (only valid when audible).
+struct TrackBusMix {
+    bool  audible;
+    int   busIndex;
+    float gainL;
+    float gainR;
+};
+TrackBusMix ResolveTrackBusMix(const CoreState& core, int trackIndex);
+
+// Realtime per-track resolve for the audio callback path. Differs from
+// ResolveTrackBusMix in that:
+//   - audibility uses the solo-aware IsTrackAudible (offline does not),
+//   - track gain/pan/bus come from automation accessors (offline reads
+//     the static struct fields),
+//   - bus dB/pan are NOT folded in (the realtime path applies bus gain
+//     in a separate per-bus stage that reads the bus-scratch buffer).
+// gainL/gainR are the track's stereo gain post-pan, ready to mix into
+// the per-bus scratch buffer. Only meaningful when audible == true.
+TrackBusMix ResolveTrackRealtimeMix(const CoreState& core, int trackIndex);
+
+// Realtime per-bus resolve for the bus→master mix stage. Bus 3 is treated
+// as the master bus and skips the pan stage (gainL == gainR == busGain).
+//   - active: false when the bus is muted or out of range.
+//   - gainL/gainR: linear stereo gains (only valid when active).
+struct BusRealtimeMix {
+    bool  active;
+    float gainL;
+    float gainR;
+};
+BusRealtimeMix ResolveBusRealtimeMix(const CoreState& core, int busIndex);
+
 // Project-length calculation
 std::uint64_t ComputeProjectEndFrameLocked(const CoreState& core);
 

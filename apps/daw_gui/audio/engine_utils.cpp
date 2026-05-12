@@ -1,7 +1,9 @@
 #include "engine_utils.h"
+#include "core/automation.h"
 #include "core/timeline.h"
 #include "core/track_audibility.h"
 #include "dsp/chain.h"
+#include "dsp/mix.h"
 #include "dsp/resample.h"
 #include "dsp/util.h"
 #include "engine/clip_reader.h"
@@ -47,6 +49,62 @@ void EnsureInsertDspStateStorage(const CoreState& core, AudioRuntimeState& audio
 
 bool IsTrackAudible(const CoreState& core, int trackIndex) {
     return daw::core::IsTrackAudible(core.project.tracks, trackIndex);
+}
+
+TrackBusMix ResolveTrackBusMix(const CoreState& core, int trackIndex) {
+    TrackBusMix r{ /*audible*/ false, /*busIndex*/ 0, /*gainL*/ 0.0f, /*gainR*/ 0.0f };
+    const int trackCount = static_cast<int>(core.project.tracks.size());
+    if (trackIndex < 0 || trackIndex >= trackCount) {
+        return r;
+    }
+    const auto& t = core.project.tracks[static_cast<size_t>(trackIndex)];
+    r.busIndex = std::clamp(t.busIndex, 0, kBusCount - 1);
+
+    if (t.mute) return r;
+    if (r.busIndex >= static_cast<int>(core.project.buses.size())) return r;
+    if (core.project.buses[static_cast<size_t>(r.busIndex)].mute) return r;
+
+    const float gain = daw::dsp::DbToLinear(t.gainDb + BusGainDbAt(core, r.busIndex));
+    const float pan  = std::clamp(t.pan + BusPanAt(core, r.busIndex), -1.0f, 1.0f);
+    daw::dsp::ApplyGainAndPan(gain, pan, &r.gainL, &r.gainR);
+    r.audible = true;
+    return r;
+}
+
+TrackBusMix ResolveTrackRealtimeMix(const CoreState& core, int trackIndex) {
+    TrackBusMix r{ /*audible*/ false, /*busIndex*/ 0, /*gainL*/ 0.0f, /*gainR*/ 0.0f };
+    if (trackIndex < 0 || trackIndex >= static_cast<int>(core.project.tracks.size())) {
+        return r;
+    }
+    if (!IsTrackAudible(core, trackIndex)) {
+        return r;
+    }
+    r.busIndex = std::clamp(AutomationTrackBusIndexAt(core, trackIndex), 0, kBusCount - 1);
+    const float gain = daw::dsp::DbToLinear(AutomationTrackGainDbAt(core, trackIndex));
+    const float pan  = AutomationTrackPanAt(core, trackIndex);
+    daw::dsp::ApplyGainAndPan(gain, pan, &r.gainL, &r.gainR);
+    r.audible = true;
+    return r;
+}
+
+BusRealtimeMix ResolveBusRealtimeMix(const CoreState& core, int busIndex) {
+    BusRealtimeMix r{ /*active*/ false, /*gainL*/ 0.0f, /*gainR*/ 0.0f };
+    if (busIndex < 0 || busIndex >= kBusCount) {
+        return r;
+    }
+    if (BusMuteAt(core, busIndex)) {
+        return r;
+    }
+    const float busGain = daw::dsp::DbToLinear(BusGainDbAt(core, busIndex));
+    // Bus index kBusCount-1 is the master bus and skips the pan stage.
+    if (busIndex == kBusCount - 1) {
+        r.gainL = busGain;
+        r.gainR = busGain;
+    } else {
+        daw::dsp::ApplyGainAndPan(busGain, BusPanAt(core, busIndex), &r.gainL, &r.gainR);
+    }
+    r.active = true;
+    return r;
 }
 
 std::uint64_t ComputeProjectEndFrameLocked(const CoreState& core) {
