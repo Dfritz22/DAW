@@ -1,9 +1,15 @@
 #include "daw_sdk.h"
 #include <windowsx.h>
+#include <algorithm>
 #include "core/internal_app_services.h"
 #include "ui/draw.h"
 #include "ui/layout.h"
+#include "ui/dpi.h"
+#include "ui/dock.h"
+#include "ui/dock_persist.h"
+#include "ui/panel.h"
 #include "ai/automix_bridge.h"
+#include "audio/engine_utils.h"
 
 using daw::internal::core::DefaultInsertBypass;
 using daw::internal::core::DefaultInsertConfig;
@@ -30,6 +36,7 @@ void ApplyBalancePan(float pan, float* left, float* right) {
 }
 
 void ImportWavFiles(HWND hwnd, AppState& state);
+void ConvertImportedAudioToProjectSampleRate(HWND hwnd, AppState& state);
 
 // Forward declarations for audio orchestration (defined after DoAutoMaster/DoExportMix)
 void StopPlayback(AppState& state, bool rewind);
@@ -93,11 +100,19 @@ static void AsDlgReadFields(HWND hwnd, AudioSettingsDlgData& d) {
 
 static void AsDlgUpdateStatus(HWND hwnd, const AppState& state) {
     wchar_t buf[256]{};
-    const int sr  = state.audio.activeDeviceSampleRate   > 0 ? state.audio.activeDeviceSampleRate   : state.core.project.projectSampleRate;
+    // Status reflects the actual open device only -- never the project SR,
+    // which is independent of any device (managed via Project > Sample Rate).
+    const int sr  = state.audio.activeDeviceSampleRate;
     const int bsz = state.audio.activeDeviceBufferFrames > 0 ? state.audio.activeDeviceBufferFrames : state.audio.preferredBufferFrames;
     if (sr > 0) {
         const double ms = bsz > 0 ? static_cast<double>(bsz) / static_cast<double>(sr) * 1000.0 : 0.0;
-        swprintf_s(buf, L"Active: %d Hz  /  %d frames  (~%.1f ms latency)", sr, bsz, ms);
+        const int projSR = state.core.project.projectSampleRate;
+        if (projSR > 0 && projSR != sr) {
+            swprintf_s(buf, L"Active: %d Hz  /  %d frames  (~%.1f ms)   |   Project: %d Hz (real-time SRC)",
+                       sr, bsz, ms, projSR);
+        } else {
+            swprintf_s(buf, L"Active: %d Hz  /  %d frames  (~%.1f ms latency)", sr, bsz, ms);
+        }
     } else {
         wcscpy_s(buf, L"Active: (device not yet opened)");
     }
@@ -141,7 +156,7 @@ static LRESULT CALLBACK AudioSettingsDlgProc(HWND hwnd, UINT msg, WPARAM wParam,
         makeLabel(L"Backend:",        LX, y + 2, 130, ROW_H); makeCombo(kAsDlgBackend,    CX, y, CW, 120);  y += GAP;
         makeLabel(L"Output Device:",  LX, y + 2, 130, ROW_H); makeCombo(kAsDlgOutputDev,  CX, y, CW, 200);  y += GAP;
         makeLabel(L"Input Device:",   LX, y + 2, 130, ROW_H); makeCombo(kAsDlgInputDev,   CX, y, CW, 200);  y += GAP;
-        makeLabel(L"Sample Rate:",    LX, y + 2, 130, ROW_H); makeCombo(kAsDlgSampleRate, CX, y, CW, 180);  y += GAP;
+        makeLabel(L"Device Sample Rate:", LX, y + 2, 140, ROW_H); makeCombo(kAsDlgSampleRate, CX, y, CW, 180);  y += GAP;
         makeLabel(L"Buffer Size:",    LX, y + 2, 130, ROW_H); makeCombo(kAsDlgBufferSize, CX, y, CW, 180);  y += GAP + 6;
 
         // Horizontal separator
@@ -160,7 +175,7 @@ static LRESULT CALLBACK AudioSettingsDlgProc(HWND hwnd, UINT msg, WPARAM wParam,
 
         // Note
         HWND hNote = CreateWindowExW(0, L"STATIC",
-            L"Note: Changes take effect on next Play or Record.",
+            L"Device settings only. Project sample rate: Project > Sample Rate. SRC applied if they differ.",
             WS_CHILD | WS_VISIBLE | SS_LEFT,
             LX, y, 452, ROW_H, hwnd, nullptr, hInst, nullptr);
         SendMessageW(hNote, WM_SETFONT, reinterpret_cast<WPARAM>(hFont), TRUE);
@@ -204,30 +219,44 @@ static LRESULT CALLBACK AudioSettingsDlgProc(HWND hwnd, UINT msg, WPARAM wParam,
         {
             const int stdRates[] = {22050, 44100, 48000, 88200, 96000, 176400, 192000};
             for (int r : stdRates) d->sampleRates.push_back(r);
+            // Device-side SRs only. The project's SR is independent and is
+            // managed via Project > Sample Rate -- it must not appear in the
+            // device list (selecting it here would not change the project).
             auto addSR = [&](int sr) {
                 if (sr > 0 && std::find(d->sampleRates.begin(), d->sampleRates.end(), sr) == d->sampleRates.end())
                     d->sampleRates.push_back(sr);
             };
             addSR(state.audio.preferredSampleRate);
-            addSR(state.core.project.projectSampleRate);
             addSR(state.audio.activeDeviceSampleRate);
             std::sort(d->sampleRates.begin(), d->sampleRates.end());
             HWND hSr = GetDlgItem(hwnd, kAsDlgSampleRate);
-            int selSR = 1; // default 44100
+            int selSR = -1;
             for (size_t i = 0; i < d->sampleRates.size(); ++i) {
                 wchar_t rbuf[32]{};
                 swprintf_s(rbuf, L"%d Hz", d->sampleRates[i]);
                 SendMessageW(hSr, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(rbuf));
-                const int target = (state.audio.preferredSampleRate > 0) ? state.audio.preferredSampleRate : state.core.project.projectSampleRate;
-                if (d->sampleRates[i] == target) selSR = static_cast<int>(i);
+                if (state.audio.preferredSampleRate > 0 && d->sampleRates[i] == state.audio.preferredSampleRate)
+                    selSR = static_cast<int>(i);
+            }
+            if (selSR < 0) {
+                // Fallback: prefer 48000 if present, then 44100, else first.
+                for (size_t i = 0; i < d->sampleRates.size(); ++i) {
+                    if (d->sampleRates[i] == 48000) { selSR = static_cast<int>(i); break; }
+                }
+                if (selSR < 0) {
+                    for (size_t i = 0; i < d->sampleRates.size(); ++i) {
+                        if (d->sampleRates[i] == 44100) { selSR = static_cast<int>(i); break; }
+                    }
+                }
+                if (selSR < 0 && !d->sampleRates.empty()) selSR = 0;
             }
             SendMessageW(hSr, CB_SETCURSEL, selSR, 0);
         }
 
         // Buffer Size
         {
-            const int bufOpts[] = {64, 128, 256, 512, 1024, 2048};
-            for (int b : bufOpts) d->bufferSizes.push_back(b);
+            const int stdBufSizes[] = {64, 128, 256, 512, 1024, 2048};
+            for (int b : stdBufSizes) d->bufferSizes.push_back(b);
             HWND hBuf = GetDlgItem(hwnd, kAsDlgBufferSize);
             int selBuf = 2; // default 256
             for (size_t i = 0; i < d->bufferSizes.size(); ++i) {
@@ -243,10 +272,30 @@ static LRESULT CALLBACK AudioSettingsDlgProc(HWND hwnd, UINT msg, WPARAM wParam,
         return 0;
     }
     case WM_COMMAND: {
-        if (d == nullptr) return 0;
+        
         const int ctrlId = LOWORD(wParam);
         if (ctrlId == IDOK) {
             AsDlgReadFields(hwnd, *d);
+            // Many devices (USB class-compliant interfaces, the AXE-FX II,
+            // etc.) cannot change their sample rate from the host: the rate
+            // is hard-locked in the device firmware / driver control panel.
+            // If the user just picked a rate that the device has already
+            // demonstrated it won't honor, warn here and snap the field back
+            // to the truth -- otherwise the dialog would lie about what's
+            // actually going to happen on the next Play.
+            AppState& stateOK = *d->appState;
+            const int wantSR = stateOK.audio.preferredSampleRate;
+            const int actSR  = stateOK.audio.activeDeviceSampleRate;
+            if (wantSR > 0 && actSR > 0 && wantSR != actSR) {
+                wchar_t srMsg[512]{};
+                swprintf_s(srMsg,
+                    L"The selected device is currently open at %d Hz and is not accepting a sample-rate change to %d Hz.\n\n"
+                    L"Many USB audio interfaces are hard-locked to a single rate; the rate must be changed in the device's own driver / control panel (and the device may need to be reconnected).\n\n"
+                    L"Audio Settings will keep the device's actual sample rate (%d Hz).",
+                    actSR, wantSR, actSR);
+                MessageBoxW(hwnd, srMsg, L"Device sample rate not changed", MB_OK | MB_ICONWARNING);
+                stateOK.audio.preferredSampleRate = actSR;
+            }
             DestroyWindow(hwnd);
         } else if (ctrlId == IDCANCEL) {
             AppState& state = *d->appState;
@@ -355,120 +404,396 @@ static void ShowAudioSettingsDialog(HWND hwndParent, AppState& state) {
     InvalidateRect(hwndParent, nullptr, FALSE);
 }
 
-void ShowTopMenu(HWND hwnd, AppState& state, int menuKind, const RECT& menuRect) {
-    HMENU menu = CreatePopupMenu();
-    if (menu == nullptr) {
-        return;
+// ── Project Sample Rate dialog ───────────────────────────────────────────────
+// Stop-gap UI for setting the project's sample rate. The project SR is a
+// property of the project file (default 48000) and is independent of any
+// audio device's sample rate. It can only be changed here. Eventually this
+// will move into a proper Project Settings dialog and the New Project flow.
+
+struct ProjectSampleRateDlgData {
+    AppState* appState {nullptr};
+    int       result   {0};   // 0 = cancelled, otherwise the new SR
+};
+
+static constexpr int kPsrDlgEdit  = 2001;
+static constexpr int kPsrDlgCombo = 2002;
+
+static LRESULT CALLBACK ProjectSampleRateDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    ProjectSampleRateDlgData* d = reinterpret_cast<ProjectSampleRateDlgData*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+
+    switch (msg) {
+    case WM_CREATE: {
+        auto* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
+        d = reinterpret_cast<ProjectSampleRateDlgData*>(cs->lpCreateParams);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(d));
+
+        HINSTANCE hInst = GetModuleHandleW(nullptr);
+        HFONT hFont = reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+
+        auto makeLabel = [&](const wchar_t* text, int x, int y, int w, int h) {
+            HWND hc = CreateWindowExW(0, L"STATIC", text,
+                WS_CHILD | WS_VISIBLE | SS_LEFT,
+                x, y, w, h, hwnd, nullptr, hInst, nullptr);
+            SendMessageW(hc, WM_SETFONT, reinterpret_cast<WPARAM>(hFont), TRUE);
+        };
+        auto makeButton = [&](const wchar_t* text, int id, int x, int y, int w, int h) {
+            HWND hc = CreateWindowExW(0, L"BUTTON", text,
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+                x, y, w, h, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), hInst, nullptr);
+            SendMessageW(hc, WM_SETFONT, reinterpret_cast<WPARAM>(hFont), TRUE);
+        };
+
+        const int LX = 12, ROW_H = 22;
+        int y = 14;
+
+        makeLabel(L"Common rates:", LX, y + 2, 100, ROW_H);
+        HWND hCb = CreateWindowExW(WS_EX_CLIENTEDGE, L"COMBOBOX", nullptr,
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
+            120, y, 240, 200, hwnd,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kPsrDlgCombo)),
+            hInst, nullptr);
+        SendMessageW(hCb, WM_SETFONT, reinterpret_cast<WPARAM>(hFont), TRUE);
+        const int presets[] = {44100, 48000, 88200, 96000, 176400, 192000};
+        for (int sr : presets) {
+            wchar_t label[32]{};
+            swprintf_s(label, L"%d Hz", sr);
+            SendMessageW(hCb, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label));
+        }
+        y += 32;
+
+        makeLabel(L"Or custom:", LX, y + 2, 100, ROW_H);
+        HWND hEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", nullptr,
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL | ES_NUMBER,
+            120, y, 240, ROW_H, hwnd,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kPsrDlgEdit)),
+            hInst, nullptr);
+        SendMessageW(hEdit, WM_SETFONT, reinterpret_cast<WPARAM>(hFont), TRUE);
+        // Pre-fill with current project SR
+        const int currentSR = d->appState ? d->appState->core.project.projectSampleRate : 48000;
+        wchar_t curBuf[16]{};
+        swprintf_s(curBuf, L"%d", currentSR);
+        SetWindowTextW(hEdit, curBuf);
+        // Match combo selection if current SR is a preset
+        for (size_t i = 0; i < std::size(presets); ++i) {
+            if (presets[i] == currentSR) {
+                SendMessageW(hCb, CB_SETCURSEL, static_cast<int>(i), 0);
+                break;
+            }
+        }
+        y += 32;
+
+        // Note
+        HWND hNote = CreateWindowExW(0, L"STATIC",
+            L"Range: 8000 - 384000 Hz. Affects timeline and storage rate.",
+            WS_CHILD | WS_VISIBLE | SS_LEFT,
+            LX, y, 360, ROW_H, hwnd, nullptr, hInst, nullptr);
+        SendMessageW(hNote, WM_SETFONT, reinterpret_cast<WPARAM>(hFont), TRUE);
+        y += 30;
+
+        makeButton(L"Cancel", IDCANCEL, 178, y, 90, 26);
+        makeButton(L"OK",     IDOK,     276, y, 90, 26);
+        return 0;
+    }
+    case WM_COMMAND: {
+        const int ctrlId = LOWORD(wParam);
+        const int notifyCode = HIWORD(wParam);
+        if (ctrlId == kPsrDlgCombo && notifyCode == CBN_SELCHANGE) {
+            const int sel = static_cast<int>(SendDlgItemMessageW(hwnd, kPsrDlgCombo, CB_GETCURSEL, 0, 0));
+            const int presets[] = {44100, 48000, 88200, 96000, 176400, 192000};
+            if (sel >= 0 && sel < static_cast<int>(std::size(presets))) {
+                wchar_t buf[16]{};
+                swprintf_s(buf, L"%d", presets[sel]);
+                SetDlgItemTextW(hwnd, kPsrDlgEdit, buf);
+            }
+            return 0;
+        }
+        if (ctrlId == IDOK) {
+            wchar_t buf[16]{};
+            GetDlgItemTextW(hwnd, kPsrDlgEdit, buf, static_cast<int>(std::size(buf)));
+            const int sr = _wtoi(buf);
+            if (sr < 8000 || sr > 384000) {
+                MessageBoxW(hwnd, L"Sample rate must be between 8000 and 384000 Hz.",
+                    L"Invalid Sample Rate", MB_OK | MB_ICONWARNING);
+                return 0;
+            }
+            if (d != nullptr) d->result = sr;
+            DestroyWindow(hwnd);
+            return 0;
+        }
+        if (ctrlId == IDCANCEL) {
+            DestroyWindow(hwnd);
+            return 0;
+        }
+        return 0;
+    }
+    case WM_CLOSE:
+        DestroyWindow(hwnd);
+        return 0;
+    case WM_DESTROY:
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+static void ShowProjectSampleRateDialog(HWND hwndParent, AppState& state) {
+    ProjectSampleRateDlgData dlgData;
+    dlgData.appState = &state;
+    dlgData.result   = 0;
+
+    static bool sClassRegistered = false;
+    if (!sClassRegistered) {
+        WNDCLASSEXW wc{};
+        wc.cbSize        = sizeof(wc);
+        wc.style         = CS_HREDRAW | CS_VREDRAW;
+        wc.lpfnWndProc   = ProjectSampleRateDlgProc;
+        wc.hInstance     = GetModuleHandleW(nullptr);
+        wc.hCursor       = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_BTNFACE + 1);
+        wc.lpszClassName = L"DawProjectSampleRateDlg";
+        if (RegisterClassExW(&wc)) sClassRegistered = true;
     }
 
-    if (menuKind == 0) {
-        AppendMenuW(menu, MF_STRING, kCmdFileOpen,      L"Open Project...\tCtrl+O");
-        AppendMenuW(menu, MF_STRING, kCmdFileSave,      L"Save Project\tCtrl+S");
-        AppendMenuW(menu, MF_STRING, kCmdFileSaveAs,    L"Save Project As...");
-        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(menu, MF_STRING, kCmdFileImportWav, L"Import WAV...\tI");
-        AppendMenuW(menu, MF_STRING, kCmdFileExportWav,  L"Export Mix as WAV...");
-        AppendMenuW(menu, MF_STRING, kCmdAutoMaster,     L"Auto Master...");
-        AppendMenuW(menu, MF_STRING, kCmdMixReadiness,    L"Mix Readiness Check...");
-        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(menu, MF_STRING, kCmdFileExit, L"Exit");
-    } else if (menuKind == 1) {
-        AppendMenuW(menu, MF_STRING, kCmdViewZoomIn, L"Zoom In");
-        AppendMenuW(menu, MF_STRING, kCmdViewZoomOut, L"Zoom Out");
-        AppendMenuW(menu, MF_STRING, kCmdViewReset, L"Reset View");
-    } else if (menuKind == 2) {
-        DeviceRefreshInputDevices(state);
-        DeviceRefreshOutputDevices(state);
-        HMENU inputSub = CreatePopupMenu();
-        if (inputSub != nullptr) {
-            for (size_t i = 0; i < state.audio.inputDeviceNames.size(); ++i) {
-                const UINT cmdId = kCmdAudioInputBase + static_cast<UINT>(i);
-                UINT flags = MF_STRING;
-                if (state.audio.inputDeviceIds[i] == state.audio.selectedInputDeviceId) {
-                    flags |= MF_CHECKED;
-                }
-                AppendMenuW(inputSub, flags, cmdId, state.audio.inputDeviceNames[i].c_str());
-            }
-            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(inputSub), L"Input Device");
-        }
-        HMENU outputSub = CreatePopupMenu();
-        if (outputSub != nullptr) {
-            for (size_t i = 0; i < state.audio.outputDeviceNames.size(); ++i) {
-                const UINT cmdId = kCmdAudioOutputBase + static_cast<UINT>(i);
-                UINT flags = MF_STRING;
-                if (state.audio.outputDeviceIds[i] == state.audio.selectedOutputDeviceId) {
-                    flags |= MF_CHECKED;
-                }
-                AppendMenuW(outputSub, flags, cmdId, state.audio.outputDeviceNames[i].c_str());
-            }
-            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(outputSub), L"Output Device");
-        }
-        HMENU backendSub = CreatePopupMenu();
-        if (backendSub != nullptr) {
-            AppendMenuW(backendSub, MF_STRING | (state.audio.audioBackend == AudioBackend::MME ? MF_CHECKED : 0), kCmdAudioBackendMME, L"MME (Legacy)");
-            AppendMenuW(backendSub, MF_STRING | (state.audio.audioBackend == AudioBackend::WasapiShared ? MF_CHECKED : 0), kCmdAudioBackendWasapiShared, L"WASAPI Shared (Default devices)");
-            AppendMenuW(backendSub, MF_STRING | (state.audio.audioBackend == AudioBackend::WasapiExclusive ? MF_CHECKED : 0), kCmdAudioBackendWasapiExclusive, L"WASAPI Exclusive");
-            AppendMenuW(backendSub, MF_STRING | MF_GRAYED | (state.audio.audioBackend == AudioBackend::Asio ? MF_CHECKED : 0), kCmdAudioBackendAsio, L"ASIO (Future)");
-            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(backendSub), L"Backend");
-        }
+    const int DLG_W = 380, DLG_H = 170;
+    RECT wr{0, 0, DLG_W, DLG_H};
+    AdjustWindowRectEx(&wr, WS_POPUP | WS_CAPTION | WS_SYSMENU, FALSE, 0);
+    const int ww = wr.right - wr.left;
+    const int wh = wr.bottom - wr.top;
 
-        HMENU sampleRateSub = CreatePopupMenu();
-        if (sampleRateSub != nullptr) {
-            std::vector<int> sampleRates;
-            auto addRate = [&](int sr) {
-                if (sr > 0 && std::find(sampleRates.begin(), sampleRates.end(), sr) == sampleRates.end()) {
-                    sampleRates.push_back(sr);
-                }
-            };
-            addRate(state.audio.preferredSampleRate);
-            addRate(state.core.project.projectSampleRate);
-            addRate(state.audio.activeDeviceSampleRate);
-            addRate(state.audio.lastOpenedOutputSampleRate);
-            for (const LoadedAudio& a : state.core.project.audio) {
-                addRate(a.sampleRate);
-            }
-            std::sort(sampleRates.begin(), sampleRates.end());
-            if (sampleRates.empty()) {
-                AppendMenuW(sampleRateSub, MF_STRING | MF_GRAYED, kCmdAudioSampleRateBase, L"No sample rates available yet");
-            } else {
-                for (size_t i = 0; i < sampleRates.size(); ++i) {
-                    const int sr = sampleRates[i];
-                    const UINT cmdId = kCmdAudioSampleRateBase + static_cast<UINT>(i);
-                    wchar_t label[64]{};
-                    swprintf_s(label, L"%d Hz", sr);
-                    const UINT flags = MF_STRING | ((state.audio.preferredSampleRate == sr) ? MF_CHECKED : 0);
-                    AppendMenuW(sampleRateSub, flags, cmdId, label);
-                }
-            }
-            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sampleRateSub), L"Sample Rate");
-        }
+    RECT parentRect{};
+    GetWindowRect(hwndParent, &parentRect);
+    const int cx = (parentRect.left + parentRect.right) / 2;
+    const int cy = (parentRect.top  + parentRect.bottom) / 2;
 
-        HMENU bufferSub = CreatePopupMenu();
-        if (bufferSub != nullptr) {
-            const int bufferOptions[] = {64, 128, 256, 512, 1024, 2048};
-            for (size_t i = 0; i < std::size(bufferOptions); ++i) {
-                const int frames = bufferOptions[i];
-                const UINT cmdId = kCmdAudioBufferSizeBase + static_cast<UINT>(i);
+    HWND hwndDlg = CreateWindowExW(
+        WS_EX_DLGMODALFRAME,
+        L"DawProjectSampleRateDlg",
+        L"Project Sample Rate",
+        WS_POPUP | WS_CAPTION | WS_SYSMENU,
+        cx - ww / 2, cy - wh / 2, ww, wh,
+        hwndParent, nullptr, GetModuleHandleW(nullptr),
+        &dlgData);
+    if (hwndDlg == nullptr) return;
+
+    ShowWindow(hwndDlg, SW_SHOW);
+    UpdateWindow(hwndDlg);
+    EnableWindow(hwndParent, FALSE);
+
+    MSG msg{};
+    while (IsWindow(hwndDlg)) {
+        const BOOL got = GetMessageW(&msg, nullptr, 0, 0);
+        if (got == 0 || got == -1) break;
+        if (!IsDialogMessageW(hwndDlg, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+
+    EnableWindow(hwndParent, TRUE);
+    SetForegroundWindow(hwndParent);
+
+    if (dlgData.result > 0 && dlgData.result != state.core.project.projectSampleRate) {
+        EnterCriticalSection(&state.audio.audioStateLock);
+        state.core.project.projectSampleRate = dlgData.result;
+        LeaveCriticalSection(&state.audio.audioStateLock);
+        state.core.projectModified = true;
+    }
+
+    InvalidateRect(hwndParent, nullptr, FALSE);
+}
+
+// ── Native Win32 menu bar ────────────────────────────────────────────────────
+// The application used to draw its own File/View/Audio/Track "tabs" in the top
+// bar and trigger custom popup menus on click. That worked but it didn't behave
+// like a native Windows menu (no Alt-key access, no keyboard navigation, no
+// theme), and the hit-tested tab rects ate horizontal space on the toolbar.
+//
+// Now we build a real HMENU at startup and attach it via SetMenu(). Menu items
+// dispatch through WM_COMMAND -> HandleMenuCommand. The Audio submenu has
+// dynamic content (enumerated devices, sample rates), so we rebuild that
+// submenu in WM_INITMENUPOPUP every time it opens.
+
+static HMENU g_hMenuFile  = nullptr;
+static HMENU g_hMenuView  = nullptr;
+static HMENU g_hMenuAudio = nullptr;
+static HMENU g_hMenuTrack = nullptr;
+static HMENU g_hMenuWindow = nullptr;
+
+static void ClearMenu(HMENU m) {
+    if (m == nullptr) return;
+    while (GetMenuItemCount(m) > 0) {
+        DeleteMenu(m, 0, MF_BYPOSITION);
+    }
+}
+
+static void PopulateFileMenu(HMENU menu, AppState& /*state*/) {
+    AppendMenuW(menu, MF_STRING, kCmdFileOpen,         L"Open Project...\tCtrl+O");
+    AppendMenuW(menu, MF_STRING, kCmdFileSave,         L"Save Project\tCtrl+S");
+    AppendMenuW(menu, MF_STRING, kCmdFileSaveAs,       L"Save Project As...");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, kCmdFileImportWav,    L"Import WAV...\tI");
+    AppendMenuW(menu, MF_STRING, kCmdFileExportWav,    L"Export Mix as WAV...");
+    AppendMenuW(menu, MF_STRING, kCmdAutoMaster,       L"Auto Master...");
+    AppendMenuW(menu, MF_STRING, kCmdMixReadiness,     L"Mix Readiness Check...");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, kCmdProjectSampleRate, L"Project Sample Rate...");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, kCmdFileExit, L"Exit");
+}
+
+static void PopulateViewMenu(HMENU menu, AppState& /*state*/) {
+    AppendMenuW(menu, MF_STRING, kCmdViewZoomIn,  L"Zoom In");
+    AppendMenuW(menu, MF_STRING, kCmdViewZoomOut, L"Zoom Out");
+    AppendMenuW(menu, MF_STRING, kCmdViewReset,   L"Reset View");
+}
+
+static void PopulateAudioMenu(HMENU menu, AppState& state) {
+    DeviceRefreshInputDevices(state);
+    DeviceRefreshOutputDevices(state);
+
+    HMENU inputSub = CreatePopupMenu();
+    if (inputSub != nullptr) {
+        for (size_t i = 0; i < state.audio.inputDeviceNames.size(); ++i) {
+            const UINT cmdId = kCmdAudioInputBase + static_cast<UINT>(i);
+            UINT flags = MF_STRING;
+            if (state.audio.inputDeviceIds[i] == state.audio.selectedInputDeviceId) {
+                flags |= MF_CHECKED;
+            }
+            AppendMenuW(inputSub, flags, cmdId, state.audio.inputDeviceNames[i].c_str());
+        }
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(inputSub), L"Input Device");
+    }
+    HMENU outputSub = CreatePopupMenu();
+    if (outputSub != nullptr) {
+        for (size_t i = 0; i < state.audio.outputDeviceNames.size(); ++i) {
+            const UINT cmdId = kCmdAudioOutputBase + static_cast<UINT>(i);
+            UINT flags = MF_STRING;
+            if (state.audio.outputDeviceIds[i] == state.audio.selectedOutputDeviceId) {
+                flags |= MF_CHECKED;
+            }
+            AppendMenuW(outputSub, flags, cmdId, state.audio.outputDeviceNames[i].c_str());
+        }
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(outputSub), L"Output Device");
+    }
+    HMENU backendSub = CreatePopupMenu();
+    if (backendSub != nullptr) {
+        AppendMenuW(backendSub, MF_STRING | (state.audio.audioBackend == AudioBackend::MME ? MF_CHECKED : 0), kCmdAudioBackendMME, L"MME (Legacy)");
+        AppendMenuW(backendSub, MF_STRING | (state.audio.audioBackend == AudioBackend::WasapiShared ? MF_CHECKED : 0), kCmdAudioBackendWasapiShared, L"WASAPI Shared (Default devices)");
+        AppendMenuW(backendSub, MF_STRING | (state.audio.audioBackend == AudioBackend::WasapiExclusive ? MF_CHECKED : 0), kCmdAudioBackendWasapiExclusive, L"WASAPI Exclusive");
+        AppendMenuW(backendSub, MF_STRING | MF_GRAYED | (state.audio.audioBackend == AudioBackend::Asio ? MF_CHECKED : 0), kCmdAudioBackendAsio, L"ASIO (Future)");
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(backendSub), L"Backend");
+    }
+
+    HMENU sampleRateSub = CreatePopupMenu();
+    if (sampleRateSub != nullptr) {
+        std::vector<int> sampleRates;
+        auto addRate = [&](int sr) {
+            if (sr > 0 && std::find(sampleRates.begin(), sampleRates.end(), sr) == sampleRates.end()) {
+                sampleRates.push_back(sr);
+            }
+        };
+        const int stdRates[] = {44100, 48000, 88200, 96000, 176400, 192000};
+        for (int r : stdRates) addRate(r);
+        addRate(state.audio.preferredSampleRate);
+        addRate(state.audio.activeDeviceSampleRate);
+        addRate(state.audio.lastOpenedOutputSampleRate);
+        std::sort(sampleRates.begin(), sampleRates.end());
+        if (sampleRates.empty()) {
+            AppendMenuW(sampleRateSub, MF_STRING | MF_GRAYED, kCmdAudioSampleRateBase, L"No sample rates available yet");
+        } else {
+            for (size_t i = 0; i < sampleRates.size(); ++i) {
+                const int sr = sampleRates[i];
+                const UINT cmdId = kCmdAudioSampleRateBase + static_cast<UINT>(i);
                 wchar_t label[64]{};
-                swprintf_s(label, L"%d frames", frames);
-                const UINT flags = MF_STRING | ((state.audio.preferredBufferFrames == frames) ? MF_CHECKED : 0);
-                AppendMenuW(bufferSub, flags, cmdId, label);
+                swprintf_s(label, L"%d Hz", sr);
+                const UINT flags = MF_STRING | ((state.audio.preferredSampleRate == sr) ? MF_CHECKED : 0);
+                AppendMenuW(sampleRateSub, flags, cmdId, label);
             }
-            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(bufferSub), L"Buffer Size");
         }
-
-        AppendMenuW(menu, MF_STRING, kCmdAudioRefreshInputs, L"Refresh Inputs");
-        AppendMenuW(menu, MF_STRING, kCmdAudioDiagnostics, L"Audio Diagnostics...");
-        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(menu, MF_STRING, kCmdAudioSettings, L"Audio Settings...");
-    } else {
-        AppendMenuW(menu, MF_STRING, kCmdTrackNew, L"New Track");
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sampleRateSub), L"Device Sample Rate");
     }
 
-    POINT p{menuRect.left, menuRect.bottom};
-    ClientToScreen(hwnd, &p);
-    const UINT cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY, p.x, p.y, 0, hwnd, nullptr);
+    HMENU bufferSub = CreatePopupMenu();
+    if (bufferSub != nullptr) {
+        const int bufferOptions[] = {64, 128, 256, 512, 1024, 2048};
+        for (size_t i = 0; i < std::size(bufferOptions); ++i) {
+            const int frames = bufferOptions[i];
+            const UINT cmdId = kCmdAudioBufferSizeBase + static_cast<UINT>(i);
+            wchar_t label[64]{};
+            swprintf_s(label, L"%d frames", frames);
+            const UINT flags = MF_STRING | ((state.audio.preferredBufferFrames == frames) ? MF_CHECKED : 0);
+            AppendMenuW(bufferSub, flags, cmdId, label);
+        }
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(bufferSub), L"Buffer Size");
+    }
 
+    AppendMenuW(menu, MF_STRING, kCmdAudioRefreshInputs,    L"Refresh Inputs");
+    AppendMenuW(menu, MF_STRING, kCmdAudioDiagnostics,      L"Audio Diagnostics...");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, kCmdAudioConvertImported,  L"Convert Imported Audio to Project Sample Rate...");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, kCmdAudioSettings,         L"Audio Settings...");
+}
+
+static void PopulateTrackMenu(HMENU menu, AppState& /*state*/) {
+    AppendMenuW(menu, MF_STRING, kCmdTrackNew, L"New Track");
+}
+
+// Window menu lists every panel with a checkmark when it's currently visible
+// somewhere in the dock tree. Toggling unchecks/removes a visible panel, or
+// re-adds a hidden one as a tab in the first non-primary leaf (so users can
+// always recover panels they accidentally dragged out of existence).
+static void PopulateWindowMenu(HMENU menu, AppState& state) {
+    using namespace daw::ui;
+    for (int i = 0; i < PanelCount(); ++i) {
+        const PanelKind   k   = static_cast<PanelKind>(i);
+        const PanelDef&   def = PanelGet(k);
+        const bool visible = (state.ui.dockRoot &&
+                              DockFindLeafContaining(state.ui.dockRoot.get(), k) != nullptr);
+        UINT flags = MF_STRING;
+        if (visible)      flags |= MF_CHECKED;
+        if (def.primary)  flags |= MF_GRAYED;   // primary panels can't be hidden
+        AppendMenuW(menu, flags, kCmdWindowPanelBase + static_cast<UINT>(i), def.title);
+    }
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, kCmdWindowResetLayout, L"Reset Layout");
+}
+
+static HMENU BuildMainMenuBar(AppState& state) {
+    HMENU bar = CreateMenu();
+    if (bar == nullptr) return nullptr;
+    g_hMenuFile  = CreatePopupMenu();
+    g_hMenuView  = CreatePopupMenu();
+    g_hMenuAudio = CreatePopupMenu();
+    g_hMenuTrack = CreatePopupMenu();
+    g_hMenuWindow = CreatePopupMenu();
+    PopulateFileMenu (g_hMenuFile,  state);
+    PopulateViewMenu (g_hMenuView,  state);
+    PopulateAudioMenu(g_hMenuAudio, state);
+    PopulateTrackMenu(g_hMenuTrack, state);
+    PopulateWindowMenu(g_hMenuWindow, state);
+    AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(g_hMenuFile),  L"&File");
+    AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(g_hMenuView),  L"&View");
+    AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(g_hMenuAudio), L"&Audio");
+    AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(g_hMenuTrack), L"&Track");
+    AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(g_hMenuWindow), L"&Window");
+    return bar;
+}
+
+// Rebuild the contents of one of the four top-level popups. Called from
+// WM_INITMENUPOPUP just before the menu becomes visible so dynamic content
+// (device list, current sample rate / backend / buffer-size checkmarks)
+// always reflects current state.
+static bool RefreshTopLevelPopup(HMENU popup, AppState& state) {
+    if (popup == g_hMenuFile)  { ClearMenu(popup); PopulateFileMenu (popup, state); return true; }
+    if (popup == g_hMenuView)  { ClearMenu(popup); PopulateViewMenu (popup, state); return true; }
+    if (popup == g_hMenuAudio) { ClearMenu(popup); PopulateAudioMenu(popup, state); return true; }
+    if (popup == g_hMenuTrack) { ClearMenu(popup); PopulateTrackMenu(popup, state); return true; }
+    if (popup == g_hMenuWindow){ ClearMenu(popup); PopulateWindowMenu(popup, state); return true; }
+    return false;
+}
+
+// Dispatch a WM_COMMAND ID coming from the menu bar.
+static void HandleMenuCommand(HWND hwnd, AppState& state, UINT cmd) {
     if (cmd == kCmdFileOpen) {
         DoOpen(hwnd, state);
         if (state.audio.trackInsertDspState.size() != state.core.project.tracks.size()) state.audio.trackInsertDspState.resize(state.core.project.tracks.size());
@@ -486,6 +811,9 @@ void ShowTopMenu(HWND hwnd, AppState& state, int menuKind, const RECT& menuRect)
         DoAutoMaster(hwnd, state);
     } else if (cmd == kCmdMixReadiness) {
         DoMixReadiness(hwnd, state);
+    } else if (cmd == kCmdProjectSampleRate) {
+        ShowProjectSampleRateDialog(hwnd, state);
+        UpdateWindowTitle(hwnd, state.core);
     } else if (cmd == kCmdFileExit) {
         PostMessage(hwnd, WM_CLOSE, 0, 0);
     } else if (cmd == kCmdViewZoomIn) {
@@ -495,6 +823,54 @@ void ShowTopMenu(HWND hwnd, AppState& state, int menuKind, const RECT& menuRect)
     } else if (cmd == kCmdViewReset) {
         state.ui.viewStartBeat = 0.0f;
         state.ui.viewBeatsVisible = 32.0f;
+    } else if (cmd == kCmdWindowResetLayout) {
+        // Rebuild the dock tree from scratch. Splitter ratios reset too.
+        // Also wipe the persisted layout so a crash before the next save
+        // can't resurrect the old custom arrangement.
+        state.ui.dockRoot = daw::ui::DockBuildDefault();
+        daw::ui::DockDeleteLayoutFile();
+        InvalidateRect(hwnd, nullptr, FALSE);
+    } else if (cmd >= kCmdWindowPanelBase &&
+               cmd <  kCmdWindowPanelBase + static_cast<UINT>(daw::ui::PanelCount())) {
+        // Toggle a panel: hide if currently visible, show as a tab in the
+        // first non-primary leaf otherwise. Primary panels are MF_GRAYED so
+        // this branch is unreachable for them, but we guard anyway.
+        const daw::ui::PanelKind k =
+            static_cast<daw::ui::PanelKind>(cmd - kCmdWindowPanelBase);
+        if (!daw::ui::PanelGet(k).primary && state.ui.dockRoot) {
+            daw::ui::DockNode* leaf =
+                daw::ui::DockFindLeafContaining(state.ui.dockRoot.get(), k);
+            if (leaf != nullptr) {
+                // Hide: remove every tab matching this panel from the leaf.
+                for (int i = static_cast<int>(leaf->panels.size()) - 1; i >= 0; --i) {
+                    if (leaf->panels[static_cast<size_t>(i)] == k) {
+                        daw::ui::DockRemoveTab(state.ui.dockRoot, leaf, i);
+                    }
+                }
+            } else {
+                // Show: prefer tab-merging into the Tracks leaf (it's the
+                // natural left-rail home for utility panels). Fall back to
+                // any non-primary leaf, then to splitting off Arrange if
+                // every leaf is primary and single-tabbed.
+                daw::ui::DockNode* host = daw::ui::DockFindLeafContaining(
+                    state.ui.dockRoot.get(), daw::ui::PanelKind::Tracks);
+                if (host == nullptr) {
+                    host = daw::ui::DockFindNonPrimaryLeaf(state.ui.dockRoot.get());
+                }
+                if (host != nullptr) {
+                    daw::ui::DockInsertTab(host, k,
+                        static_cast<int>(host->panels.size()));
+                } else {
+                    daw::ui::DockNode* arrange = daw::ui::DockFindLeafContaining(
+                        state.ui.dockRoot.get(), daw::ui::PanelKind::Arrange);
+                    if (arrange != nullptr) {
+                        daw::ui::DockSplitWith(state.ui.dockRoot, arrange,
+                            daw::ui::DockDropSide::Left, k, 0.25f);
+                    }
+                }
+            }
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
     } else if (cmd == kCmdAudioRefreshInputs) {
         DeviceRefreshInputDevices(state);
         DeviceRefreshOutputDevices(state);
@@ -503,6 +879,8 @@ void ShowTopMenu(HWND hwnd, AppState& state, int menuKind, const RECT& menuRect)
         MessageBoxW(hwnd, diag.c_str(), L"Audio Diagnostics", MB_OK | MB_ICONINFORMATION);
     } else if (cmd == kCmdAudioSettings) {
         ShowAudioSettingsDialog(hwnd, state);
+    } else if (cmd == kCmdAudioConvertImported) {
+        ConvertImportedAudioToProjectSampleRate(hwnd, state);
     } else if (cmd == kCmdAudioBackendMME) {
         state.audio.audioBackend = AudioBackend::MME;
     } else if (cmd == kCmdAudioBackendWasapiShared) {
@@ -518,15 +896,28 @@ void ShowTopMenu(HWND hwnd, AppState& state, int menuKind, const RECT& menuRect)
                 sampleRates.push_back(sr);
             }
         };
+        const int stdRates[] = {44100, 48000, 88200, 96000, 176400, 192000};
+        for (int r : stdRates) addRate(r);
         addRate(state.audio.preferredSampleRate);
-        addRate(state.core.project.projectSampleRate);
         addRate(state.audio.activeDeviceSampleRate);
         addRate(state.audio.lastOpenedOutputSampleRate);
-        for (const LoadedAudio& a : state.core.project.audio) addRate(a.sampleRate);
         std::sort(sampleRates.begin(), sampleRates.end());
         const size_t idx = static_cast<size_t>(cmd - kCmdAudioSampleRateBase);
         if (idx < sampleRates.size()) {
-            state.audio.preferredSampleRate = sampleRates[idx];
+            const int wantSR = sampleRates[idx];
+            const int actSR  = state.audio.activeDeviceSampleRate;
+            if (wantSR > 0 && actSR > 0 && wantSR != actSR) {
+                wchar_t srMsg[512]{};
+                swprintf_s(srMsg,
+                    L"The selected device is currently open at %d Hz and is not accepting a sample-rate change to %d Hz.\n\n"
+                    L"Many USB audio interfaces are hard-locked to a single rate; the rate must be changed in the device's own driver / control panel.\n\n"
+                    L"The device's actual sample rate (%d Hz) will be kept.",
+                    actSR, wantSR, actSR);
+                MessageBoxW(hwnd, srMsg, L"Device sample rate not changed", MB_OK | MB_ICONWARNING);
+                state.audio.preferredSampleRate = actSR;
+            } else {
+                state.audio.preferredSampleRate = wantSR;
+            }
         }
     } else if (cmd >= kCmdAudioBufferSizeBase && cmd < kCmdAudioBufferSizeBase + 16) {
         const int bufferOptions[] = {64, 128, 256, 512, 1024, 2048};
@@ -546,7 +937,6 @@ void ShowTopMenu(HWND hwnd, AppState& state, int menuKind, const RECT& menuRect)
         state.audio.selectedOutputDeviceName = state.audio.outputDeviceNames[idx];
     }
 
-    DestroyMenu(menu);
     InvalidateRect(hwnd, nullptr, FALSE);
 }
 
@@ -633,7 +1023,7 @@ static bool ChooseAutoMasterSettings(HWND hwnd, float* outTargetLufs, float* out
 static bool ReplaceProjectWithSingleWav(AppState& state, const std::wstring& wavPath, std::wstring* outError) {
     LoadedAudio audio{};
     std::wstring error;
-    if (!LoadWavStereo(wavPath, &audio, &error)) {
+    if (!IoLoadWavStereo(wavPath, &audio, &error)) {
         if (outError) *outError = error;
         return false;
     }
@@ -826,7 +1216,7 @@ bool DoMixReadiness(HWND hwnd, AppState& state) {
         LeaveCriticalSection(&state.audio.audioStateLock);
         if (!ok || stereo.empty()) continue;
         const std::wstring wavPath = std::wstring(stemsDir) + L"\\" + kBusWavNames[b] + L".wav";
-        if (WriteWavPcm16Stereo(wavPath, stereo, sr)) ++exported;
+        if (IoWriteWavPcm16Stereo(wavPath, stereo, sr)) ++exported;
     }
 
     if (exported == 0) {
@@ -992,7 +1382,7 @@ bool DoExportMix(HWND hwnd, AppState& state) {
         return false;
     }
 
-    if (!WriteWavPcm16Stereo(filePath, stereo, sampleRate)) {
+    if (!IoWriteWavPcm16Stereo(filePath, stereo, sampleRate)) {
         MessageBoxW(hwnd, L"Could not write WAV file. Check the output path.", L"Export Mix", MB_OK | MB_ICONERROR);
         return false;
     }
@@ -1047,20 +1437,50 @@ void ImportWavFiles(HWND hwnd, AppState& state) {
 
     const COLORREF clipColors[4] = {kPalette.clip1, kPalette.clip2, kPalette.clip3, kPalette.clip4};
     std::wstring skipped;
+    int convertedAtImport = 0;
+    int alreadyMatched    = 0;
+    const int projSRForReport = state.core.project.projectSampleRate;
 
     for (const std::wstring& path : files) {
         LoadedAudio audio{};
         std::wstring error;
-        if (!LoadWavStereo(path, &audio, &error)) {
+        if (!IoLoadWavStereo(path, &audio, &error)) {
             skipped += std::filesystem::path(path).filename().wstring() + L": " + error + L"\n";
             continue;
         }
 
-        if (state.core.project.projectSampleRate == 0) {
-            state.core.project.projectSampleRate = audio.sampleRate;
-        } else if (audio.sampleRate != state.core.project.projectSampleRate) {
-            skipped += std::filesystem::path(path).filename().wstring() + L": sample rate mismatch\n";
-            continue;
+        if (audio.sampleRate == state.core.project.projectSampleRate) {
+            ++alreadyMatched;
+        }
+
+        if (audio.sampleRate != state.core.project.projectSampleRate) {
+            // Sample-rate convert on import. The project owns its SR; imported
+            // files are resampled to match using a high-quality windowed-sinc
+            // (Kaiser) resampler so the on-disk file is faithfully represented
+            // at the project rate. Linear interpolation was previously used
+            // and produced audible high-frequency loss / aliasing.
+            const int srcSR = audio.sampleRate;
+            const int dstSR = state.core.project.projectSampleRate;
+            if (srcSR <= 0 || dstSR <= 0 || audio.frames == 0) {
+                skipped += std::filesystem::path(path).filename().wstring() + L": invalid sample rate or empty file\n";
+                continue;
+            }
+            const std::uint64_t dstFrames64 =
+                (static_cast<std::uint64_t>(audio.frames) * static_cast<std::uint64_t>(dstSR)
+                 + static_cast<std::uint64_t>(srcSR) / 2)
+                / static_cast<std::uint64_t>(srcSR);
+            if (dstFrames64 == 0 || dstFrames64 > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+                skipped += std::filesystem::path(path).filename().wstring() + L": resample size out of range\n";
+                continue;
+            }
+            const int dstFrames = static_cast<int>(dstFrames64);
+            std::vector<float> resampled(static_cast<size_t>(dstFrames) * 2, 0.0f);
+            ResampleStereoFloatSincHQ(audio.stereo.data(), static_cast<int>(audio.frames), srcSR,
+                                      resampled.data(), dstFrames, dstSR);
+            audio.stereo     = std::move(resampled);
+            audio.frames     = static_cast<std::uint32_t>(dstFrames);
+            audio.sampleRate = dstSR;
+            ++convertedAtImport;
         }
 
         const int trackIndex = static_cast<int>(state.core.project.tracks.size());
@@ -1101,6 +1521,97 @@ void ImportWavFiles(HWND hwnd, AppState& state) {
     if (!skipped.empty()) {
         MessageBoxW(hwnd, skipped.c_str(), L"Some files were skipped", MB_OK | MB_ICONWARNING);
     }
+
+    if (convertedAtImport > 0 || alreadyMatched > 0) {
+        wchar_t summary[384]{};
+        swprintf_s(summary,
+            L"Imported %d file(s).\n"
+            L"  - %d converted to project rate (%d Hz) using high-quality sinc resampler.\n"
+            L"  - %d already at project rate.",
+            convertedAtImport + alreadyMatched, convertedAtImport, projSRForReport, alreadyMatched);
+        MessageBoxW(hwnd, summary, L"Import Complete", MB_OK | MB_ICONINFORMATION);
+    }
+}
+
+void ConvertImportedAudioToProjectSampleRate(HWND hwnd, AppState& state) {
+    const int dstSR = state.core.project.projectSampleRate;
+    if (dstSR <= 0) {
+        MessageBoxW(hwnd, L"Project sample rate is not set.", L"Convert Audio", MB_OK | MB_ICONWARNING);
+        return;
+    }
+
+    // Snapshot which clips need conversion (without holding the lock).
+    int needCount = 0;
+    int totalCount = static_cast<int>(state.core.project.audio.size());
+    for (const LoadedAudio& a : state.core.project.audio) {
+        if (a.sampleRate > 0 && a.sampleRate != dstSR && a.frames > 0) {
+            ++needCount;
+        }
+    }
+    if (totalCount == 0) {
+        MessageBoxW(hwnd, L"No audio clips have been imported.", L"Convert Audio", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    if (needCount == 0) {
+        wchar_t msg[256]{};
+        swprintf_s(msg, L"All %d imported clip(s) are already at the project sample rate (%d Hz).",
+                   totalCount, dstSR);
+        MessageBoxW(hwnd, msg, L"Convert Audio", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+
+    wchar_t prompt[512]{};
+    swprintf_s(prompt,
+        L"%d of %d imported clip(s) are not at the project sample rate (%d Hz).\n\n"
+        L"Convert them now? Playback will stop. The original WAV files on disk will not be modified — only the in-memory audio used by this project.",
+        needCount, totalCount, dstSR);
+    if (MessageBoxW(hwnd, prompt, L"Convert Imported Audio", MB_OKCANCEL | MB_ICONQUESTION) != IDOK) {
+        return;
+    }
+
+    // Stop playback so the audio thread isn't iterating while we resample.
+    if (state.audio.playing) {
+        StopPlayback(state, false);
+    }
+
+    int converted = 0;
+    int failed = 0;
+    EnterCriticalSection(&state.audio.audioStateLock);
+    for (LoadedAudio& a : state.core.project.audio) {
+        if (a.sampleRate <= 0 || a.sampleRate == dstSR || a.frames == 0) continue;
+        const std::uint64_t dstFrames64 =
+            (static_cast<std::uint64_t>(a.frames) * static_cast<std::uint64_t>(dstSR)
+             + static_cast<std::uint64_t>(a.sampleRate) / 2)
+            / static_cast<std::uint64_t>(a.sampleRate);
+        if (dstFrames64 == 0 || dstFrames64 > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+            ++failed;
+            continue;
+        }
+        const int dstFrames = static_cast<int>(dstFrames64);
+        std::vector<float> resampled(static_cast<size_t>(dstFrames) * 2, 0.0f);
+        ResampleStereoFloatSincHQ(a.stereo.data(), static_cast<int>(a.frames), a.sampleRate,
+                                  resampled.data(), dstFrames, dstSR);
+        a.stereo     = std::move(resampled);
+        a.frames     = static_cast<std::uint32_t>(dstFrames);
+        a.sampleRate = dstSR;
+        a.peakSummary.clear(); // force redraw cache rebuild
+        ++converted;
+    }
+    LeaveCriticalSection(&state.audio.audioStateLock);
+
+    state.core.projectModified = true;
+    UpdateWindowTitle(hwnd, state.core);
+
+    wchar_t done[256]{};
+    if (failed == 0) {
+        swprintf_s(done, L"Converted %d clip(s) to %d Hz.", converted, dstSR);
+        MessageBoxW(hwnd, done, L"Convert Audio", MB_OK | MB_ICONINFORMATION);
+    } else {
+        swprintf_s(done, L"Converted %d clip(s) to %d Hz.\n%d clip(s) could not be converted (invalid size).",
+                   converted, dstSR, failed);
+        MessageBoxW(hwnd, done, L"Convert Audio", MB_OK | MB_ICONWARNING);
+    }
+    InvalidateRect(hwnd, nullptr, FALSE);
 }
 
 // ── Audio orchestration layer ─────────────────────────────────────────────────
@@ -1115,6 +1626,24 @@ void StopPlayback(AppState& state, bool rewind) {
         state.ui.playheadBeat = 0.0f;
         state.audio.playbackFrameCursor.store(0);
     }
+    // Force the engine SRC resampler to re-prime on the next start so it
+    // begins from the new cursor position with a fresh phase / carry instead
+    // of interpolating from a stale boundary frame.
+    state.audio.engineSrcPrimed = false;
+    state.audio.engineSrcPhase  = 0.0;
+
+    // Clear DSP insert-chain state on every track and bus so reverb tails,
+    // delay lines, and compressor envelopes don't bleed into the next play.
+    // Without this you'd hear a faint echo of the last position when starting
+    // playback in a silent area.
+    EnterCriticalSection(&state.audio.audioStateLock);
+    for (auto& slotArray : state.audio.trackInsertDspState) {
+        slotArray = InsertDspStateArray{};
+    }
+    for (auto& slotArray : state.audio.busInsertDspState) {
+        slotArray = InsertDspStateArray{};
+    }
+    LeaveCriticalSection(&state.audio.audioStateLock);
 }
 
 void StopRecording(AppState& state, bool commitTake) {
@@ -1152,11 +1681,15 @@ void StopRecording(AppState& state, bool commitTake) {
         state.audio.lastCaptureObservedRateRatio = observedRatio;
         state.audio.lastCaptureFrameStride = frameStride;
 
-        const std::uint32_t skipFramesRaw = static_cast<std::uint32_t>(
-            std::min<std::uint64_t>(state.audio.recordPrerollFrames * static_cast<std::uint64_t>(frameStride), totalFrames));
-        const std::uint32_t frames = (totalFrames > skipFramesRaw)
-            ? ((totalFrames - skipFramesRaw) / static_cast<std::uint32_t>(frameStride))
-            : 0;
+        // The capture thread already discards every buffer that contained
+        // count-in audio (it drains queued buffers the instant countingIn
+        // flips false). So recordedInputPcm starts at the first sample AFTER
+        // the count-in, which corresponds 1:1 with timeline frame
+        // recordStartFrame. We must NOT subtract recordPrerollFrames again
+        // here -- doing so would chop the first measure of real audio off
+        // the front of the take and shift the remaining audio earlier.
+        const std::uint32_t frames = totalFrames / static_cast<std::uint32_t>(frameStride);
+        const std::uint32_t skipFramesRaw = 0;
 
         if (frames > 0) {
             std::vector<float> stereo(static_cast<size_t>(frames) * 2, 0.0f);
@@ -1177,11 +1710,35 @@ void StopRecording(AppState& state, bool commitTake) {
                 stereo[static_cast<size_t>(f) * 2 + 1] = r;
             }
 
+            // Capture-side sample rate conversion. The captured stereo buffer
+            // is at the device's input sample rate (captureSampleRate). The
+            // project owns its sample rate, so we convert to project SR on
+            // commit — same approach as the import path. This keeps every
+            // LoadedAudio in the project at audio.sampleRate == projectSR.
+            std::uint32_t committedFrames    = frames;
+            int           committedSampleRate = captureSampleRate;
+            const int     projectSR          = state.core.project.projectSampleRate;
+            if (projectSR > 0 && captureSampleRate > 0 && captureSampleRate != projectSR && frames > 0) {
+                const std::uint64_t dstFrames64 =
+                    (static_cast<std::uint64_t>(frames) * static_cast<std::uint64_t>(projectSR)
+                     + static_cast<std::uint64_t>(captureSampleRate) / 2)
+                    / static_cast<std::uint64_t>(captureSampleRate);
+                if (dstFrames64 > 0 && dstFrames64 <= static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+                    const int dstFrames = static_cast<int>(dstFrames64);
+                    std::vector<float> resampled(static_cast<size_t>(dstFrames) * 2, 0.0f);
+                    ResampleStereoFloatLinear(stereo.data(), static_cast<int>(frames),
+                                              resampled.data(), dstFrames);
+                    stereo              = std::move(resampled);
+                    committedFrames     = static_cast<std::uint32_t>(dstFrames);
+                    committedSampleRate = projectSR;
+                }
+            }
+
             LoadedAudio take{};
             take.sourcePath = L"[recording]";
             take.displayName = L"Take " + std::to_wstring(static_cast<int>(state.core.project.audio.size()) + 1);
-            take.sampleRate = captureSampleRate;
-            take.frames = frames;
+            take.sampleRate = committedSampleRate;
+            take.frames = committedFrames;
             take.stereo = std::move(stereo);
 
             state.audio.lastCommittedTakeSampleRate = take.sampleRate;
@@ -1193,8 +1750,13 @@ void StopRecording(AppState& state, bool commitTake) {
             const int audioIndex = static_cast<int>(state.core.project.audio.size());
             state.core.project.audio.push_back(std::move(take));
 
+            // The engine holds the playback cursor at recordStartFrame for the
+            // entire count-in (count-in runs in its own time domain), and the
+            // record thread only begins writing once countingIn flips false.
+            // So the captured PCM aligns 1:1 with timeline frames starting at
+            // recordStartFrame, and the clip is placed there.
             const float startBeat = BeatsFromFrames(state, state.audio.recordStartFrame);
-            const float lengthBeats = BeatsFromFrames(state, frames);
+            const float lengthBeats = BeatsFromFrames(state, committedFrames);
 
             if (state.audio.recordTrackIndex >= 0 && state.audio.recordTrackIndex < static_cast<int>(state.core.project.tracks.size())) {
                 state.core.project.clips.push_back(ClipItem{
@@ -1219,6 +1781,9 @@ void StopRecording(AppState& state, bool commitTake) {
     state.audio.recordTrackIndex = -1;
     state.audio.recordCaptureStartTickMs = 0;
     state.audio.recordStartFrame = 0;
+    state.audio.liveRecordingClip = ClipItem{};
+    state.audio.liveRecordingWaveform.clear();
+    state.audio.liveRecordingFramesProcessed = 0;
     state.audio.recordPrerollFrames = 0;
     state.audio.countingIn = false;
     state.audio.recordUsingWasapi = false;
@@ -1243,36 +1808,30 @@ bool StartRecording(HWND hwnd, AppState& state) {
         return false;
     }
 
-    // Ensure sample rate is set before starting playback (needed for metronome/count-in)
-    // Refresh input devices to get the latest available rates
-    DeviceRefreshInputDevices(state);
-    if (state.core.project.projectSampleRate <= 0) {
-        // Try to use a sensible default sample rate for playback/metronome
-        if (state.audio.preferredSampleRate > 0) {
-            state.core.project.projectSampleRate = state.audio.preferredSampleRate;
-        } else if (state.audio.lastOpenedOutputSampleRate > 0) {
-            state.core.project.projectSampleRate = state.audio.lastOpenedOutputSampleRate;
-        } else if (state.audio.lastOpenedInputSampleRate > 0) {
-            state.core.project.projectSampleRate = state.audio.lastOpenedInputSampleRate;
-        } else {
-            // Final fallback to standard rate
-            state.core.project.projectSampleRate = 44100;
-        }
+    // Engine readiness invariant: SR known, devices enumerated, no Error state.
+    if (!AudioEnsureReadyForTransport(state.core, state.audio)) {
+        const std::wstring& reason = state.audio.engineInitError;
+        MessageBoxW(hwnd,
+            reason.empty() ? L"Audio engine is not ready." : reason.c_str(),
+            L"Record", MB_OK | MB_ICONERROR);
+        return false;
     }
 
     const bool wasPlaying = state.audio.playing;
-
-    if (!state.audio.playing && (!state.core.project.clips.empty() || state.audio.metronomeRecord || state.audio.countInEnabled)) {
-        if (!StartPlayback(hwnd, state)) {
-            return false;
-        }
-    }
-
     return DeviceStartRecordingBackend(hwnd, state, armedTrack, wasPlaying);
 }
 
 bool StartPlayback(HWND hwnd, AppState& state) {
     state.audio.lastPlaybackInitError.clear();
+
+    // Engine readiness invariant: SR known, devices enumerated, no Error state.
+    if (!AudioEnsureReadyForTransport(state.core, state.audio)) {
+        const std::wstring& reason = state.audio.engineInitError;
+        MessageBoxW(hwnd,
+            reason.empty() ? L"Audio engine is not ready." : reason.c_str(),
+            L"Playback error", MB_OK | MB_ICONERROR);
+        return false;
+    }
 
     DeviceRefreshOutputDevices(state);
     if (state.audio.outputDeviceIds.empty()) {
@@ -1290,24 +1849,485 @@ bool StartPlayback(HWND hwnd, AppState& state) {
     return DeviceStartPlaybackBackend(hwnd, state);
 }
 
+// ── Dock-aware layout for hit-tests ─────────────────────────────────────────
+// Builds a LayoutRects from the cached dock leaf rects so mouse hit-testing
+// follows whatever the user has resized panels to (instead of the legacy
+// fixed UiLayoutComputeLayout). The Tracks panel takes over `leftPanel`'s
+// role; the Buses leaf gets remembered separately for bus hit-tests.
+static RECT FindDockLeafRect(const AppState& state, daw::ui::PanelKind kind, const RECT& fallback) {
+    for (const auto& leaf : state.ui.dockLayout) {
+        if (leaf.activePanel == kind) {
+            // Strip the tab strip from the top — that's painted by the dock
+            // chrome, not by the panel itself, so hit-tests must use the
+            // content rect to match the panel's drawn coordinates. Leaves
+            // without a tab strip (lone primary panel) need no adjustment.
+            RECT r = leaf.rect;
+            if (daw::ui::DockLeafShowsTabStrip(leaf.node)) {
+                const int stripH = std::min<int>(Dpi(daw::ui::kDockTabStripHeightPx),
+                                                 r.bottom - r.top);
+                r.top += stripH;
+            }
+            return r;
+        }
+    }
+    return fallback;
+}
+
+static LayoutRects ComputeHitTestLayout(HWND hwnd, const AppState& state) {
+    RECT client{};
+    GetClientRect(hwnd, &client);
+    LayoutRects fallback = UiLayoutComputeLayout(client);
+    if (state.ui.dockLayout.empty()) return fallback;
+    LayoutRects out{};
+    out.topBar    = fallback.topBar;
+    out.leftPanel = FindDockLeafRect(state, daw::ui::PanelKind::Tracks,  fallback.leftPanel);
+    out.ruler     = FindDockLeafRect(state, daw::ui::PanelKind::Ruler,   fallback.ruler);
+    out.arrange   = FindDockLeafRect(state, daw::ui::PanelKind::Arrange, fallback.arrange);
+    return out;
+}
+
+// ── Tab drag drop-target resolution (Phase 2.2b) ────────────────────────────
+// Activate-distance threshold for promoting a tab click into a tab drag.
+constexpr int kDragTabThresholdPx = 4;
+
+// Hit-test `pt` against current dockLayout. Writes the resolved drop target
+// to `state.ui.drop*` fields and returns true if a target was found.
+//
+// Per-leaf zones (Unity/VS-style):
+//   * Outer 1/4 band on each edge → split (Left/Right/Top/Bottom).
+//   * Center → tab insert at the cursor's X within the leaf's tab strip
+//     (or end-of-list if past the last tab). Forbidden on primary leaves.
+static bool ResolveDropTarget(AppState& state, POINT pt) {
+    state.ui.dropTargetLeaf  = nullptr;
+    state.ui.dropTargetSide  = daw::ui::DockDropSide::Center;
+    state.ui.dropTargetTabAt = -1;
+    state.ui.dropPreviewRect = RECT{0, 0, 0, 0};
+
+    // ── Outer drop zone (split the root) ────────────────────────────────
+    // Compute the dock area as the union of all current leaves. A thin band
+    // along each edge means "split the WHOLE dock against this side", so a
+    // panel can be pinned to the full bottom (under both Tracks AND Arrange)
+    // by dropping it on the bottom outer band — without first needing a
+    // single leaf that already spans the full width.
+    if (!state.ui.dockLayout.empty() && state.ui.dockRoot) {
+        RECT dockBounds = state.ui.dockLayout.front().rect;
+        for (const auto& leaf : state.ui.dockLayout) {
+            dockBounds.left   = std::min<LONG>(dockBounds.left,   leaf.rect.left);
+            dockBounds.top    = std::min<LONG>(dockBounds.top,    leaf.rect.top);
+            dockBounds.right  = std::max<LONG>(dockBounds.right,  leaf.rect.right);
+            dockBounds.bottom = std::max<LONG>(dockBounds.bottom, leaf.rect.bottom);
+        }
+        const int outerBand = Dpi(16);
+        if (PtInRect(&dockBounds, pt)) {
+            daw::ui::DockDropSide outer = daw::ui::DockDropSide::Center;
+            if      (pt.x < dockBounds.left   + outerBand) outer = daw::ui::DockDropSide::Left;
+            else if (pt.x > dockBounds.right  - outerBand) outer = daw::ui::DockDropSide::Right;
+            else if (pt.y < dockBounds.top    + outerBand) outer = daw::ui::DockDropSide::Top;
+            else if (pt.y > dockBounds.bottom - outerBand) outer = daw::ui::DockDropSide::Bottom;
+            if (outer != daw::ui::DockDropSide::Center) {
+                state.ui.dropTargetLeaf = state.ui.dockRoot.get();
+                state.ui.dropTargetSide = outer;
+                const int w = dockBounds.right  - dockBounds.left;
+                const int h = dockBounds.bottom - dockBounds.top;
+                RECT preview = dockBounds;
+                if      (outer == daw::ui::DockDropSide::Left)   preview.right  = dockBounds.left   + w / 4;
+                else if (outer == daw::ui::DockDropSide::Right)  preview.left   = dockBounds.right  - w / 4;
+                else if (outer == daw::ui::DockDropSide::Top)    preview.bottom = dockBounds.top    + h / 4;
+                else /* Bottom */                                 preview.top    = dockBounds.bottom - h / 4;
+                state.ui.dropPreviewRect = preview;
+                return true;
+            }
+        }
+    }
+
+    for (const auto& leaf : state.ui.dockLayout) {
+        if (!PtInRect(&leaf.rect, pt)) continue;
+        const RECT r = leaf.rect;
+        const int  w = r.right  - r.left;
+        const int  h = r.bottom - r.top;
+        const int  edge = std::min({w / 4, h / 4, Dpi(60)});
+
+        // Don't allow a single-tab leaf to split against itself (no-op).
+        const bool sameAsSource = (leaf.node == state.ui.dragTabSource);
+
+        // Edge bands (split)
+        daw::ui::DockDropSide side = daw::ui::DockDropSide::Center;
+        if      (pt.x < r.left   + edge) side = daw::ui::DockDropSide::Left;
+        else if (pt.x > r.right  - edge) side = daw::ui::DockDropSide::Right;
+        else if (pt.y < r.top    + edge) side = daw::ui::DockDropSide::Top;
+        else if (pt.y > r.bottom - edge) side = daw::ui::DockDropSide::Bottom;
+
+        if (side != daw::ui::DockDropSide::Center) {
+            if (sameAsSource && state.ui.dragTabSource != nullptr &&
+                state.ui.dragTabSource->panels.size() <= 1) {
+                // Splitting a leaf containing only the dragged tab against
+                // itself would be a no-op; skip and let center handle it.
+                side = daw::ui::DockDropSide::Center;
+            } else {
+                state.ui.dropTargetLeaf = leaf.node;
+                state.ui.dropTargetSide = side;
+                RECT preview = r;
+                if      (side == daw::ui::DockDropSide::Left)   preview.right  = r.left   + w / 2;
+                else if (side == daw::ui::DockDropSide::Right)  preview.left   = r.right  - w / 2;
+                else if (side == daw::ui::DockDropSide::Top)    preview.bottom = r.top    + h / 2;
+                else /* Bottom */                                preview.top    = r.bottom - h / 2;
+                state.ui.dropPreviewRect = preview;
+                return true;
+            }
+        }
+
+        // Center (tab insert) — allowed on any leaf, including primary,
+        // so users can dock new tabs alongside Ruler/Tracks/Arrange.
+        state.ui.dropTargetLeaf = leaf.node;
+        state.ui.dropTargetSide = daw::ui::DockDropSide::Center;
+
+        // Find insertion index by scanning the tabs that belong to this leaf.
+        int insertAt = static_cast<int>(leaf.node->panels.size());
+        for (const auto& tab : state.ui.dockTabs) {
+            if (tab.node != leaf.node) continue;
+            const int mid = (tab.rect.left + tab.rect.right) / 2;
+            if (pt.x < mid) { insertAt = tab.tabIndex; break; }
+        }
+        // If dragging within the same leaf, account for the tab being removed
+        // before re-insertion so the visual index matches.
+        if (sameAsSource && insertAt > state.ui.dragTabIndex) insertAt -= 1;
+        state.ui.dropTargetTabAt = insertAt;
+
+        // Center preview = full leaf rect (signals "join this leaf as a tab").
+        // Edge previews fill half the leaf, so the two are visually distinct.
+        state.ui.dropPreviewRect = r;
+        return true;
+    }
+    return false;
+}
+
+// ── Floating tear-off windows (Phase 4a) ────────────────────────────────────
+// A floating window owns a single panel (no nested dock tree yet). Closing
+// the window re-docks the panel back into the main DockNode tree so the
+// panel is never lost. Mouse interaction inside floating windows is not
+// wired in 4a — only paint + close. Phase 4b will route mouse messages
+// through a per-panel hit dispatcher so the panel is fully usable while
+// floating.
+
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
+// Re-dock `panel` somewhere visible in the main dock tree. Uses the same
+// preference order as the Window menu's panel-toggle path: prefer Tracks,
+// then any non-primary leaf, then split off Arrange. Guarantees the panel
+// is always reachable after a floating window closes.
+static void DockReturnPanelToMain(AppState& state, daw::ui::PanelKind panel) {
+    if (!state.ui.dockRoot) return;
+    if (daw::ui::DockFindLeafContaining(state.ui.dockRoot.get(), panel)) {
+        return; // Already present (shouldn't happen, but be safe).
+    }
+    daw::ui::DockNode* host = daw::ui::DockFindLeafContaining(
+        state.ui.dockRoot.get(), daw::ui::PanelKind::Tracks);
+    if (host == nullptr) {
+        host = daw::ui::DockFindNonPrimaryLeaf(state.ui.dockRoot.get());
+    }
+    if (host != nullptr) {
+        daw::ui::DockInsertTab(host, panel,
+            static_cast<int>(host->panels.size()));
+    } else {
+        daw::ui::DockNode* arrange = daw::ui::DockFindLeafContaining(
+            state.ui.dockRoot.get(), daw::ui::PanelKind::Arrange);
+        if (arrange != nullptr) {
+            daw::ui::DockSplitWith(state.ui.dockRoot, arrange,
+                daw::ui::DockDropSide::Left, panel, 0.25f);
+        }
+    }
+}
+
+// Per-floating-window state. Stored as a heap allocation pointed to by
+// GWLP_USERDATA so the WindowProc can find both the AppState and which
+// PanelKind to draw without scanning the floatingPanels vector each event.
+struct FloatingWndData {
+    AppState*           state;
+    daw::ui::PanelKind  panel;
+};
+
+LRESULT CALLBACK FloatingWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    auto* fwd = reinterpret_cast<FloatingWndData*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
+
+    // ── Forward mouse messages into the main WindowProc (Phase 4b) ─────
+    // Panels stash their hit rects (playRect, faderRect, etc.) in client
+    // coords each paint. After a floating WM_PAINT those rects refer to
+    // the floating window's client space, so the main WindowProc's button
+    // hit-tests work as-is — provided we trick it into resolving `state`
+    // from this hwnd. We do that by swapping the AppState pointer into
+    // GWLP_USERDATA for the duration of the forwarded call, then restore
+    // FloatingWndData. SetCapture/InvalidateRect on `hwnd` therefore
+    // operate on the floating window, which is what we want. After the
+    // forwarded handler runs we also invalidate the main window so any
+    // shared state changes (fader values, clip moves, etc.) repaint
+    // there too.
+    if (fwd != nullptr) {
+        bool isMouse = false;
+        switch (msg) {
+            case WM_LBUTTONDOWN: case WM_LBUTTONUP:
+            case WM_RBUTTONDOWN: case WM_RBUTTONUP:
+            case WM_MOUSEMOVE:   case WM_MOUSEWHEEL:
+            case WM_LBUTTONDBLCLK:
+                isMouse = true;
+                break;
+            default: break;
+        }
+        if (isMouse) {
+            // Make sure the panel's hit rects are current before we route
+            // a click — otherwise a click that arrives before the first
+            // floating paint would hit-test against stale (zero) rects.
+            UpdateWindow(hwnd);
+
+            AppState* state = fwd->state;
+            HWND      mainHwnd = state->ui.hwnd;
+
+            SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
+            LRESULT res = WindowProc(hwnd, msg, wParam, lParam);
+            SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(fwd));
+
+            if (mainHwnd != nullptr) InvalidateRect(mainHwnd, nullptr, FALSE);
+            // Tab-drag started inside this floating window means "drag the
+            // panel back into main". The drag itself is already armed in
+            // main's hit-test code; we don't need to do anything special.
+            return res;
+        }
+    }
+
+    switch (msg) {
+    case WM_PAINT: {
+        if (fwd == nullptr) return DefWindowProc(hwnd, msg, wParam, lParam);
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+        RECT client; GetClientRect(hwnd, &client);
+
+        // Double-buffer to a memory DC to match the main window's flicker-
+        // free paint pipeline.
+        HDC memDc = CreateCompatibleDC(hdc);
+        HBITMAP memBmp = CreateCompatibleBitmap(hdc, client.right, client.bottom);
+        HGDIOBJ oldBmp = SelectObject(memDc, memBmp);
+
+        HBRUSH bg = CreateSolidBrush(RGB(20, 22, 26));
+        FillRect(memDc, &client, bg);
+        DeleteObject(bg);
+
+        // Match the main window's UI font selection so panels render with
+        // consistent typography wherever they're docked.
+        HFONT uiFont = CreateFontW(Dpi(14), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+        HGDIOBJ oldFont = SelectObject(memDc, uiFont);
+
+        daw::ui::PanelGet(fwd->panel).draw(memDc, client, *fwd->state);
+
+        SelectObject(memDc, oldFont);
+        DeleteObject(uiFont);
+
+        BitBlt(hdc, 0, 0, client.right, client.bottom, memDc, 0, 0, SRCCOPY);
+
+        SelectObject(memDc, oldBmp);
+        DeleteObject(memBmp);
+        DeleteDC(memDc);
+
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_SIZE:
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    case WM_ERASEBKGND:
+        return 1; // We paint the entire background ourselves.
+    case WM_EXITSIZEMOVE: {
+        // ── Drag-back-to-main (Phase 4b) ────────────────────────────────
+        // When the user finishes moving / resizing the floating window,
+        // check whether its center now sits over the main window's client
+        // area. If so, re-dock the panel and destroy the floating frame.
+        if (fwd == nullptr || fwd->state == nullptr || fwd->state->ui.hwnd == nullptr) break;
+        RECT fwin; GetWindowRect(hwnd, &fwin);
+        const POINT center{(fwin.left + fwin.right) / 2,
+                           (fwin.top  + fwin.bottom) / 2};
+        RECT mwin; GetClientRect(fwd->state->ui.hwnd, &mwin);
+        POINT mTopLeft{0, 0};
+        ClientToScreen(fwd->state->ui.hwnd, &mTopLeft);
+        OffsetRect(&mwin, mTopLeft.x, mTopLeft.y);
+        if (PtInRect(&mwin, center)) {
+            // PostMessage so we tear down outside this WM_EXITSIZEMOVE
+            // (Windows doesn't love DestroyWindow during a modal loop).
+            PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        }
+        return 0;
+    }
+    case WM_CLOSE:
+        DestroyWindow(hwnd);
+        return 0;
+    case WM_DESTROY: {
+        if (fwd != nullptr) {
+            // Re-dock the panel back into the main window so it can't be
+            // permanently lost by closing its floating frame.
+            DockReturnPanelToMain(*fwd->state, fwd->panel);
+            // Drop the entry from the floatingPanels vector.
+            auto& vec = fwd->state->ui.floatingPanels;
+            vec.erase(std::remove_if(vec.begin(), vec.end(),
+                [hwnd](const auto& fp){ return fp.hwnd == hwnd; }), vec.end());
+            HWND mainHwnd = fwd->state->ui.hwnd;
+            delete fwd;
+            SetWindowLongPtr(hwnd, GWLP_USERDATA, 0);
+            if (mainHwnd != nullptr) InvalidateRect(mainHwnd, nullptr, FALSE);
+        }
+        return 0;
+    }
+    default:
+        return DefWindowProc(hwnd, msg, wParam, lParam);
+    }
+    return DefWindowProc(hwnd, msg, wParam, lParam);
+}
+
+// Spawn a floating top-level window hosting `panel` at the given screen
+// rect. `restoreOnFail` controls whether to put the panel back into the
+// main dock if window creation fails: true for tear-off (caller already
+// removed the tab), false for layout-restore (panel was never docked).
+static HWND SpawnFloatingPanelAt(AppState& state, daw::ui::PanelKind panel,
+                                 int x, int y, int w, int h,
+                                 bool restoreOnFail) {
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtr(state.ui.hwnd, GWLP_HINSTANCE));
+    const std::wstring title = std::wstring(daw::ui::PanelGet(panel).title) + L" — DAW";
+    HWND fhwnd = CreateWindowExW(
+        0,
+        kFloatingClassName,
+        title.c_str(),
+        WS_OVERLAPPEDWINDOW,
+        x, y, w, h,
+        state.ui.hwnd,    // owner so it stays above main but isn't a child
+        nullptr,
+        hInst,
+        nullptr);
+    if (fhwnd == nullptr) {
+        if (restoreOnFail) {
+            DockReturnPanelToMain(state, panel);
+            InvalidateRect(state.ui.hwnd, nullptr, FALSE);
+        }
+        return nullptr;
+    }
+    auto* fwd = new FloatingWndData{&state, panel};
+    SetWindowLongPtr(fhwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(fwd));
+    state.ui.floatingPanels.push_back({fhwnd, panel});
+    ShowWindow(fhwnd, SW_SHOWNORMAL);
+    return fhwnd;
+}
+
+// Tear-off entry point: anchor `panel` near `screenPt` (where the user
+// dropped the tab). Caller has already removed the panel from the dock.
+static void SpawnFloatingPanel(AppState& state, daw::ui::PanelKind panel, POINT screenPt) {
+    const int w = Dpi(640);
+    const int h = Dpi(360);
+    // Anchor the new window so the cursor lands near its title bar — gives
+    // the user immediate "this is what I just tore off" feedback.
+    const int x = screenPt.x - Dpi(80);
+    const int y = screenPt.y - Dpi(12);
+    SpawnFloatingPanelAt(state, panel, x, y, w, h, /*restoreOnFail=*/true);
+}
+
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     auto* state = reinterpret_cast<AppState*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
 
     switch (msg) {
     case WM_CREATE: {
+        // Pick up the monitor's DPI before the first paint so all layout math
+        // produces correctly-sized rects on HiDPI displays from frame zero.
+        g_uiDpi = static_cast<int>(GetDpiForWindow(hwnd));
+        if (g_uiDpi <= 0) g_uiDpi = 96;
+
         auto* initial = new AppState();
         initial->ui.hwnd = hwnd;
-        DeviceRefreshInputDevices(*initial);
-        DeviceRefreshOutputDevices(*initial);
-        InitializeCriticalSection(&initial->audio.audioStateLock);
+        // Single-call audio engine bring-up: device enumeration, SR probe,
+        // critical-section init, and engineState transition to Ready.
+        AudioInitializeRuntime(hwnd, initial->core, initial->audio);
         SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(initial));
+
+        // Attach the native Win32 menu bar. SetMenu() takes ownership of the
+        // HMENU; Windows destroys it when the window is destroyed.
+        if (HMENU bar = BuildMainMenuBar(*initial); bar != nullptr) {
+            SetMenu(hwnd, bar);
+            DrawMenuBar(hwnd);
+        }
+
         SetTimer(hwnd, kPlaybackTimerId, kPlaybackTimerMs, nullptr);
+        return 0;
+    }
+    case WM_SIZE: {
+        // Default WM_SIZE only invalidates newly-exposed area, so when you
+        // maximize / restore / drag-resize the window the existing content
+        // (Arrange grid, ruler, etc.) shows stretched stale pixels until
+        // the next click triggers a repaint. Force a full redraw on every
+        // size change so the layout walker re-runs against the new client.
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    }
+    case WM_DPICHANGED: {
+        // Per-monitor DPI v2: Windows tells us the new DPI in HIWORD(wParam)
+        // and a recommended new bounding rect in lParam (already adjusted for
+        // the new scale on the destination monitor).
+        g_uiDpi = HIWORD(wParam);
+        if (g_uiDpi <= 0) g_uiDpi = 96;
+        const RECT* suggested = reinterpret_cast<const RECT*>(lParam);
+        if (suggested != nullptr) {
+            SetWindowPos(hwnd, nullptr,
+                         suggested->left, suggested->top,
+                         suggested->right  - suggested->left,
+                         suggested->bottom - suggested->top,
+                         SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    }
+    case WM_INITMENUPOPUP: {
+        // Refresh dynamic content (device list, current sample rate / backend
+        // / buffer-size checkmarks) just before each top-level popup opens.
+        // HIWORD(lParam) is non-zero for the system (window) menu, which we
+        // skip so Windows can render the standard window menu.
+        if (HIWORD(lParam) != 0 || state == nullptr) {
+            return DefWindowProc(hwnd, msg, wParam, lParam);
+        }
+        HMENU popup = reinterpret_cast<HMENU>(wParam);
+        if (RefreshTopLevelPopup(popup, *state)) {
+            return 0;
+        }
+        return DefWindowProc(hwnd, msg, wParam, lParam);
+    }
+    case WM_COMMAND: {
+        // Native menu items dispatch here. notification code (HIWORD) is 0 for
+        // menu items, 1 for accelerators; we treat both the same way.
+        if (state == nullptr) {
+            return DefWindowProc(hwnd, msg, wParam, lParam);
+        }
+        const UINT cmd = LOWORD(wParam);
+        HandleMenuCommand(hwnd, *state, cmd);
         return 0;
     }
     case WM_DESTROY:
         KillTimer(hwnd, kPlaybackTimerId);
         if (state != nullptr) {
+            // Persist the dock layout AND the geometry of every floating
+            // panel before tearing down so the next launch reopens with
+            // the same arrangement of panels, tabs, splitter ratios, and
+            // torn-off windows.
+            if (state->ui.dockRoot) {
+                std::vector<daw::ui::DockFloatingPanel> floats;
+                floats.reserve(state->ui.floatingPanels.size());
+                for (const auto& fp : state->ui.floatingPanels) {
+                    if (!fp.hwnd || !IsWindow(fp.hwnd)) continue;
+                    RECT wr{};
+                    if (!GetWindowRect(fp.hwnd, &wr)) continue;
+                    daw::ui::DockFloatingPanel out{};
+                    out.panel = fp.panel;
+                    out.x = wr.left;
+                    out.y = wr.top;
+                    out.w = wr.right  - wr.left;
+                    out.h = wr.bottom - wr.top;
+                    floats.push_back(out);
+                }
+                daw::ui::DockSaveLayout(state->ui.dockRoot.get(), floats);
+            }
             StopRecording(*state, false);
             if (state->audio.automixThread != nullptr) {
                 WaitForSingleObject(state->audio.automixThread, INFINITE);
@@ -1339,15 +2359,61 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         return 0;
     case WM_TIMER:
-        if (state != nullptr && wParam == kPlaybackTimerId && state->audio.playing) {
-            const std::uint64_t absoluteFrame = DeviceGetRenderedPlaybackFrame(*state);
-            state->ui.playheadBeat = BeatsFromFrames(*state, absoluteFrame);
+        if (state != nullptr && wParam == kPlaybackTimerId) {
+            bool needRepaint = false;
 
-            const float viewRight = state->ui.viewStartBeat + state->ui.viewBeatsVisible;
-            if (state->ui.playheadBeat > viewRight - 1.0f) {
-                state->ui.viewStartBeat = state->ui.playheadBeat - (state->ui.viewBeatsVisible * 0.75f);
+            // Update playhead during playback (also runs during recording,
+            // since recording starts the playback backend).
+            if (state->audio.playing) {
+                const std::uint64_t absoluteFrame = DeviceGetRenderedPlaybackFrame(*state);
+                state->ui.playheadBeat = BeatsFromFrames(*state, absoluteFrame);
+
+                const float viewRight = state->ui.viewStartBeat + state->ui.viewBeatsVisible;
+                if (state->ui.playheadBeat > viewRight - 1.0f) {
+                    state->ui.viewStartBeat = state->ui.playheadBeat - (state->ui.viewBeatsVisible * 0.75f);
+                }
+                needRepaint = true;
             }
-            InvalidateRect(hwnd, nullptr, FALSE);
+
+            // Update live recording waveform display. Runs in parallel with
+            // the playhead update above; recording sets both `playing` and
+            // `recording` to true.
+            if (state->audio.recording) {
+                EnterCriticalSection(&state->audio.audioStateLock);
+                const int channels = std::max(1, state->audio.recordInputChannels);
+                const std::uint64_t currentFrames = static_cast<std::uint64_t>(
+                    state->audio.recordedInputPcm.size() / static_cast<size_t>(channels));
+
+                if (currentFrames > state->audio.liveRecordingFramesProcessed) {
+                    state->audio.liveRecordingWaveform.resize(static_cast<size_t>(currentFrames) * 2, 0.0f);
+
+                    for (std::uint64_t f = state->audio.liveRecordingFramesProcessed; f < currentFrames; ++f) {
+                        float l = 0.0f;
+                        float r = 0.0f;
+                        const size_t base = static_cast<size_t>(f) * static_cast<size_t>(channels);
+                        if (base < state->audio.recordedInputPcm.size()) {
+                            l = static_cast<float>(state->audio.recordedInputPcm[base]) / 32768.0f;
+                            if (channels > 1 && base + 1 < state->audio.recordedInputPcm.size()) {
+                                r = static_cast<float>(state->audio.recordedInputPcm[base + 1]) / 32768.0f;
+                            } else {
+                                r = l;
+                            }
+                        }
+                        state->audio.liveRecordingWaveform[static_cast<size_t>(f) * 2]     = l;
+                        state->audio.liveRecordingWaveform[static_cast<size_t>(f) * 2 + 1] = r;
+                    }
+
+                    state->audio.liveRecordingClip.startBeat = BeatsFromFrames(*state, state->audio.recordStartFrame);
+                    state->audio.liveRecordingClip.lengthBeats = std::max(0.25f, BeatsFromFrames(*state, currentFrames));
+                    state->audio.liveRecordingFramesProcessed = currentFrames;
+                }
+                LeaveCriticalSection(&state->audio.audioStateLock);
+                needRepaint = true;
+            }
+
+            if (needRepaint) {
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
         }
         return 0;
     case WM_KEYDOWN:
@@ -1497,21 +2563,59 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         {
             const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-            if (PtInRect(&state->ui.fileMenuRect, pt)) {
-                ShowTopMenu(hwnd, *state, 0, state->ui.fileMenuRect);
-                return 0;
+            // (File/View/Audio/Track tab hit-tests removed: those menus are now
+            //  served by the native Win32 menu bar attached via SetMenu().)
+
+            // Floating tear-off windows reuse this WindowProc for panel
+            // hit-testing (rects were set in floating client coords during
+            // the floating WM_PAINT). They have no dock tree of their own,
+            // so skip splitter / tab hit-tests in that case to avoid
+            // spurious matches against the main window's dock layout.
+            const bool isMainHwnd = (hwnd == state->ui.hwnd);
+
+            // ── Dock splitter drag start ────────────────────────────────
+            // Check splitters before anything else so the user can grab a
+            // divider even if its hit zone overlaps a panel's controls.
+            if (isMainHwnd) {
+                for (const auto& sp : state->ui.dockSplitters) {
+                    if (PtInRect(&sp.rect, pt)) {
+                        state->ui.draggingSplitter       = true;
+                        state->ui.dragSplitterNode       = sp.node;
+                        state->ui.dragSplitterHorizontal = sp.horizontal;
+                        SetCapture(hwnd);
+                        return 0;
+                    }
+                }
             }
-            if (PtInRect(&state->ui.viewMenuRect, pt)) {
-                ShowTopMenu(hwnd, *state, 1, state->ui.viewMenuRect);
-                return 0;
-            }
-            if (PtInRect(&state->ui.audioMenuRect, pt)) {
-                ShowTopMenu(hwnd, *state, 2, state->ui.audioMenuRect);
-                return 0;
-            }
-            if (PtInRect(&state->ui.trackMenuRect, pt)) {
-                ShowTopMenu(hwnd, *state, 3, state->ui.trackMenuRect);
-                return 0;
+
+            // ── Dock tab click → activate that tab + arm potential drag ──
+            if (isMainHwnd) {
+                for (const auto& tab : state->ui.dockTabs) {
+                    if (PtInRect(&tab.rect, pt)) {
+                        if (tab.node != nullptr) {
+                            tab.node->activeTab = tab.tabIndex;
+                            // Arm a tab drag — promoted to active in WM_MOUSEMOVE
+                            // once cursor moves past kDragTabThresholdPx. Primary
+                            // panels can't be dragged out of their leaf (they're
+                            // pinned to the layout), but can still be clicked to
+                            // activate when sharing a tab strip with others.
+                            const daw::ui::PanelKind pk =
+                                tab.node->panels[static_cast<size_t>(tab.tabIndex)];
+                            if (!daw::ui::PanelGet(pk).primary) {
+                                state->ui.dragTabArmed   = true;
+                                state->ui.dragTabActive  = false;
+                                state->ui.dragTabSource  = tab.node;
+                                state->ui.dragTabIndex   = tab.tabIndex;
+                                state->ui.dragTabPanel   = pk;
+                                state->ui.dragTabStartPt = pt;
+                                state->ui.dragTabCurPt   = pt;
+                                SetCapture(hwnd);
+                            }
+                            InvalidateRect(hwnd, nullptr, FALSE);
+                        }
+                        return 0;
+                    }
+                }
             }
 
             if (PtInRect(&state->ui.playRect, pt)) {
@@ -1596,7 +2700,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
             RECT client{};
             GetClientRect(hwnd, &client);
-            const LayoutRects layout = UiLayoutComputeLayout(client);
+            const LayoutRects layout = ComputeHitTestLayout(hwnd, *state);
 
             // ── Insert inspector click handling ──────────────────────────
             if (state->ui.fxInspectorOpen && state->ui.fxInspectorIndex >= 0) {
@@ -1768,9 +2872,21 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 return 0;
             }
 
-            if (PtInRect(&layout.leftPanel, pt) && pt.y > layout.leftPanel.top + kRulerHeight && !state->core.project.tracks.empty()) {
+            // Tracks panel + Buses panel hit-tests. Inner blocks gate by
+            // their own panel's rect, so it's safe to enter on any click in
+            // either leaf (the leaf rects are siblings in the dock tree).
+            const bool inTracksLeaf = (PtInRect(&layout.leftPanel, pt) && pt.y > layout.leftPanel.top + Dpi(kRulerHeight));
+            bool inBusesLeaf = false;
+            for (const auto& leaf : state->ui.dockLayout) {
+                if (leaf.activePanel == daw::ui::PanelKind::Buses && PtInRect(&leaf.rect, pt)) {
+                    inBusesLeaf = true;
+                    break;
+                }
+            }
+            if ((inTracksLeaf || inBusesLeaf) && !state->core.project.tracks.empty()) {
+                const bool inTracksRegion = inTracksLeaf && (pt.y < UiLayoutTracksRegionBottom(layout.leftPanel));
                 const int trackIndex = UiLayoutTrackIndexFromY(layout.arrange, *state, pt.y);
-                if (trackIndex >= 0 && trackIndex < static_cast<int>(state->core.project.tracks.size())) {
+                if (inTracksRegion && trackIndex >= 0 && trackIndex < static_cast<int>(state->core.project.tracks.size())) {
                     state->ui.selectedTrackIndex = trackIndex;
                     state->ui.selectedClipIndex = -1;
 
@@ -1778,7 +2894,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     RECT panKnobRect{};
                     RECT panValRect{};
                     RECT fxRect{};
-                    UiLayoutGetTrackRoutingRects(layout.leftPanel, trackIndex, &busRect, &panKnobRect, &panValRect, &fxRect);
+                    UiLayoutGetTrackRoutingRects(layout.leftPanel, trackIndex, &busRect, &panKnobRect, &panValRect, &fxRect, state->ui.tracksScrollY);
                     if (PtInRect(&busRect, pt)) {
                         EnterCriticalSection(&state->audio.audioStateLock);
                         if (trackIndex < static_cast<int>(state->core.project.tracks.size())) {
@@ -1824,7 +2940,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     RECT muteRect{};
                     RECT soloRect{};
                     RECT recRect{};
-                    UiLayoutGetTrackButtonRects(layout.leftPanel, trackIndex, &muteRect, &soloRect, &recRect);
+                    UiLayoutGetTrackButtonRects(layout.leftPanel, trackIndex, &muteRect, &soloRect, &recRect, state->ui.tracksScrollY);
                     if (PtInRect(&muteRect, pt)) {
                         EnterCriticalSection(&state->audio.audioStateLock);
                         if (trackIndex < static_cast<int>(state->core.project.tracks.size())) {
@@ -1855,7 +2971,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
                     RECT rail{};
                     RECT knob{};
-                    UiLayoutGetTrackFaderRects(layout.leftPanel, trackIndex, &rail, &knob);
+                    UiLayoutGetTrackFaderRects(layout.leftPanel, trackIndex, &rail, &knob, state->ui.tracksScrollY);
                     RECT hitRect{rail.left - 12, rail.top, rail.right + 12, rail.bottom};
                     if (PtInRect(&hitRect, pt)) {
                         PushUndo(*state);
@@ -1872,8 +2988,20 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     }
                 }
 
-                const int busTop = UiLayoutBusPanelTop(layout.leftPanel, *state);
-                if (pt.y >= busTop + 18) {
+                // Bus hit-test: use the Buses dock leaf's actual rect so it
+                // works regardless of where the panel has been moved/sized.
+                RECT busPanelRect{};
+                bool hasBusPanel = false;
+                for (const auto& leaf : state->ui.dockLayout) {
+                    if (leaf.activePanel == daw::ui::PanelKind::Buses) {
+                        busPanelRect = leaf.rect;
+                        hasBusPanel = true;
+                        break;
+                    }
+                }
+                const int busTop = hasBusPanel ? (busPanelRect.top + Dpi(kBusPanelTopMargin))
+                                               : (layout.leftPanel.bottom - Dpi(kBusPanelHeight) + Dpi(kBusPanelTopMargin));
+                if (hasBusPanel && PtInRect(&busPanelRect, pt) && pt.y >= busTop + Dpi(kBusPanelHeaderHeight)) {
                     for (int b = 0; b < kBusCount; ++b) {
                         RECT rowRect{};
                         RECT muteRect{};
@@ -1882,8 +3010,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         RECT panKnobRect{};
                         RECT panValRect{};
                         RECT fxRect{};
-                        UiLayoutGetBusControlRects(layout.leftPanel, *state, b, &rowRect, &muteRect, &gainDownRect, &gainUpRect, &panKnobRect, &panValRect, &fxRect);
-                        if (!PtInRect(&rowRect, pt)) {
+                        UiLayoutGetBusControlRectsInPanel(busPanelRect, b, &rowRect, &muteRect, &gainDownRect, &gainUpRect, &panKnobRect, &panValRect, &fxRect);                        if (!PtInRect(&rowRect, pt)) {
                             continue;
                         }
 
@@ -1972,7 +3099,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         {
             RECT client{};
             GetClientRect(hwnd, &client);
-            const LayoutRects layout = UiLayoutComputeLayout(client);
+            const LayoutRects layout = ComputeHitTestLayout(hwnd, *state);
             const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
 
             if (!PtInRect(&layout.leftPanel, pt) && !PtInRect(&layout.arrange, pt)) {
@@ -1987,7 +3114,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             AppendMenuW(menu, MF_STRING, kCmdTrackNew, L"New Track");
 
             int trackIndex = -1;
-            if (pt.y > layout.leftPanel.top + kRulerHeight && !state->core.project.tracks.empty()) {
+            if (pt.y > layout.leftPanel.top + Dpi(kRulerHeight) && !state->core.project.tracks.empty()) {
                 trackIndex = UiLayoutTrackIndexFromY(layout.arrange, *state, pt.y);
             }
             if (trackIndex >= 0 && trackIndex < static_cast<int>(state->core.project.tracks.size())) {
@@ -2019,10 +3146,80 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
 
+        // ── Dock tab drag update ────────────────────────────────────────
+        // Promotes an armed tab click into an active drag once the cursor
+        // moves past the threshold, then resolves a drop target every move.
+        if (state->ui.dragTabArmed) {
+            const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            state->ui.dragTabCurPt = pt;
+            if (!state->ui.dragTabActive) {
+                const int dx = pt.x - state->ui.dragTabStartPt.x;
+                const int dy = pt.y - state->ui.dragTabStartPt.y;
+                if (dx * dx + dy * dy >= Dpi(kDragTabThresholdPx) * Dpi(kDragTabThresholdPx)) {
+                    state->ui.dragTabActive = true;
+                }
+            }
+            if (state->ui.dragTabActive) {
+                ResolveDropTarget(*state, pt);
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return 0;
+        }
+
+        // ── Dock splitter drag update ───────────────────────────────────
+        if (state->ui.draggingSplitter && state->ui.dragSplitterNode != nullptr) {
+            RECT client{};
+            GetClientRect(hwnd, &client);
+            const RECT bodyRect{client.left, client.top + Dpi(kTopBarHeight), client.right, client.bottom - Dpi(kStatusBarHeight)};
+            // Recompute the parent rect for this split node by re-walking the
+            // tree until we find it. For simplicity, use bodyRect as the
+            // outermost reference; for nested splits we approximate by using
+            // the splitter's current rect to derive the parent extent.
+            // The dock walker emits splitters in pre-order so the splitter's
+            // rect bounds match the parent's bounds along the perpendicular
+            // axis — we use that to reconstruct ratio.
+            for (const auto& sp : state->ui.dockSplitters) {
+                if (sp.node != state->ui.dragSplitterNode) continue;
+                if (sp.horizontal) {
+                    // sp.rect spans the parent's full width and is centered
+                    // on the parent's split Y. Parent's vertical extent is
+                    // not directly stored, but the splitter's siblings cover
+                    // it: child[0] above, child[1] below. Recompute parent
+                    // top/bottom by taking the full union of dockLayout
+                    // leaves whose rects share sp.rect.left/right.
+                    int parentTop = bodyRect.top, parentBot = bodyRect.bottom;
+                    for (const auto& leaf : state->ui.dockLayout) {
+                        if (leaf.rect.left == sp.rect.left && leaf.rect.right == sp.rect.right) {
+                            parentTop = std::min<LONG>(parentTop, leaf.rect.top);
+                            parentBot = std::max<LONG>(parentBot, leaf.rect.bottom);
+                        }
+                    }
+                    // Use the actual parent extent if it's tighter than body.
+                    int y = std::clamp(static_cast<int>(GET_Y_LPARAM(lParam)), parentTop + Dpi(20), parentBot - Dpi(20));
+                    const float ratio = static_cast<float>(y - parentTop) / static_cast<float>(std::max(1, parentBot - parentTop));
+                    state->ui.dragSplitterNode->ratio = std::clamp(ratio, 0.05f, 0.95f);
+                } else {
+                    int parentLeft = bodyRect.left, parentRight = bodyRect.right;
+                    for (const auto& leaf : state->ui.dockLayout) {
+                        if (leaf.rect.top == sp.rect.top && leaf.rect.bottom == sp.rect.bottom) {
+                            parentLeft  = std::min<LONG>(parentLeft,  leaf.rect.left);
+                            parentRight = std::max<LONG>(parentRight, leaf.rect.right);
+                        }
+                    }
+                    int x = std::clamp(static_cast<int>(GET_X_LPARAM(lParam)), parentLeft + Dpi(40), parentRight - Dpi(40));
+                    const float ratio = static_cast<float>(x - parentLeft) / static_cast<float>(std::max(1, parentRight - parentLeft));
+                    state->ui.dragSplitterNode->ratio = std::clamp(ratio, 0.05f, 0.95f);
+                }
+                break;
+            }
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+
         if (state->ui.draggingPlayhead) {
             RECT client{};
             GetClientRect(hwnd, &client);
-            const LayoutRects layout = UiLayoutComputeLayout(client);
+            const LayoutRects layout = ComputeHitTestLayout(hwnd, *state);
             const float beat = std::max(0.0f, UiLayoutXToBeat(layout.ruler, *state, GET_X_LPARAM(lParam)));
             state->ui.playheadBeat = UiLayoutSnapBeat(beat);
             InvalidateRect(hwnd, nullptr, FALSE);
@@ -2033,7 +3230,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             state->ui.trimClipIndex < static_cast<int>(state->core.project.clips.size())) {
             RECT client{};
             GetClientRect(hwnd, &client);
-            const LayoutRects layout = UiLayoutComputeLayout(client);
+            const LayoutRects layout = ComputeHitTestLayout(hwnd, *state);
             const float mouseBeat = UiLayoutSnapBeat(std::max(0.0f, UiLayoutXToBeat(layout.arrange, *state, GET_X_LPARAM(lParam))));
             ClipItem& clip = state->core.project.clips[static_cast<size_t>(state->ui.trimClipIndex)];
             if (state->ui.trimIsLeft) {
@@ -2056,10 +3253,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (state->ui.draggingFader && state->ui.dragFaderTrack >= 0) {
             RECT client{};
             GetClientRect(hwnd, &client);
-            const LayoutRects layout = UiLayoutComputeLayout(client);
+            const LayoutRects layout = ComputeHitTestLayout(hwnd, *state);
             RECT rail{};
             RECT knob{};
-            UiLayoutGetTrackFaderRects(layout.leftPanel, state->ui.dragFaderTrack, &rail, &knob);
+            UiLayoutGetTrackFaderRects(layout.leftPanel, state->ui.dragFaderTrack, &rail, &knob, state->ui.tracksScrollY);
             const int mouseY = GET_Y_LPARAM(lParam);
             const bool shiftFine = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
             float newDb;
@@ -2166,7 +3363,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         {
             RECT client{};
             GetClientRect(hwnd, &client);
-            const LayoutRects layout = UiLayoutComputeLayout(client);
+            const LayoutRects layout = ComputeHitTestLayout(hwnd, *state);
 
             const int mouseX = GET_X_LPARAM(lParam);
             const int mouseY = GET_Y_LPARAM(lParam);
@@ -2185,6 +3382,82 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_LBUTTONUP:
         if (state != nullptr) {
             bool changed = false;
+
+            // ── Dock tab drag commit ────────────────────────────────────
+            // Three outcomes:
+            //   * Not active (just a click) → clear arm, no tree mutation.
+            //   * Active, no valid target  → cancel, no tree mutation.
+            //   * Active, valid target      → mutate tree (reorder / tab-into
+            //     / split) and clear state. ReleaseCapture in all three.
+            if (state->ui.dragTabArmed) {
+                if (state->ui.dragTabActive &&
+                    state->ui.dropTargetLeaf != nullptr &&
+                    state->ui.dragTabSource  != nullptr)
+                {
+                    daw::ui::DockNode* src    = state->ui.dragTabSource;
+                    daw::ui::DockNode* dst    = state->ui.dropTargetLeaf;
+                    const daw::ui::PanelKind  panel = state->ui.dragTabPanel;
+                    const daw::ui::DockDropSide side = state->ui.dropTargetSide;
+                    const int srcIdx = state->ui.dragTabIndex;
+                    const int dstAt  = state->ui.dropTargetTabAt;
+                    // If dst aliases the current root, removing the source
+                    // may collapse the root's split and free the old root
+                    // node; re-resolve dst from the (possibly new) root
+                    // after the remove. Same trick covers Reset Layout
+                    // pointer churn in case the root was an outer split.
+                    const bool dstIsRoot = (dst == state->ui.dockRoot.get());
+
+                    if (side == daw::ui::DockDropSide::Center) {
+                        // Reorder within same leaf, or move tab between leaves.
+                        daw::ui::DockRemoveTab(state->ui.dockRoot, src, srcIdx);
+                        if (dstIsRoot) dst = state->ui.dockRoot.get();
+                        daw::ui::DockInsertTab(dst, panel, dstAt);
+                    } else {
+                        // Split: detach source first, then split destination.
+                        daw::ui::DockRemoveTab(state->ui.dockRoot, src, srcIdx);
+                        if (dstIsRoot) dst = state->ui.dockRoot.get();
+                        daw::ui::DockSplitWith(state->ui.dockRoot, dst, side, panel, 0.4f);
+                    }
+                    changed = true;
+                } else if (state->ui.dragTabActive &&
+                           state->ui.dropTargetLeaf == nullptr &&
+                           state->ui.dragTabSource  != nullptr)
+                {
+                    // ── Tear-off (Phase 4a) ─────────────────────────────
+                    // Drag ended over no valid drop target. If the cursor
+                    // is outside the main window's bounds entirely, spawn
+                    // a floating window hosting this panel.
+                    POINT screenPt; GetCursorPos(&screenPt);
+                    RECT mainWin; GetWindowRect(hwnd, &mainWin);
+                    if (!PtInRect(&mainWin, screenPt)) {
+                        const daw::ui::PanelKind panel = state->ui.dragTabPanel;
+                        daw::ui::DockNode* src = state->ui.dragTabSource;
+                        const int srcIdx = state->ui.dragTabIndex;
+                        // Detach from main BEFORE spawning so the floating
+                        // window doesn't briefly show a duplicate.
+                        daw::ui::DockRemoveTab(state->ui.dockRoot, src, srcIdx);
+                        // Must release capture before creating the new
+                        // window or it will steal mouse messages back.
+                        ReleaseCapture();
+                        SpawnFloatingPanel(*state, panel, screenPt);
+                        changed = true;
+                    }
+                }
+                state->ui.dragTabArmed   = false;
+                state->ui.dragTabActive  = false;
+                state->ui.dragTabSource  = nullptr;
+                state->ui.dragTabIndex   = -1;
+                state->ui.dropTargetLeaf = nullptr;
+                state->ui.dropPreviewRect = RECT{0, 0, 0, 0};
+                ReleaseCapture();
+            }
+
+            if (state->ui.draggingSplitter) {
+                state->ui.draggingSplitter       = false;
+                state->ui.dragSplitterNode       = nullptr;
+                ReleaseCapture();
+                changed = true;
+            }
             if (state->ui.draggingPlayhead) {
                 state->ui.draggingPlayhead = false;
                 changed = true;
@@ -2233,21 +3506,42 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         {
             const short delta = GET_WHEEL_DELTA_WPARAM(wParam);
             const bool ctrl = (GET_KEYSTATE_WPARAM(wParam) & MK_CONTROL) != 0;
+
+            // Determine cursor location in client coords.
+            POINT wpt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            ScreenToClient(hwnd, &wpt);
+            const LayoutRects wlayout = ComputeHitTestLayout(hwnd, *state);
+
+            // Wheel over the left panel scrolls the tracks list vertically.
+            if (PtInRect(&wlayout.leftPanel, wpt) &&
+                wpt.y >= UiLayoutTracksRegionTop(wlayout.leftPanel) &&
+                wpt.y <  UiLayoutTracksRegionBottom(wlayout.leftPanel)) {
+                const int step = Dpi(kTrackRowHeight);
+                const int notches = delta / WHEEL_DELTA;
+                state->ui.tracksScrollY -= notches * step;
+                const int maxScroll = UiLayoutMaxTracksScrollY(wlayout.leftPanel, *state);
+                state->ui.tracksScrollY = std::clamp(state->ui.tracksScrollY, 0, maxScroll);
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+
             if (ctrl) {
                 const float oldVisible = state->ui.viewBeatsVisible;
                 state->ui.viewBeatsVisible = (delta > 0)
                     ? std::max(4.0f, state->ui.viewBeatsVisible * 0.9f)
                     : std::min(128.0f, state->ui.viewBeatsVisible * 1.1f);
 
-                RECT client{};
-                GetClientRect(hwnd, &client);
-                const LayoutRects layout = UiLayoutComputeLayout(client);
-                POINT p{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-                ScreenToClient(hwnd, &p);
-                const int focusX = std::clamp(p.x, layout.arrange.left, layout.arrange.right);
-                const float beatAtCursor = UiLayoutXToBeat(layout.arrange, *state, focusX);
+                const int focusX = std::clamp(wpt.x, wlayout.arrange.left, wlayout.arrange.right);
+                const float beatAtCursor = UiLayoutXToBeat(wlayout.arrange, *state, focusX);
                 const float ratio = (beatAtCursor - state->ui.viewStartBeat) / oldVisible;
                 state->ui.viewStartBeat = beatAtCursor - ratio * state->ui.viewBeatsVisible;
+            } else if ((GET_KEYSTATE_WPARAM(wParam) & MK_SHIFT) != 0) {
+                // Shift+wheel over arrange: vertical track scroll.
+                const int step = Dpi(kTrackRowHeight);
+                const int notches = delta / WHEEL_DELTA;
+                state->ui.tracksScrollY -= notches * step;
+                const int maxScroll = UiLayoutMaxTracksScrollY(wlayout.leftPanel, *state);
+                state->ui.tracksScrollY = std::clamp(state->ui.tracksScrollY, 0, maxScroll);
             } else {
                 const float step = state->ui.viewBeatsVisible * 0.08f;
                 state->ui.viewStartBeat += (delta > 0) ? -step : step;
@@ -2316,18 +3610,268 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             );
 
             HGDIOBJ oldFont = SelectObject(memDc, uiFont);
+
+            // ── Top bar (still a fixed strip) ────────────────────────────
             UiDrawTopBar(memDc, client, *state);
 
-            SelectObject(memDc, smallFont);
+            // ── Dock-driven paint of the body below the top bar ──────────
+            // Lazily build the default dock tree on first paint. The dock
+            // walker emits one entry per leaf + one per splitter so we can
+            // both dispatch to the panel registry and render draggable
+            // dividers.
+            if (!state->ui.dockRoot) {
+                // Try to restore the user's last layout from
+                // %APPDATA%\DAW\layout.json. Falls back to the built-in
+                // default if missing/invalid. Floating panels persisted
+                // alongside the dock tree are spawned now (one per entry)
+                // so a torn-off Mixer survives a restart in the same spot.
+                daw::ui::DockLayoutDocument doc = daw::ui::DockLoadLayout();
+                if (doc.root) {
+                    state->ui.dockRoot = std::move(doc.root);
+                    for (const auto& f : doc.floating) {
+                        SpawnFloatingPanelAt(*state, f.panel,
+                                             f.x, f.y, f.w, f.h,
+                                             /*restoreOnFail=*/false);
+                    }
+                } else {
+                    state->ui.dockRoot = daw::ui::DockBuildDefault();
+                }
+            }
+            RECT bodyRect{client.left, client.top + Dpi(kTopBarHeight), client.right, client.bottom - Dpi(kStatusBarHeight)};
+            state->ui.dockLayout.clear();
+            state->ui.dockSplitters.clear();
+            state->ui.dockTabs.clear();
+            daw::ui::DockLayout(state->ui.dockRoot.get(), bodyRect,
+                                state->ui.dockLayout, &state->ui.dockSplitters);
 
-            const LayoutRects layout = UiLayoutComputeLayout(client);
-            UiDrawLeftTrackPanel(memDc, layout.leftPanel, *state);
-            UiDrawRuler(memDc, layout.ruler, *state);
-            UiDrawArrangeLanes(memDc, layout.arrange, *state);
+            SelectObject(memDc, smallFont);
+            const int tabH = Dpi(daw::ui::kDockTabStripHeightPx);
+            for (const auto& leaf : state->ui.dockLayout) {
+                const RECT leafRect = leaf.rect;
+
+                // Lone primary panels render full-bleed (no tab strip). As
+                // soon as another panel docks alongside, the strip appears
+                // — but the primary panel's own tab can't be dragged out.
+                if (!daw::ui::DockLeafShowsTabStrip(leaf.node)) {
+                    const daw::ui::PanelDef& def = daw::ui::PanelGet(leaf.activePanel);
+                    def.draw(memDc, leafRect, *state);
+                    continue;
+                }
+
+                // Reserve tab strip across the top of the leaf, then draw
+                // panel into the remaining content rect.
+                const int  stripH   = std::min<int>(tabH, leafRect.bottom - leafRect.top);
+                const RECT stripRect{leafRect.left, leafRect.top,
+                                     leafRect.right, leafRect.top + stripH};
+                const RECT contentRect{leafRect.left, leafRect.top + stripH,
+                                       leafRect.right, leafRect.bottom};
+
+                // Strip background
+                HBRUSH stripBg = CreateSolidBrush(RGB(38, 41, 46));
+                FillRect(memDc, &stripRect, stripBg);
+                DeleteObject(stripBg);
+                // 1px separator under the strip
+                HBRUSH sepBr = CreateSolidBrush(RGB(70, 74, 81));
+                RECT sep{stripRect.left, stripRect.bottom - 1, stripRect.right, stripRect.bottom};
+                FillRect(memDc, &sep, sepBr);
+                DeleteObject(sepBr);
+
+                // Tab buttons
+                const int tabPad = Dpi(10);
+                const int tabGap = Dpi(2);
+                int tabX = stripRect.left + Dpi(4);
+                SetBkMode(memDc, TRANSPARENT);
+                for (int ti = 0; ti < static_cast<int>(leaf.node->panels.size()); ++ti) {
+                    const daw::ui::PanelKind pk = leaf.node->panels[static_cast<size_t>(ti)];
+                    const daw::ui::PanelDef& pd = daw::ui::PanelGet(pk);
+                    SIZE sz{};
+                    GetTextExtentPoint32W(memDc, pd.title, lstrlenW(pd.title), &sz);
+                    const int tabW = sz.cx + 2 * tabPad;
+                    RECT tabRect{tabX, stripRect.top + 2, tabX + tabW, stripRect.bottom - 1};
+                    const bool isActive = (ti == leaf.node->activeTab);
+                    HBRUSH tabBg = CreateSolidBrush(isActive ? RGB(58, 62, 70) : RGB(46, 49, 55));
+                    FillRect(memDc, &tabRect, tabBg);
+                    DeleteObject(tabBg);
+                    if (isActive) {
+                        HBRUSH topAccent = CreateSolidBrush(RGB(110, 150, 220));
+                        RECT acc{tabRect.left, tabRect.top, tabRect.right, tabRect.top + Dpi(2)};
+                        FillRect(memDc, &acc, topAccent);
+                        DeleteObject(topAccent);
+                    }
+                    SetTextColor(memDc, isActive ? RGB(235, 238, 244) : RGB(170, 175, 184));
+                    DrawTextW(memDc, pd.title, -1, &tabRect,
+                              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                    state->ui.dockTabs.push_back(daw::ui::DockTabHit{tabRect, leaf.node, ti});
+                    tabX += tabW + tabGap;
+                }
+
+                const daw::ui::PanelDef& def = daw::ui::PanelGet(leaf.activePanel);
+                def.draw(memDc, contentRect, *state);
+            }
+
+            // Draw splitters as a thin divider line (centered on the hit
+            // zone rect). Highlighted while being dragged.
+            for (const auto& sp : state->ui.dockSplitters) {
+                const bool active = (state->ui.draggingSplitter && state->ui.dragSplitterNode == sp.node);
+                const COLORREF col = active ? RGB(110, 150, 220) : RGB(70, 74, 81);
+                HBRUSH br = CreateSolidBrush(col);
+                if (sp.horizontal) {
+                    const int midY = (sp.rect.top + sp.rect.bottom) / 2;
+                    RECT line{sp.rect.left, midY, sp.rect.right, midY + 1};
+                    FillRect(memDc, &line, br);
+                } else {
+                    // Vertical splitter: draw the 1px divider one column to
+                    // the LEFT of the geometric center so it sits at the
+                    // right edge of the left leaf rather than at the first
+                    // column of the right leaf (which would overdraw
+                    // content like the playhead at its home position).
+                    const int midX = (sp.rect.left + sp.rect.right) / 2;
+                    RECT line{midX - 1, sp.rect.top, midX, sp.rect.bottom};
+                    FillRect(memDc, &line, br);
+                }
+                DeleteObject(br);
+            }
+
+            // ── Tab-drag drop preview (Phase 2.2c) ──────────────────────
+            // Translucent accent fill over the resolved drop region plus a
+            // Unity-style 5-position compass centered on the target leaf.
+            // The highlighted compass square shows where the drop will land.
+            if (state->ui.dragTabActive && state->ui.dropTargetLeaf != nullptr) {
+                const RECT pr = state->ui.dropPreviewRect;
+                if (pr.right > pr.left && pr.bottom > pr.top) {
+                    const COLORREF accent = RGB(110, 150, 220);
+                    // Mask before cast so MSVC doesn't warn about the
+                    // GetRValue macro's `(BYTE)(rgb)` truncating the
+                    // constant COLORREF expression.
+                    const BYTE accentR = static_cast<BYTE>(accent        & 0xFF);
+                    const BYTE accentG = static_cast<BYTE>((accent >> 8) & 0xFF);
+                    const BYTE accentB = static_cast<BYTE>((accent >> 16) & 0xFF);
+
+                    // ── Translucent fill via AlphaBlend ─────────────────
+                    // 32bpp DIB with premultiplied alpha — the standard
+                    // GDI requirement for AlphaBlend with per-pixel alpha.
+                    auto AlphaFill = [&](const RECT& r, BYTE alpha) {
+                        const int rw = r.right - r.left;
+                        const int rh = r.bottom - r.top;
+                        if (rw <= 0 || rh <= 0) return;
+                        BITMAPINFO bmi{};
+                        bmi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+                        bmi.bmiHeader.biWidth       = 1;
+                        bmi.bmiHeader.biHeight      = 1;
+                        bmi.bmiHeader.biPlanes      = 1;
+                        bmi.bmiHeader.biBitCount    = 32;
+                        bmi.bmiHeader.biCompression = BI_RGB;
+                        void*  bits = nullptr;
+                        HBITMAP dib = CreateDIBSection(memDc, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
+                        if (!dib || !bits) { if (dib) DeleteObject(dib); return; }
+                        BYTE* px = static_cast<BYTE*>(bits);
+                        // Premultiply: c' = c * a / 255. Layout is BGRA.
+                        px[0] = static_cast<BYTE>((accentB * alpha) / 255);
+                        px[1] = static_cast<BYTE>((accentG * alpha) / 255);
+                        px[2] = static_cast<BYTE>((accentR * alpha) / 255);
+                        px[3] = alpha;
+                        HDC tmpDc = CreateCompatibleDC(memDc);
+                        HGDIOBJ oldBmp = SelectObject(tmpDc, dib);
+                        BLENDFUNCTION bf{};
+                        bf.BlendOp             = AC_SRC_OVER;
+                        bf.SourceConstantAlpha = 255;
+                        bf.AlphaFormat         = AC_SRC_ALPHA;
+                        AlphaBlend(memDc, r.left, r.top, rw, rh,
+                                   tmpDc, 0, 0, 1, 1, bf);
+                        SelectObject(tmpDc, oldBmp);
+                        DeleteDC(tmpDc);
+                        DeleteObject(dib);
+                    };
+                    AlphaFill(pr, 96);
+
+                    // Solid 2px accent border around the preview rect.
+                    HBRUSH border = CreateSolidBrush(accent);
+                    RECT t{pr.left,      pr.top,         pr.right,   pr.top + 2};
+                    RECT b{pr.left,      pr.bottom - 2,  pr.right,   pr.bottom};
+                    RECT l{pr.left,      pr.top,         pr.left + 2, pr.bottom};
+                    RECT rb{pr.right - 2, pr.top,         pr.right,   pr.bottom};
+                    FillRect(memDc, &t,  border);
+                    FillRect(memDc, &b,  border);
+                    FillRect(memDc, &l,  border);
+                    FillRect(memDc, &rb, border);
+                    DeleteObject(border);
+
+                    // ── Compass indicators ──────────────────────────────
+                    // Five squares (T/L/C/R/B) arranged in a plus, centered
+                    // on the target leaf rect. The square matching the
+                    // resolved drop side is filled with accent; the others
+                    // are dim outlines so users can see all options.
+                    RECT compassHost = pr;
+                    // For inner-leaf drops, find the actual leaf rect (the
+                    // preview is half/full of it). For outer (root) drops
+                    // the preview is already the right area.
+                    if (state->ui.dropTargetLeaf != state->ui.dockRoot.get()) {
+                        for (const auto& leaf : state->ui.dockLayout) {
+                            if (leaf.node == state->ui.dropTargetLeaf) {
+                                compassHost = leaf.rect;
+                                break;
+                            }
+                        }
+                    }
+                    const int cx = (compassHost.left + compassHost.right)  / 2;
+                    const int cy = (compassHost.top  + compassHost.bottom) / 2;
+                    const int sq = Dpi(28);
+                    const int gap = Dpi(4);
+                    auto Square = [&](int ox, int oy) -> RECT {
+                        return RECT{cx + ox - sq / 2, cy + oy - sq / 2,
+                                    cx + ox + sq / 2, cy + oy + sq / 2};
+                    };
+                    const RECT cC = Square(0, 0);
+                    const RECT cT = Square(0, -(sq + gap));
+                    const RECT cB = Square(0,  (sq + gap));
+                    const RECT cL = Square(-(sq + gap), 0);
+                    const RECT cR = Square( (sq + gap), 0);
+
+                    const HBRUSH dim    = CreateSolidBrush(RGB(48, 54, 62));
+                    const HBRUSH bright = CreateSolidBrush(accent);
+                    const HBRUSH edge   = CreateSolidBrush(RGB(180, 200, 230));
+
+                    auto DrawSquare = [&](const RECT& sr, bool active) {
+                        FillRect(memDc, &sr, active ? bright : dim);
+                        FrameRect(memDc, &sr, edge);
+                    };
+
+                    using Side = daw::ui::DockDropSide;
+                    const Side side = state->ui.dropTargetSide;
+
+                    // Outer (root) drops: only show the single edge square
+                    // so it reads as "pin to this edge of the whole dock".
+                    if (state->ui.dropTargetLeaf == state->ui.dockRoot.get()) {
+                        if      (side == Side::Left)   DrawSquare(cL, true);
+                        else if (side == Side::Right)  DrawSquare(cR, true);
+                        else if (side == Side::Top)    DrawSquare(cT, true);
+                        else if (side == Side::Bottom) DrawSquare(cB, true);
+                    } else {
+                        DrawSquare(cC, side == Side::Center);
+                        DrawSquare(cT, side == Side::Top);
+                        DrawSquare(cB, side == Side::Bottom);
+                        DrawSquare(cL, side == Side::Left);
+                        DrawSquare(cR, side == Side::Right);
+                    }
+
+                    DeleteObject(dim);
+                    DeleteObject(bright);
+                    DeleteObject(edge);
+                }
+            }
 
             // Inspector panel floats on top of everything
             if (state->ui.fxInspectorOpen)
                 UiDrawInsertInspector(memDc, client, *state);
+
+            // ── Status bar (fixed bottom strip, not dockable) ────────────
+            {
+                RECT statusRect{client.left,
+                                client.bottom - Dpi(kStatusBarHeight),
+                                client.right,
+                                client.bottom};
+                UiDrawStatusBar(memDc, statusRect, *state);
+            }
 
             SelectObject(memDc, oldFont);
             DeleteObject(uiFont);
@@ -2341,6 +3885,22 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
         EndPaint(hwnd, &ps);
         return 0;
+    }
+    case WM_SETCURSOR: {
+        // Show resize cursor when hovering a dock splitter or while dragging
+        // one. For all other regions fall through to the default arrow.
+        if (state != nullptr && reinterpret_cast<HWND>(wParam) == hwnd && LOWORD(lParam) == HTCLIENT) {
+            POINT pt{};
+            GetCursorPos(&pt);
+            ScreenToClient(hwnd, &pt);
+            for (const auto& sp : state->ui.dockSplitters) {
+                if (PtInRect(&sp.rect, pt) || (state->ui.draggingSplitter && state->ui.dragSplitterNode == sp.node)) {
+                    SetCursor(LoadCursor(nullptr, sp.horizontal ? IDC_SIZENS : IDC_SIZEWE));
+                    return TRUE;
+                }
+            }
+        }
+        return DefWindowProc(hwnd, msg, wParam, lParam);
     }
     default:
         return DefWindowProc(hwnd, msg, wParam, lParam);
@@ -2366,6 +3926,20 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdSho
     wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
 
     RegisterClass(&wc);
+
+    // Phase 4 floating tear-off windows: separate WindowProc, same hInstance.
+    WNDCLASS fwc{};
+    fwc.lpfnWndProc   = FloatingWindowProc;
+    fwc.hInstance     = hInstance;
+    fwc.lpszClassName = kFloatingClassName;
+    fwc.hCursor       = LoadCursor(nullptr, IDC_ARROW);
+    fwc.hbrBackground = nullptr; // We paint the background ourselves.
+    RegisterClass(&fwc);
+
+    // Per-monitor DPI v2: each monitor reports its own DPI, WM_DPICHANGED fires
+    // when the window crosses monitors with different scales (essential for the
+    // multi-monitor / tear-off-window workflows planned for Phase 4).
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
     HWND hwnd = CreateWindowEx(
         0,

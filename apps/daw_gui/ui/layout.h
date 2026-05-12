@@ -9,11 +9,21 @@
 // ── Layout / coordinate math ─────────────────────────────────────────────────
 // Defined in ui/layout.cpp; used by draw.cpp and WndProc in main.cpp.
 
-void  UiLayoutGetTrackFaderRects(const RECT& leftPanel, int trackIndex, RECT* rail, RECT* knob);
-void  UiLayoutGetTrackButtonRects(const RECT& leftPanel, int trackIndex, RECT* muteRect, RECT* soloRect, RECT* recRect);
-void  UiLayoutGetTrackRoutingRects(const RECT& leftPanel, int trackIndex, RECT* busRect, RECT* panKnobRect, RECT* panValRect, RECT* fxRect);
+void  UiLayoutGetTrackFaderRects(const RECT& leftPanel, int trackIndex, RECT* rail, RECT* knob, int scrollY = 0);
+void  UiLayoutGetTrackButtonRects(const RECT& leftPanel, int trackIndex, RECT* muteRect, RECT* soloRect, RECT* recRect, int scrollY = 0);
+void  UiLayoutGetTrackRoutingRects(const RECT& leftPanel, int trackIndex, RECT* busRect, RECT* panKnobRect, RECT* panValRect, RECT* fxRect, int scrollY = 0);
 int   UiLayoutBusPanelTop(const RECT& leftPanel, const AppState& state);
+int   UiLayoutTracksRegionTop(const RECT& leftPanel);
+int   UiLayoutTracksRegionBottom(const RECT& leftPanel);
+int   UiLayoutMaxTracksScrollY(const RECT& leftPanel, const AppState& state);
 void  UiLayoutGetBusControlRects(const RECT& leftPanel, const AppState& state, int busIndex,
+                         RECT* rowRect, RECT* muteRect, RECT* gainDownRect, RECT* gainUpRect,
+                         RECT* panKnobRect, RECT* panValRect, RECT* fxRect);
+
+// Same as UiLayoutGetBusControlRects, but `busPanelRect` is the bus panel's
+// own rect (top = top of the bus area, bottom = bottom of the bus area).
+// Used by the standalone Buses panel draw which doesn't know the leftPanel.
+void  UiLayoutGetBusControlRectsInPanel(const RECT& busPanelRect, int busIndex,
                          RECT* rowRect, RECT* muteRect, RECT* gainDownRect, RECT* gainUpRect,
                          RECT* panKnobRect, RECT* panValRect, RECT* fxRect);
 

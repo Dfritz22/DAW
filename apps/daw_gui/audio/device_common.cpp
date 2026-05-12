@@ -4,6 +4,8 @@
 #include "core/timeline.h"
 #include "audio/device_mme.h"
 
+#include <algorithm>
+#include <cwctype>
 #include <sstream>
 
 // ── Backend labels ────────────────────────────────────────────────────────────
@@ -175,6 +177,39 @@ std::wstring DeviceBuildAudioDiagnosticsReport(const CoreState& core, const Audi
     ss << L"Selected Input: " << audio.selectedInputDeviceName << L" (id=" << audio.selectedInputDeviceId << L")\n";
     ss << L"Selected Output: " << audio.selectedOutputDeviceName << L" (id=" << audio.selectedOutputDeviceId << L")\n\n";
 
+     ss << L"Runtime Transport\n";
+     ss << L"  playing=" << yn(audio.playing)
+         << L", recording=" << yn(audio.recording)
+         << L", playingViaWasapi=" << yn(audio.playingViaWasapi)
+         << L", recordUsingWasapi=" << yn(audio.recordUsingWasapi) << L"\n";
+     ss << L"  audioThreadRunning=" << yn(audio.audioThreadRunning.load())
+         << L", recordThreadPresent=" << yn(audio.recordThread != nullptr)
+         << L", recordInitState=" << audio.recordInitState.load() << L"\n";
+     ss << L"  playbackStartBeat=" << audio.playbackStartBeat
+         << L", playbackEndBeat=" << audio.playbackEndBeat
+         << L", playbackStartTick=" << audio.playbackStartTick << L"\n";
+     ss << L"  playbackFrameCursor=" << audio.playbackFrameCursor.load()
+         << L", ui/project clips=" << core.project.clips.size()
+         << L", tracks=" << core.project.tracks.size() << L"\n";
+
+     ss << L"Count-In / Record Timeline\n";
+     ss << L"  countInEnabled=" << yn(audio.countInEnabled)
+         << L", countingIn=" << yn(audio.countingIn)
+         << L", countInBars=" << audio.countInBars
+         << L", recordPrerollFrames=" << audio.recordPrerollFrames << L"\n";
+     ss << L"  recordStartFrame=" << audio.recordStartFrame
+         << L", countInEndFrame=" << audio.countInEndFrame
+         << L", recordTrackIndex=" << audio.recordTrackIndex << L"\n";
+     if (core.project.projectSampleRate > 0) {
+          const double startBeat = static_cast<double>(audio.recordStartFrame) / static_cast<double>(core.project.projectSampleRate)
+                * static_cast<double>(core.project.bpm) / 60.0;
+          const double endBeat = static_cast<double>(audio.countInEndFrame) / static_cast<double>(core.project.projectSampleRate)
+                * static_cast<double>(core.project.bpm) / 60.0;
+          ss << L"  recordStartBeat(derived)=" << startBeat
+              << L", countInEndBeat(derived)=" << endBeat << L"\n";
+     }
+     ss << L"\n";
+
     ss << L"Last Opened Input Format: "
        << audio.lastOpenedInputSampleRate << L" Hz, " << audio.lastOpenedInputChannels << L" ch\n";
     ss << L"Last Opened Output Format: "
@@ -212,6 +247,148 @@ std::wstring DeviceBuildAudioDiagnosticsReport(const CoreState& core, const Audi
     ss << L"\nTip: For MME full-duplex stability, input and output should both report OK at the same sample rate.\n";
 
     return ss.str();
+}
+
+int DeviceProbeCurrentOutputSampleRate(const AudioRuntimeState& audio) {
+    HRESULT hrInit = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const bool shouldUninit = SUCCEEDED(hrInit);
+
+    IMMDeviceEnumerator* enumerator = nullptr;
+    if (CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator), reinterpret_cast<void**>(&enumerator)) != S_OK || enumerator == nullptr) {
+        if (shouldUninit) CoUninitialize();
+        return 0;
+    }
+
+    auto toLower = [](std::wstring s) {
+        std::transform(s.begin(), s.end(), s.begin(), [](wchar_t c) { return static_cast<wchar_t>(::towlower(c)); });
+        return s;
+    };
+
+    IMMDevice* device = nullptr;
+    if (!audio.selectedOutputDeviceName.empty()) {
+        IMMDeviceCollection* coll = nullptr;
+        if (enumerator->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &coll) == S_OK && coll != nullptr) {
+            UINT count = 0;
+            coll->GetCount(&count);
+            const std::wstring target = toLower(audio.selectedOutputDeviceName);
+            for (UINT i = 0; i < count; ++i) {
+                IMMDevice* dev = nullptr;
+                if (coll->Item(i, &dev) != S_OK || dev == nullptr) {
+                    continue;
+                }
+                IPropertyStore* props = nullptr;
+                if (dev->OpenPropertyStore(STGM_READ, &props) == S_OK && props != nullptr) {
+                    PROPVARIANT pv;
+                    PropVariantInit(&pv);
+                    if (props->GetValue(PKEY_Device_FriendlyName, &pv) == S_OK && pv.vt == VT_LPWSTR && pv.pwszVal != nullptr) {
+                        const std::wstring friendly = toLower(pv.pwszVal);
+                        if (friendly.find(target) != std::wstring::npos) {
+                            device = dev;
+                            PropVariantClear(&pv);
+                            props->Release();
+                            break;
+                        }
+                    }
+                    PropVariantClear(&pv);
+                    props->Release();
+                }
+                dev->Release();
+            }
+            coll->Release();
+        }
+    }
+
+    if (device == nullptr) {
+        enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
+    }
+    enumerator->Release();
+
+    int sampleRate = 0;
+    if (device != nullptr) {
+        IAudioClient* client = nullptr;
+        WAVEFORMATEX* mixFmt = nullptr;
+        if (device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(&client)) == S_OK && client != nullptr &&
+            client->GetMixFormat(&mixFmt) == S_OK && mixFmt != nullptr) {
+            sampleRate = static_cast<int>(mixFmt->nSamplesPerSec);
+            CoTaskMemFree(mixFmt);
+        }
+        if (client != nullptr) {
+            client->Release();
+        }
+        device->Release();
+    }
+
+    if (shouldUninit) CoUninitialize();
+    return sampleRate;
+}
+
+// ── Engine lifecycle ──────────────────────────────────────────────────────────
+
+namespace {
+
+// Single source of truth for "what sample rate should we run at if no clip
+// or user preference says otherwise?". Tries, in order:
+//   1. user-preferred sample rate,
+//   2. WASAPI mix-format probe of the current/selected output endpoint,
+//   3. last opened output sample rate,
+//   4. last opened input sample rate,
+//   5. 44100 Hz as a last resort.
+int ResolveDefaultSampleRate(const AudioRuntimeState& audio) {
+    if (audio.preferredSampleRate > 0) return audio.preferredSampleRate;
+    if (const int sr = DeviceProbeCurrentOutputSampleRate(audio); sr > 0) return sr;
+    if (audio.lastOpenedOutputSampleRate > 0) return audio.lastOpenedOutputSampleRate;
+    if (audio.lastOpenedInputSampleRate  > 0) return audio.lastOpenedInputSampleRate;
+    return 44100;
+}
+
+} // namespace
+
+bool AudioInitializeRuntime(HWND hwnd, CoreState& core, AudioRuntimeState& audio) {
+    // Idempotent: if we're already past Uninitialized, don't re-init the
+    // critical section or stomp engineState. Just refresh devices and SR.
+    const bool firstInit = (audio.engineState.load() == AudioEngineState::Uninitialized);
+
+    audio.hwnd = hwnd;
+    audio.coreContext = &core;
+    audio.engineInitError.clear();
+
+    if (firstInit) {
+        InitializeCriticalSection(&audio.audioStateLock);
+    }
+
+    DeviceRefreshInputDevices(audio);
+    DeviceRefreshOutputDevices(audio);
+
+    if (audio.outputDeviceIds.empty() && audio.inputDeviceIds.empty()) {
+        audio.engineInitError = L"No audio input or output devices were detected.";
+        audio.engineState.store(AudioEngineState::Error);
+        return false;
+    }
+
+    // Note: project sample rate is owned by ProjectData (default 48000) and
+    // is set only by project load or the Project > Sample Rate menu. Device
+    // code does not write to it.
+    (void)core;
+
+    audio.engineState.store(AudioEngineState::Ready);
+    return true;
+}
+
+bool AudioEnsureReadyForTransport(CoreState& core, AudioRuntimeState& audio) {
+    const AudioEngineState s = audio.engineState.load();
+    if (s == AudioEngineState::Error) {
+        // Caller may want to surface engineInitError.
+        return false;
+    }
+    if (s == AudioEngineState::Uninitialized) {
+        // Late init. Devices weren't enumerated at startup for some reason.
+        DeviceRefreshInputDevices(audio);
+        DeviceRefreshOutputDevices(audio);
+        audio.engineState.store(AudioEngineState::Ready);
+    }
+
+    // Project sample rate is owned by ProjectData; never mutated here.
+    return core.project.projectSampleRate > 0;
 }
 
 // ── Playback cursor ───────────────────────────────────────────────────────────

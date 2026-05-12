@@ -4,22 +4,14 @@
 #error "This header is internal-only."
 #endif
 
-#include <vector>
+// Pure value types live in libs/core. The app uses Track*-prefixed aliases
+// for historical naming consistency; the underlying types are identical.
 
-enum class AutomationInterpolationMode {
-    Step,
-    Linear,
-};
+#include "core/automation_curve.h"
 
-struct TrackAutomationPoint {
-    float beat {0.0f};
-    float value {0.0f};
-};
-
-struct TrackAutomationCurve {
-    std::vector<TrackAutomationPoint> points;
-    AutomationInterpolationMode interpolation {AutomationInterpolationMode::Linear};
-};
+using AutomationInterpolationMode = daw::core::AutomationInterpolationMode;
+using TrackAutomationPoint        = daw::core::AutomationPoint;
+using TrackAutomationCurve        = daw::core::AutomationCurve;
 
 using GainAutomation = TrackAutomationCurve;
 using PanAutomation  = TrackAutomationCurve;

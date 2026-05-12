@@ -1,42 +1,19 @@
 #include "core/CoreState.h"
+#include "core/automation_curve.h"
 #include "core/timeline.h"
+
 #include <algorithm>
 #include <cmath>
 
+// All curve evaluation lives in libs/core. This file holds only the
+// CoreState-aware lookup glue: indexing into per-track curve vectors,
+// supplying the static fallback value from `ProjectData`, and clamping
+// results to legal pan / bus ranges.
+
 namespace {
 
-static float EvaluateCurveAtBeat(const TrackAutomationCurve& curve, float beat, float defaultValue) {
-    if (curve.points.empty()) {
-        return defaultValue;
-    }
-
-    if (curve.points.size() == 1) {
-        return curve.points[0].value;
-    }
-
-    auto cmpBeat = [](const TrackAutomationPoint& p, float b) { return p.beat < b; };
-    const auto it = std::lower_bound(curve.points.begin(), curve.points.end(), beat, cmpBeat);
-
-    if (it == curve.points.begin()) {
-        return it->value;
-    }
-    if (it == curve.points.end()) {
-        return curve.points.back().value;
-    }
-
-    const TrackAutomationPoint& b = *it;
-    const TrackAutomationPoint& a = *(it - 1);
-
-    if (curve.interpolation == AutomationInterpolationMode::Step || b.beat <= a.beat) {
-        return a.value;
-    }
-
-    const float t = std::clamp((beat - a.beat) / (b.beat - a.beat), 0.0f, 1.0f);
-    return a.value + (b.value - a.value) * t;
-}
-
-static int EvaluateBusCurveAtBeat(const TrackAutomationCurve& curve, float beat, int defaultValue) {
-    const float raw = EvaluateCurveAtBeat(curve, beat, static_cast<float>(defaultValue));
+int EvaluateBusCurveAtBeat(const TrackAutomationCurve& curve, float beat, int defaultValue) {
+    const float raw = daw::core::EvaluateCurveAtBeat(curve, beat, static_cast<float>(defaultValue));
     return static_cast<int>(std::lround(raw));
 }
 
@@ -52,7 +29,8 @@ float AutomationTrackGainDbAt(const CoreState& state, int trackIndex, float beat
         return defaultValue;
     }
 
-    return EvaluateCurveAtBeat(state.trackGainCurves[static_cast<size_t>(trackIndex)], beat, defaultValue);
+    return daw::core::EvaluateCurveAtBeat(
+        state.trackGainCurves[static_cast<size_t>(trackIndex)], beat, defaultValue);
 }
 
 float AutomationTrackPanAt(const CoreState& state, int trackIndex, float beat) {
@@ -66,7 +44,7 @@ float AutomationTrackPanAt(const CoreState& state, int trackIndex, float beat) {
     }
 
     return std::clamp(
-        EvaluateCurveAtBeat(state.trackPanCurves[static_cast<size_t>(trackIndex)], beat, defaultValue),
+        daw::core::EvaluateCurveAtBeat(state.trackPanCurves[static_cast<size_t>(trackIndex)], beat, defaultValue),
         -1.0f,
         1.0f);
 }

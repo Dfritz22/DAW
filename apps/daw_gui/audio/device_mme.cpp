@@ -72,7 +72,30 @@ static DWORD WINAPI RecordThreadProc(LPVOID param) {
         return 0;
     }
 
+    // True once we've drained any in-flight buffers that contained samples
+    // captured during count-in. Until that drain happens, the very first
+    // buffer we see after countingIn flips false would otherwise prepend
+    // up to (kRecordBufferCount * kRecordBufferFrames) of stale audio,
+    // which is what made captures appear ~hundreds-of-ms behind the playhead.
+    bool prerollDrained = false;
+
     while (!audio->recordStopRequested.load()) {
+        // Detect the count-in -> capture transition and drain stale buffers.
+        if (!prerollDrained && !audio->countingIn) {
+            for (size_t i = 0; i < audio->waveInHeaders.size(); ++i) {
+                WAVEHDR& hdr = audio->waveInHeaders[i];
+                if ((hdr.dwFlags & WHDR_DONE) == 0) {
+                    continue;
+                }
+                hdr.dwBytesRecorded = 0;
+                hdr.dwFlags &= ~WHDR_DONE;
+                if (audio->waveIn != nullptr) {
+                    waveInAddBuffer(audio->waveIn, &hdr, sizeof(WAVEHDR));
+                }
+            }
+            prerollDrained = true;
+        }
+
         for (size_t i = 0; i < audio->waveInHeaders.size(); ++i) {
             WAVEHDR& hdr = audio->waveInHeaders[i];
             if ((hdr.dwFlags & WHDR_DONE) == 0) {
@@ -82,8 +105,10 @@ static DWORD WINAPI RecordThreadProc(LPVOID param) {
             if (hdr.dwBytesRecorded > 0) {
                 const size_t sampleCount = static_cast<size_t>(hdr.dwBytesRecorded / sizeof(std::int16_t));
                 const std::int16_t* samples = reinterpret_cast<const std::int16_t*>(hdr.lpData);
-                // Only record audio after count-in ends (do not capture during count-in)
-                if (!audio->countingIn) {
+                // Only record audio after count-in ends (do not capture during count-in).
+                // prerollDrained guarantees we never append a buffer that was
+                // partly filled while countingIn was true.
+                if (!audio->countingIn && prerollDrained) {
                     audio->recordedInputPcm.insert(audio->recordedInputPcm.end(), samples, samples + sampleCount);
                 }
                 hdr.dwBytesRecorded = 0;
@@ -92,7 +117,7 @@ static DWORD WINAPI RecordThreadProc(LPVOID param) {
                     waveInAddBuffer(audio->waveIn, &hdr, sizeof(WAVEHDR));
                 }
 
-                if (audio->inputMonitoring && !audio->countingIn) {
+                if (audio->inputMonitoring && !audio->countingIn && prerollDrained) {
                     EnterCriticalSection(&audio->audioStateLock);
                     audio->monitorInputPcm.insert(audio->monitorInputPcm.end(), samples, samples + sampleCount);
                     LeaveCriticalSection(&audio->audioStateLock);
@@ -186,6 +211,15 @@ bool DeviceStartMmeAudio(HWND hwnd, CoreState& core, AudioRuntimeState& audio, f
     audio.activeDeviceSampleRate = audio.lastOpenedOutputSampleRate;
     audio.activeDeviceBufferFrames = kAudioBufferFrames;
 
+    // Snap the user's requested rate to whatever the device actually opened
+    // at, so the Audio Settings UI and persisted project file reflect reality
+    // when the device refuses an SR change.
+    if (audio.preferredSampleRate > 0 &&
+        audio.activeDeviceSampleRate > 0 &&
+        audio.preferredSampleRate != audio.activeDeviceSampleRate) {
+        audio.preferredSampleRate = audio.activeDeviceSampleRate;
+    }
+
     audio.waveData.assign(kAudioBufferCount, std::vector<std::int16_t>(kAudioBufferFrames * 2, 0));
     audio.waveHeaders.assign(kAudioBufferCount, WAVEHDR{});
 
@@ -205,6 +239,8 @@ bool DeviceStartMmeAudio(HWND hwnd, CoreState& core, AudioRuntimeState& audio, f
     const float startBeat = std::max(0.0f, playheadBeat);
     const std::uint64_t startFrame = TimelineFramesFromBeats(core, startBeat);
     audio.playbackFrameCursor.store(startFrame);
+    audio.engineSrcPrimed = false;
+    audio.engineSrcPhase  = 0.0;
     const std::uint64_t endFrame = ComputeProjectEndFrameLocked(core);
     LeaveCriticalSection(&audio.audioStateLock);
 
@@ -265,6 +301,12 @@ bool DeviceStartMmeRecording(HWND hwnd, CoreState& core, AudioRuntimeState& audi
         sampleRates.push_back(audio.lastOpenedInputSampleRate);
     }
     if (sampleRates.empty()) {
+        const int deviceSampleRate = DeviceProbeCurrentOutputSampleRate(audio);
+        if (deviceSampleRate > 0) {
+            sampleRates.push_back(deviceSampleRate);
+        }
+    }
+    if (sampleRates.empty()) {
         MessageBoxW(hwnd,
             L"No input sample rate is configured.\nOpen Audio menu and choose a sample rate first.",
             L"Record",
@@ -318,17 +360,6 @@ bool DeviceStartMmeRecording(HWND hwnd, CoreState& core, AudioRuntimeState& audi
 
     if (chosenSampleRate > 0) {
         audio.lastOpenedInputSampleRate = chosenSampleRate;
-        if (core.project.projectSampleRate <= 0) {
-            core.project.projectSampleRate = chosenSampleRate;
-        }
-    }
-
-    if (!audio.playing && (!core.project.clips.empty() || audio.metronomeRecord)) {
-        if (!DeviceStartPlaybackBackend(hwnd, core, audio, playheadBeat)) {
-            waveInClose(audio.waveIn);
-            audio.waveIn = nullptr;
-            return false;
-        }
     }
 
     audio.waveInData.assign(kRecordBufferCount, std::vector<std::int16_t>(kRecordBufferFrames * audio.waveInFormat.nChannels, 0));
@@ -354,12 +385,11 @@ bool DeviceStartMmeRecording(HWND hwnd, CoreState& core, AudioRuntimeState& audi
     audio.recordTrackIndex = armedTrack;
     audio.recordCaptureStartTickMs = GetTickCount64();
 
-    // Ensure project sample rate is set before computing preroll duration
-    if (core.project.projectSampleRate <= 0) {
-        core.project.projectSampleRate = static_cast<int>(audio.waveInFormat.nSamplesPerSec);
-    }
+    // Project sample rate is owned by ProjectData (default 48000). Device code
+    // does not write to it; SRC will reconcile any device/project mismatch.
 
-    const std::uint64_t timelineStartFrame = audio.playing
+    const bool playbackWasRunning = audio.playing;
+    const std::uint64_t timelineStartFrame = playbackWasRunning
         ? DeviceGetRenderedPlaybackFrame(core, audio)
         : TimelineFramesFromBeats(core, std::max(0.0f, playheadBeat));
 
@@ -371,11 +401,33 @@ bool DeviceStartMmeRecording(HWND hwnd, CoreState& core, AudioRuntimeState& audi
     audio.recordStartFrame = timelineStartFrame;
     audio.countInEndFrame = timelineStartFrame + audio.recordPrerollFrames;
     audio.countingIn = (audio.recordPrerollFrames > 0);
+    audio.countInFrameCursor.store(0);
+    // Mark recording active BEFORE starting the playback backend so that the
+    // very first engine callback (which can fire as soon as the playback
+    // thread starts) sees recording=true and keeps the render loop alive.
+    // Setting it later races with the engine and can cause an immediate
+    // reachedEnd=true / kMsgPlaybackFinished tear-down.
+    audio.recording = true;
+
+    // Always start the playback backend during recording. The render thread
+    // owns playbackFrameCursor advance (and therefore the visible playhead);
+    // without it, recording with no clips, no metronome, and no count-in
+    // would capture audio fine but the playhead would never move.
+    if (!audio.playing) {
+        if (!DeviceStartPlaybackBackend(hwnd, core, audio, playheadBeat)) {
+            waveInClose(audio.waveIn);
+            audio.waveIn = nullptr;
+            audio.countingIn = false;
+            audio.recording = false;
+            return false;
+        }
+    }
 
     audio.recordStopRequested.store(false);
     audio.recordThread = CreateThread(nullptr, 0, RecordThreadProc, &audio, 0, nullptr);
     if (audio.recordThread == nullptr) {
         audio.countingIn = false;
+        audio.recording = false;
         DeviceStopMmeRecording(audio);
         MessageBoxW(hwnd, L"Could not start recording thread.", L"Record", MB_OK | MB_ICONERROR);
         return false;
@@ -398,5 +450,18 @@ bool DeviceStartMmeRecording(HWND hwnd, CoreState& core, AudioRuntimeState& audi
     audio.recordUsingWasapi = false;
     audio.recordInitState.store(1);
     audio.recording = true;
+    
+    // Initialize live recording clip for real-time waveform display.
+    // Note: startBeat will be set correctly in the UI timer callback.
+    audio.liveRecordingClip.trackIndex = armedTrack;
+    audio.liveRecordingClip.audioIndex = -1;
+    audio.liveRecordingClip.startBeat = 0.0f;
+    audio.liveRecordingClip.lengthBeats = 0.0f;
+    audio.liveRecordingClip.color = CoreRgb(88, 131, 199);
+    audio.liveRecordingClip.name = L"[Recording]";
+    audio.liveRecordingClip.sourceOffsetFrames = 0;
+    audio.liveRecordingWaveform.clear();
+    audio.liveRecordingFramesProcessed = 0;
+    
     return true;
 }

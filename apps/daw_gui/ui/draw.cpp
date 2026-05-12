@@ -1,5 +1,7 @@
 #include "ui/draw.h"
 #include "ui/layout.h"
+#include "ui/dpi.h"
+#include "ui/dock.h"
 #include "daw_automation.h"
 #include "daw_timeline.h"
 
@@ -84,61 +86,57 @@ static void DrawPanKnob(HDC hdc, const RECT& rect, float pan, bool active) {
     DeleteObject(ringPen);
 }
 
-static void DrawMenuTab(HDC hdc, const RECT& rect, const wchar_t* label) {
-    Fill(hdc, rect, RGB(39, 44, 50));
-    StrokeRect(hdc, rect, RGB(70, 76, 86));
-    SetBkMode(hdc, TRANSPARENT);
-    SetTextColor(hdc, RGB(206, 212, 220));
-    DrawTextW(hdc, label, -1, const_cast<RECT*>(&rect), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-}
-
 } // namespace daw::internal::ui
 
 using namespace daw::internal::ui;
 
 void UiDrawTopBar(HDC hdc, const RECT& client, AppState& state) {
-    RECT top{client.left, client.top, client.right, client.top + kTopBarHeight};
+    RECT top{client.left, client.top, client.right, client.top + Dpi(kTopBarHeight)};
     Fill(hdc, top, kPalette.topBar);
     RECT edge{client.left, top.bottom - 1, client.right, top.bottom};
     Fill(hdc, edge, kPalette.topBarEdge);
 
-    state.ui.fileMenuRect = RECT{12, 8, 72, 30};
-    state.ui.viewMenuRect = RECT{76, 8, 136, 30};
-    state.ui.audioMenuRect = RECT{140, 8, 210, 30};
-    state.ui.trackMenuRect = RECT{214, 8, 282, 30};
+    state.ui.fileMenuRect  = RECT{0, 0, 0, 0};
+    state.ui.viewMenuRect  = RECT{0, 0, 0, 0};
+    state.ui.audioMenuRect = RECT{0, 0, 0, 0};
+    state.ui.trackMenuRect = RECT{0, 0, 0, 0};
 
-    state.ui.playRect = RECT{22, 34, 96, 58};
-    state.ui.stopRect = RECT{104, 34, 178, 58};
-    state.ui.recordRect = RECT{186, 34, 260, 58};
-    state.ui.importRect = RECT{268, 34, 378, 58};
-    state.ui.automixRect = RECT{386, 34, 522, 58};
-    state.ui.vocalCheckRect = RECT{530, 34, 664, 58};
-    state.ui.autoMasterRect = RECT{672, 34, 806, 58};
-    state.ui.metPlayRect = RECT{814, 34, 900, 58};
-    state.ui.metRecRect = RECT{906, 34, 992, 58};
-    state.ui.monitorRect = RECT{998, 34, 1088, 58};
-    state.ui.bpmDownRect = RECT{1094, 34, 1126, 58};
-    state.ui.bpmUpRect = RECT{1132, 34, 1164, 58};
-    state.ui.countInRect = RECT{1170, 34, 1292, 58};
+    // Legacy compatibility: top bar = transport (left half) + tools (mixed)
+    // sharing the same horizontal strip. Once the dock tree owns the layout,
+    // each panel's rect will arrive from the dock walker.
+    UiDrawTransport(hdc, top, state);
+    UiDrawTools(hdc, top, state);
+}
 
-    DrawMenuTab(hdc, state.ui.fileMenuRect, L"File");
-    DrawMenuTab(hdc, state.ui.viewMenuRect, L"View");
-    DrawMenuTab(hdc, state.ui.audioMenuRect, L"Audio");
-    DrawMenuTab(hdc, state.ui.trackMenuRect, L"Track");
+// ── Transport panel ──────────────────────────────────────────────────────────
+// Play / Stop / Record + BPM-/BPM+ / Count-In + status text + SRC indicator.
+// Stores hit-test rects in AppState so main.cpp WM_LBUTTONDOWN keeps working.
+void UiDrawTransport(HDC hdc, const RECT& rect, AppState& state) {
+    state.ui.playRect    = RECT{rect.left + Dpi(22),   rect.top + Dpi(34), rect.left + Dpi(96),   rect.top + Dpi(58)};
+    state.ui.stopRect    = RECT{rect.left + Dpi(104),  rect.top + Dpi(34), rect.left + Dpi(178),  rect.top + Dpi(58)};
+    state.ui.recordRect  = RECT{rect.left + Dpi(186),  rect.top + Dpi(34), rect.left + Dpi(260),  rect.top + Dpi(58)};
+    state.ui.bpmDownRect = RECT{rect.left + Dpi(1094), rect.top + Dpi(34), rect.left + Dpi(1126), rect.top + Dpi(58)};
+    state.ui.bpmUpRect   = RECT{rect.left + Dpi(1132), rect.top + Dpi(34), rect.left + Dpi(1164), rect.top + Dpi(58)};
+    state.ui.countInRect = RECT{rect.left + Dpi(1170), rect.top + Dpi(34), rect.left + Dpi(1292), rect.top + Dpi(58)};
 
-    DrawButton(hdc, state.ui.playRect, state.audio.playing ? L"Playing" : L"Play", state.audio.playing);
-    DrawButton(hdc, state.ui.stopRect, L"Stop", false);
-    DrawButton(hdc, state.ui.recordRect, state.audio.recording ? L"Recording" : L"Record", state.audio.recording);
-    DrawButton(hdc, state.ui.importRect, L"Import WAV", false);
-    DrawButton(hdc, state.ui.automixRect, state.audio.automixRunning.load() ? L"AutoMixing..." : L"Apply AutoMix", state.audio.automixRunning.load());
-    DrawButton(hdc, state.ui.vocalCheckRect, L"Vocal Check", false);
-    DrawButton(hdc, state.ui.autoMasterRect, L"Auto Master", false);
-    DrawButton(hdc, state.ui.metPlayRect, state.audio.metronomePlay ? L"Met Play On" : L"Met Play Off", state.audio.metronomePlay);
-    DrawButton(hdc, state.ui.metRecRect, state.audio.metronomeRecord ? L"Met Rec On" : L"Met Rec Off", state.audio.metronomeRecord);
-    DrawButton(hdc, state.ui.monitorRect, state.audio.inputMonitoring ? L"Monitor On" : L"Monitor Off", state.audio.inputMonitoring);
+    DrawButton(hdc, state.ui.playRect,    state.audio.playing   ? L"Playing"   : L"Play",   state.audio.playing);
+    DrawButton(hdc, state.ui.stopRect,    L"Stop", false);
+    DrawButton(hdc, state.ui.recordRect,  state.audio.recording ? L"Recording" : L"Record", state.audio.recording);
     DrawButton(hdc, state.ui.bpmDownRect, L"BPM-", false);
-    DrawButton(hdc, state.ui.bpmUpRect, L"BPM+", false);
+    DrawButton(hdc, state.ui.bpmUpRect,   L"BPM+", false);
     DrawButton(hdc, state.ui.countInRect, state.audio.countInEnabled ? L"Count-In On" : L"Count-In Off", state.audio.countInEnabled);
+}
+
+// ── Status bar (bottom strip — fixed, not movable) ───────────────────────────
+// Project info (BPM/SR/Tracks/View) + selected I/O devices, centered.
+// Painted directly by the renderer over a reserved strip at the bottom of
+// the client area, so the dock tree never sees this region.
+void UiDrawStatusBar(HDC hdc, const RECT& rect, const AppState& state) {
+    Fill(hdc, rect, kPalette.topBar);
+    RECT edge{rect.left, rect.top, rect.right, rect.top + 1};
+    Fill(hdc, edge, kPalette.topBarEdge);
+
+    SetBkMode(hdc, TRANSPARENT);
 
     const int visibleBars = std::max(1, static_cast<int>(std::round(state.ui.viewBeatsVisible / 4.0f)));
     std::wstring status =
@@ -149,10 +147,29 @@ void UiDrawTopBar(HDC hdc, const RECT& client, AppState& state) {
         L"   |   In " + state.audio.selectedInputDeviceName +
         L"   |   Out " + state.audio.selectedOutputDeviceName;
 
-    RECT statusRect{1300, 32, client.right - 20, 58};
-    SetBkMode(hdc, TRANSPARENT);
+    RECT statusRect{rect.left + Dpi(8), rect.top, rect.right - Dpi(8), rect.bottom};
     SetTextColor(hdc, kPalette.textPrimary);
-    DrawTextW(hdc, status.c_str(), -1, &statusRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextW(hdc, status.c_str(), -1, &statusRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+}
+
+// ── Tools panel ──────────────────────────────────────────────────────────────
+// Import / AutoMix / Vocal Check / Auto Master / Met Play / Met Rec / Monitor.
+void UiDrawTools(HDC hdc, const RECT& rect, AppState& state) {
+    state.ui.importRect     = RECT{rect.left + Dpi(268),  rect.top + Dpi(34), rect.left + Dpi(378),  rect.top + Dpi(58)};
+    state.ui.automixRect    = RECT{rect.left + Dpi(386),  rect.top + Dpi(34), rect.left + Dpi(522),  rect.top + Dpi(58)};
+    state.ui.vocalCheckRect = RECT{rect.left + Dpi(530),  rect.top + Dpi(34), rect.left + Dpi(664),  rect.top + Dpi(58)};
+    state.ui.autoMasterRect = RECT{rect.left + Dpi(672),  rect.top + Dpi(34), rect.left + Dpi(806),  rect.top + Dpi(58)};
+    state.ui.metPlayRect    = RECT{rect.left + Dpi(814),  rect.top + Dpi(34), rect.left + Dpi(900),  rect.top + Dpi(58)};
+    state.ui.metRecRect     = RECT{rect.left + Dpi(906),  rect.top + Dpi(34), rect.left + Dpi(992),  rect.top + Dpi(58)};
+    state.ui.monitorRect    = RECT{rect.left + Dpi(998),  rect.top + Dpi(34), rect.left + Dpi(1088), rect.top + Dpi(58)};
+
+    DrawButton(hdc, state.ui.importRect,     L"Import WAV", false);
+    DrawButton(hdc, state.ui.automixRect,    state.audio.automixRunning.load() ? L"AutoMixing..." : L"Apply AutoMix", state.audio.automixRunning.load());
+    DrawButton(hdc, state.ui.vocalCheckRect, L"Vocal Check", false);
+    DrawButton(hdc, state.ui.autoMasterRect, L"Auto Master", false);
+    DrawButton(hdc, state.ui.metPlayRect,    state.audio.metronomePlay   ? L"Met Play On" : L"Met Play Off", state.audio.metronomePlay);
+    DrawButton(hdc, state.ui.metRecRect,     state.audio.metronomeRecord ? L"Met Rec On"  : L"Met Rec Off",  state.audio.metronomeRecord);
+    DrawButton(hdc, state.ui.monitorRect,    state.audio.inputMonitoring ? L"Monitor On"  : L"Monitor Off",  state.audio.inputMonitoring);
 }
 
 // ── Insert-chain inspector panel ─────────────────────────────────────────────
@@ -170,7 +187,7 @@ RECT UiDrawGetInspectorPanelRect(const RECT& client, const AppState& state) {
     const bool hasSelected = (state.ui.fxInspectorSelectedSlot >= 0 && state.ui.fxInspectorSelectedSlot < slotCount);
     RECT r{};
     r.left   = client.left + kUiDrawInspPadX;
-    r.top    = client.top  + kTopBarHeight + kRulerHeight + 6;
+    r.top    = client.top  + Dpi(kTopBarHeight) + Dpi(kRulerHeight) + Dpi(6);
     r.right  = r.left + kUiDrawInspW;
     r.bottom = r.top + kUiDrawInspHeaderH + kUiDrawInspCtrlH + slotCount * kUiDrawInspSlotH + (hasSelected ? kUiDrawInspParamH : 0) + 6;
     return r;
@@ -429,7 +446,7 @@ void UiDrawInsertInspector(HDC hdc, const RECT& client, const AppState& state) {
 void UiDrawLeftTrackPanel(HDC hdc, const RECT& rect, const AppState& state) {
     Fill(hdc, rect, kPalette.leftPanel);
 
-    RECT header{rect.left, rect.top, rect.right, rect.top + kRulerHeight};
+    RECT header{rect.left, rect.top, rect.right, rect.top + Dpi(kRulerHeight)};
     Fill(hdc, header, kPalette.leftPanelHeader);
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, kPalette.textMuted);
@@ -442,9 +459,19 @@ void UiDrawLeftTrackPanel(HDC hdc, const RECT& rect, const AppState& state) {
         return;
     }
 
+    // Scrollable tracks region: clipped between the header and the pinned bus panel.
+    const int tracksTop = UiLayoutTracksRegionTop(rect);
+    const int tracksBottom = UiLayoutTracksRegionBottom(rect);
+    const int scrollY = state.ui.tracksScrollY;
+    const int tracksSaved = SaveDC(hdc);
+    IntersectClipRect(hdc, rect.left, tracksTop, rect.right, tracksBottom);
+
     for (size_t i = 0; i < state.core.project.tracks.size(); ++i) {
-        const int y = rect.top + kRulerHeight + static_cast<int>(i) * kTrackRowHeight;
-        RECT row{rect.left, y, rect.right, y + kTrackRowHeight};
+        const int rowH = Dpi(kTrackRowHeight);
+        const int y = rect.top + Dpi(kRulerHeight) + static_cast<int>(i) * rowH - scrollY;
+        if (y >= tracksBottom) break;
+        if (y + rowH <= tracksTop) continue;
+        RECT row{rect.left, y, rect.right, y + rowH};
         Fill(hdc, row, (i % 2 == 0) ? RGB(39, 43, 49) : RGB(42, 47, 53));
         if (static_cast<int>(i) == state.ui.selectedTrackIndex) {
             Fill(hdc, RECT{row.left, row.top, row.right, row.bottom}, RGB(55, 66, 84));
@@ -459,7 +486,7 @@ void UiDrawLeftTrackPanel(HDC hdc, const RECT& rect, const AppState& state) {
         RECT panKnobRect{};
         RECT panValRect{};
         RECT fxRect{};
-        UiLayoutGetTrackRoutingRects(rect, static_cast<int>(i), &busRect, &panKnobRect, &panValRect, &fxRect);
+        UiLayoutGetTrackRoutingRects(rect, static_cast<int>(i), &busRect, &panKnobRect, &panValRect, &fxRect, scrollY);
 
         Fill(hdc, busRect, RGB(49, 54, 61));
         StrokeRect(hdc, busRect, RGB(82, 88, 97));
@@ -503,7 +530,7 @@ void UiDrawLeftTrackPanel(HDC hdc, const RECT& rect, const AppState& state) {
         RECT muteRect{};
         RECT soloRect{};
         RECT recRect{};
-        UiLayoutGetTrackButtonRects(rect, static_cast<int>(i), &muteRect, &soloRect, &recRect);
+        UiLayoutGetTrackButtonRects(rect, static_cast<int>(i), &muteRect, &soloRect, &recRect, scrollY);
 
         const bool muted = i < state.core.project.tracks.size() && state.core.project.tracks[i].mute;
         const bool soloed = i < state.core.project.tracks.size() && state.core.project.tracks[i].solo;
@@ -530,13 +557,13 @@ void UiDrawLeftTrackPanel(HDC hdc, const RECT& rect, const AppState& state) {
 
         RECT rail{};
         RECT knob{};
-        UiLayoutGetTrackFaderRects(rect, static_cast<int>(i), &rail, &knob);
+        UiLayoutGetTrackFaderRects(rect, static_cast<int>(i), &rail, &knob, scrollY);
         Fill(hdc, rail, RGB(26, 29, 33));
         StrokeRect(hdc, rail, RGB(60, 64, 72));
 
         const int knobTop = UiLayoutFaderKnobTopFromGain(rail, gainDb);
         knob.top = knobTop;
-        knob.bottom = knobTop + kFaderKnobHeight;
+        knob.bottom = knobTop + Dpi(kFaderKnobHeight);
         Fill(hdc, knob, RGB(214, 218, 224));
         StrokeRect(hdc, knob, RGB(90, 95, 105));
 
@@ -547,82 +574,117 @@ void UiDrawLeftTrackPanel(HDC hdc, const RECT& rect, const AppState& state) {
         Fill(hdc, meterLevel, RGB(78, 162, 121));
     }
 
-    const int busTop = UiLayoutBusPanelTop(rect, state);
-    if (busTop + 20 < rect.bottom) {
-        RECT bHeader{rect.left, busTop, rect.right, busTop + 16};
-        Fill(hdc, bHeader, RGB(48, 52, 58));
-        SetTextColor(hdc, kPalette.textMuted);
-        RECT bHeaderText{bHeader.left + 10, bHeader.top, bHeader.right, bHeader.bottom};
-        DrawTextW(hdc, L"BUSES", -1, &bHeaderText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    // Restore clip from tracks region, then draw scrollbar + pinned bus panel.
+    RestoreDC(hdc, tracksSaved);
 
-        for (int b = 0; b < kBusCount; ++b) {
-            RECT rowRect{};
-            RECT muteRect{};
-            RECT gainDownRect{};
-            RECT gainUpRect{};
-            RECT panKnobRect{};
-            RECT panValRect{};
-            RECT fxRect{};
-            UiLayoutGetBusControlRects(rect, state, b, &rowRect, &muteRect, &gainDownRect, &gainUpRect, &panKnobRect, &panValRect, &fxRect);
-            if (rowRect.bottom > rect.bottom) break;
-
-            Fill(hdc, rowRect, (b % 2 == 0) ? RGB(39, 43, 49) : RGB(42, 47, 53));
-
-            RECT nameRect{rowRect.left + 6, rowRect.top, rowRect.left + 90, rowRect.bottom};
-            SetTextColor(hdc, kPalette.textPrimary);
-            DrawTextW(hdc, BusName(b), -1, &nameRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-
-            Fill(hdc, muteRect, BusMuteAt(state, b) ? RGB(176, 76, 76) : RGB(56, 60, 67));
-            Fill(hdc, gainDownRect, RGB(56, 60, 67));
-            Fill(hdc, gainUpRect, RGB(56, 60, 67));
-            Fill(hdc, panValRect, RGB(40, 44, 49));
-            Fill(hdc, fxRect, RGB(40, 44, 49));
-            StrokeRect(hdc, muteRect, RGB(82, 88, 97));
-            StrokeRect(hdc, gainDownRect, RGB(82, 88, 97));
-            StrokeRect(hdc, gainUpRect, RGB(82, 88, 97));
-            StrokeRect(hdc, panValRect, RGB(82, 88, 97));
-            StrokeRect(hdc, fxRect, RGB(82, 88, 97));
-
-            SetTextColor(hdc, RGB(228, 232, 238));
-            DrawTextW(hdc, L"M", -1, &muteRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-            DrawTextW(hdc, L"-", -1, &gainDownRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-            DrawTextW(hdc, L"+", -1, &gainUpRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
-            const float busGain = BusGainDbAt(state, b);
-            wchar_t gainText[20] = {};
-            swprintf_s(gainText, L"%+.1f", busGain);
-            RECT gainTextRect{rowRect.right - 38, rowRect.top, rowRect.right - 6, rowRect.bottom};
-            SetTextColor(hdc, RGB(196, 202, 210));
-            DrawTextW(hdc, gainText, -1, &gainTextRect, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
-
-            const float busPan = BusPanAt(state, b);
-            DrawPanKnob(hdc, panKnobRect, busPan, false);
-            wchar_t panText[16] = {};
-            if (std::fabs(busPan) < 0.01f) {
-                swprintf_s(panText, L"C");
-            } else if (busPan < 0.0f) {
-                swprintf_s(panText, L"L%02d", static_cast<int>(std::round(-busPan * 100.0f)));
-            } else {
-                swprintf_s(panText, L"R%02d", static_cast<int>(std::round(busPan * 100.0f)));
-            }
-            DrawTextW(hdc, panText, -1, &panValRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
-            const int busFxSlots = (b < static_cast<int>(state.core.project.buses.size())) ? std::clamp(state.core.project.buses[static_cast<size_t>(b)].insertSlots, 0, 8) : 0;
-            wchar_t busFxText[16] = {};
-            if (busFxSlots <= 0 || b >= static_cast<int>(state.core.project.buses.size())) {
-                swprintf_s(busFxText, L"FX0");
-            } else {
-                const int effectType = std::clamp(static_cast<int>(state.core.project.buses[static_cast<size_t>(b)].insertEffects[0]), 0, kInsertEffectTypeCount - 1);
-                const bool bypass = (b < static_cast<int>(state.core.project.buses.size())) ? state.core.project.buses[static_cast<size_t>(b)].insertBypass[0] : false;
-                const wchar_t* nm = InsertEffectName(effectType);
-                if (busFxSlots > 1) {
-                    swprintf_s(busFxText, L"%s%s+%d", bypass ? L"~" : L"", nm, busFxSlots - 1);
-                } else {
-                    swprintf_s(busFxText, L"%s%s", bypass ? L"~" : L"", nm);
-                }
-            }
-            DrawTextW(hdc, busFxText, -1, &fxRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    // Tiny vertical scrollbar on the right edge of the tracks region (only if scrollable).
+    {
+        const int regionH = std::max(1, tracksBottom - tracksTop);
+        const int contentH = static_cast<int>(state.core.project.tracks.size()) * Dpi(kTrackRowHeight);
+        if (contentH > regionH) {
+            const int sbW = 4;
+            RECT sbTrack{rect.right - sbW - 2, tracksTop + 2, rect.right - 2, tracksBottom - 2};
+            Fill(hdc, sbTrack, RGB(28, 31, 36));
+            const float ratio = static_cast<float>(regionH) / static_cast<float>(contentH);
+            const int thumbH = std::max(20, static_cast<int>(ratio * (sbTrack.bottom - sbTrack.top)));
+            const int maxScroll = std::max(1, contentH - regionH);
+            const float scrollT = static_cast<float>(scrollY) / static_cast<float>(maxScroll);
+            const int thumbTop = sbTrack.top + static_cast<int>(scrollT * (sbTrack.bottom - sbTrack.top - thumbH));
+            RECT thumb{sbTrack.left, thumbTop, sbTrack.right, thumbTop + thumbH};
+            Fill(hdc, thumb, RGB(96, 102, 112));
         }
+    }
+
+    // ── Buses ────────────────────────────────────────────────────────────
+    // The bus mixer is its own dock leaf (UiDrawBusesPanel) and is rendered
+    // separately by the dock walker. Tracks panel no longer reserves space
+    // for buses.
+    (void)tracksSaved;
+}
+
+// ── Buses panel ──────────────────────────────────────────────────────────────
+// Standalone bus mixer (Drums / Music / Vocals / Master). Self-contained:
+// `rect` is the panel's full area (header + rows). Used both by the legacy
+// pinned-bottom layout (via UiDrawLeftTrackPanel) and by the dock walker.
+void UiDrawBusesPanel(HDC hdc, const RECT& rect, const AppState& state) {
+    Fill(hdc, rect, kPalette.leftPanel);
+    RECT divider{rect.left, rect.top, rect.right, rect.top + 1};
+    Fill(hdc, divider, RGB(70, 74, 81));
+
+    const int headerTop = rect.top + Dpi(kBusPanelTopMargin);
+    RECT bHeader{rect.left, headerTop, rect.right, headerTop + Dpi(kBusPanelHeaderHeight)};
+    Fill(hdc, bHeader, RGB(48, 52, 58));
+    SetTextColor(hdc, kPalette.textMuted);
+    RECT bHeaderText{bHeader.left + 10, bHeader.top, bHeader.right, bHeader.bottom};
+    DrawTextW(hdc, L"BUSES", -1, &bHeaderText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+    for (int b = 0; b < kBusCount; ++b) {
+        RECT rowRect{};
+        RECT muteRect{};
+        RECT gainDownRect{};
+        RECT gainUpRect{};
+        RECT panKnobRect{};
+        RECT panValRect{};
+        RECT fxRect{};
+        UiLayoutGetBusControlRectsInPanel(rect, b, &rowRect, &muteRect, &gainDownRect, &gainUpRect, &panKnobRect, &panValRect, &fxRect);
+        if (rowRect.bottom > rect.bottom) break;
+
+        Fill(hdc, rowRect, (b % 2 == 0) ? RGB(39, 43, 49) : RGB(42, 47, 53));
+
+        RECT nameRect{rowRect.left + 6, rowRect.top, rowRect.left + 90, rowRect.bottom};
+        SetTextColor(hdc, kPalette.textPrimary);
+        DrawTextW(hdc, BusName(b), -1, &nameRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+        Fill(hdc, muteRect,     BusMuteAt(state, b) ? RGB(176, 76, 76) : RGB(56, 60, 67));
+        Fill(hdc, gainDownRect, RGB(56, 60, 67));
+        Fill(hdc, gainUpRect,   RGB(56, 60, 67));
+        Fill(hdc, panValRect,   RGB(40, 44, 49));
+        Fill(hdc, fxRect,       RGB(40, 44, 49));
+        StrokeRect(hdc, muteRect,     RGB(82, 88, 97));
+        StrokeRect(hdc, gainDownRect, RGB(82, 88, 97));
+        StrokeRect(hdc, gainUpRect,   RGB(82, 88, 97));
+        StrokeRect(hdc, panValRect,   RGB(82, 88, 97));
+        StrokeRect(hdc, fxRect,       RGB(82, 88, 97));
+
+        SetTextColor(hdc, RGB(228, 232, 238));
+        DrawTextW(hdc, L"M", -1, &muteRect,     DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        DrawTextW(hdc, L"-", -1, &gainDownRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        DrawTextW(hdc, L"+", -1, &gainUpRect,   DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+        const float busGain = BusGainDbAt(state, b);
+        wchar_t gainText[20] = {};
+        swprintf_s(gainText, L"%+.1f", busGain);
+        RECT gainTextRect{rowRect.right - 38, rowRect.top, rowRect.right - 6, rowRect.bottom};
+        SetTextColor(hdc, RGB(196, 202, 210));
+        DrawTextW(hdc, gainText, -1, &gainTextRect, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+
+        const float busPan = BusPanAt(state, b);
+        DrawPanKnob(hdc, panKnobRect, busPan, false);
+        wchar_t panText[16] = {};
+        if (std::fabs(busPan) < 0.01f) {
+            swprintf_s(panText, L"C");
+        } else if (busPan < 0.0f) {
+            swprintf_s(panText, L"L%02d", static_cast<int>(std::round(-busPan * 100.0f)));
+        } else {
+            swprintf_s(panText, L"R%02d", static_cast<int>(std::round(busPan * 100.0f)));
+        }
+        DrawTextW(hdc, panText, -1, &panValRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+        const int busFxSlots = (b < static_cast<int>(state.core.project.buses.size())) ? std::clamp(state.core.project.buses[static_cast<size_t>(b)].insertSlots, 0, 8) : 0;
+        wchar_t busFxText[16] = {};
+        if (busFxSlots <= 0 || b >= static_cast<int>(state.core.project.buses.size())) {
+            swprintf_s(busFxText, L"FX0");
+        } else {
+            const int effectType = std::clamp(static_cast<int>(state.core.project.buses[static_cast<size_t>(b)].insertEffects[0]), 0, kInsertEffectTypeCount - 1);
+            const bool bypass = (b < static_cast<int>(state.core.project.buses.size())) ? state.core.project.buses[static_cast<size_t>(b)].insertBypass[0] : false;
+            const wchar_t* nm = InsertEffectName(effectType);
+            if (busFxSlots > 1) {
+                swprintf_s(busFxText, L"%s%s+%d", bypass ? L"~" : L"", nm, busFxSlots - 1);
+            } else {
+                swprintf_s(busFxText, L"%s%s", bypass ? L"~" : L"", nm);
+            }
+        }
+        DrawTextW(hdc, busFxText, -1, &fxRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
 }
 
@@ -650,8 +712,11 @@ void UiDrawRuler(HDC hdc, const RECT& rect, const AppState& state) {
 
         if (isBar && x >= rect.left && x <= rect.right) {
             const std::wstring label = std::to_wstring((beat / 4) + 1);
-            RECT t{x - 16, rect.top + 2, x + 16, rect.bottom - 2};
-            DrawTextW(hdc, label.c_str(), -1, &t, DT_CENTER | DT_TOP | DT_SINGLELINE);
+            // Place number to the right of the bar line so the digit is
+            // never clipped by the panel edge (e.g. the "1" at the home
+            // position used to be cut in half).
+            RECT t{x + Dpi(3), rect.top + Dpi(2), x + Dpi(40), rect.bottom - Dpi(2)};
+            DrawTextW(hdc, label.c_str(), -1, &t, DT_LEFT | DT_TOP | DT_SINGLELINE);
         }
     }
 
@@ -659,21 +724,58 @@ void UiDrawRuler(HDC hdc, const RECT& rect, const AppState& state) {
     DeleteObject(barPen);
     DeleteObject(beatPen);
 
-    // Playhead marker - downward-pointing triangle on ruler
+    // Playhead marker - downward-pointing triangle whose base meets the
+    // arrange playhead line below. Apex points up.
     const int phX = rect.left + static_cast<int>(
         ((state.ui.playheadBeat - state.ui.viewStartBeat) / std::max(1.0f, state.ui.viewBeatsVisible))
         * static_cast<float>(width));
-    if (phX >= rect.left - 8 && phX <= rect.right + 8) {
+    if (phX >= rect.left && phX <= rect.right) {
         HBRUSH phBrush = CreateSolidBrush(kPalette.playhead);
         HPEN   phPen   = CreatePen(PS_SOLID, 1, kPalette.playhead);
         HGDIOBJ ob = SelectObject(hdc, phBrush);
         HGDIOBJ op = SelectObject(hdc, phPen);
-        const POINT tri[3] = {{phX, rect.top + 2}, {phX - 6, rect.bottom - 4}, {phX + 6, rect.bottom - 4}};
+        const int saved = SaveDC(hdc);
+        IntersectClipRect(hdc, rect.left, rect.top, rect.right, rect.bottom);
+        // Equilateral triangle: base = 2 * triHalf, height = base * sqrt(3)/2.
+        // Wide base at the BOTTOM of the ruler (touching the playhead line
+        // below), apex points UP — Reaper-style.
+        const int triHalf = Dpi(5);
+        const int triHeight = (2 * triHalf * 866) / 1000; // ~base * 0.866
+        const int baseY = rect.bottom - 1;
+        const POINT tri[3] = {
+            {phX - triHalf, baseY},
+            {phX + triHalf, baseY},
+            {phX,           baseY - triHeight}
+        };
         Polygon(hdc, tri, 3);
+        RestoreDC(hdc, saved);
         SelectObject(hdc, ob);
         SelectObject(hdc, op);
         DeleteObject(phBrush);
         DeleteObject(phPen);
+    }
+}
+
+static void EnsurePeakSummary(const LoadedAudio& audio) {
+    const std::uint32_t bucket = LoadedAudio::kPeakBucketFrames;
+    const size_t expected = (audio.frames + bucket - 1) / bucket;
+    if (audio.peakSummary.size() == expected || audio.frames == 0 || audio.stereo.empty()) {
+        if (audio.peakSummary.size() == expected) return;
+    }
+    audio.peakSummary.assign(expected, 0.0f);
+    for (std::uint32_t b = 0; b < expected; ++b) {
+        const std::uint64_t f0 = static_cast<std::uint64_t>(b) * bucket;
+        const std::uint64_t f1 = std::min<std::uint64_t>(f0 + bucket, audio.frames);
+        float peak = 0.0f;
+        for (std::uint64_t f = f0; f < f1; ++f) {
+            const size_t i = static_cast<size_t>(f) * 2;
+            if (i + 1 >= audio.stereo.size()) break;
+            const float l = std::fabs(audio.stereo[i]);
+            const float r = std::fabs(audio.stereo[i + 1]);
+            if (l > peak) peak = l;
+            if (r > peak) peak = r;
+        }
+        audio.peakSummary[b] = peak;
     }
 }
 
@@ -691,6 +793,61 @@ static void DrawClipWaveform(HDC hdc, const RECT& clipRect, const LoadedAudio& a
         return;
     }
 
+    EnsurePeakSummary(audio);
+
+    const int halfHeight = std::max(1, (height / 2) - 2);
+    const int centerY = clipRect.top + (height / 2);
+
+    HPEN wavePen = CreatePen(PS_SOLID, 1, RGB(238, 242, 248));
+    HGDIOBJ oldPen = SelectObject(hdc, wavePen);
+
+    const int saved = SaveDC(hdc);
+    IntersectClipRect(hdc, clipRect.left, clipRect.top, clipRect.right, clipRect.bottom);
+
+    const std::uint32_t bucket = LoadedAudio::kPeakBucketFrames;
+    const size_t bucketCount = audio.peakSummary.size();
+    const std::uint64_t sourceSpan = endFrame - startFrame;
+
+    for (int x = clipRect.left; x < clipRect.right; ++x) {
+        const int pixelIndex = x - clipRect.left;
+        const std::uint64_t frameStart = startFrame + (static_cast<std::uint64_t>(pixelIndex) * sourceSpan) / static_cast<std::uint64_t>(width);
+        std::uint64_t frameEnd = startFrame + (static_cast<std::uint64_t>(pixelIndex + 1) * sourceSpan) / static_cast<std::uint64_t>(width);
+        frameEnd = std::max(frameEnd, frameStart + 1);
+        frameEnd = std::min(frameEnd, endFrame);
+
+        float peak = 0.0f;
+        if (!audio.peakSummary.empty()) {
+            // Iterate over the buckets covering [frameStart, frameEnd).
+            const size_t b0 = static_cast<size_t>(frameStart / bucket);
+            const size_t b1 = std::min<size_t>(bucketCount, static_cast<size_t>((frameEnd + bucket - 1) / bucket));
+            for (size_t b = b0; b < b1; ++b) {
+                const float v = audio.peakSummary[b];
+                if (v > peak) peak = v;
+            }
+        }
+
+        const int amp = static_cast<int>(std::round(peak * static_cast<float>(halfHeight)));
+        MoveToEx(hdc, x, centerY - amp, nullptr);
+        LineTo(hdc, x, centerY + amp + 1);
+    }
+
+    RestoreDC(hdc, saved);
+    SelectObject(hdc, oldPen);
+    DeleteObject(wavePen);
+}
+
+// Draw a live recording waveform from pre-computed float stereo data.
+// `framesPerPixel` must be the constant project frames-per-pixel ratio for
+// the current view; passing this in (instead of computing it from
+// totalFrames/width) keeps each pixel's source-frame range stable as the
+// recording grows, which prevents the waveform from jittering left/right.
+static void DrawLiveRecordingWaveform(HDC hdc, const RECT& clipRect, const std::vector<float>& stereoWaveform, std::uint64_t totalFrames, double framesPerPixel) {
+    const int width = std::max(1, static_cast<int>(clipRect.right - clipRect.left));
+    const int height = std::max(1, static_cast<int>(clipRect.bottom - clipRect.top));
+    if (width < 2 || height < 4 || totalFrames == 0 || stereoWaveform.empty() || framesPerPixel <= 0.0) {
+        return;
+    }
+
     const int halfHeight = std::max(1, (height / 2) - 2);
     const int centerY = clipRect.top + (height / 2);
 
@@ -702,18 +859,22 @@ static void DrawClipWaveform(HDC hdc, const RECT& clipRect, const LoadedAudio& a
 
     for (int x = clipRect.left; x < clipRect.right; ++x) {
         const int pixelIndex = x - clipRect.left;
-        const std::uint64_t sourceSpan = endFrame - startFrame;
-        const std::uint64_t frameStart = startFrame + (static_cast<std::uint64_t>(pixelIndex) * sourceSpan) / static_cast<std::uint64_t>(width);
-        std::uint64_t frameEnd = startFrame + (static_cast<std::uint64_t>(pixelIndex + 1) * sourceSpan) / static_cast<std::uint64_t>(width);
+        const std::uint64_t frameStart = static_cast<std::uint64_t>(static_cast<double>(pixelIndex) * framesPerPixel);
+        if (frameStart >= totalFrames) {
+            break;
+        }
+        std::uint64_t frameEnd = static_cast<std::uint64_t>(static_cast<double>(pixelIndex + 1) * framesPerPixel);
         frameEnd = std::max(frameEnd, frameStart + 1);
-        frameEnd = std::min(frameEnd, endFrame);
+        frameEnd = std::min(frameEnd, totalFrames);
 
         float peak = 0.0f;
         for (std::uint64_t f = frameStart; f < frameEnd; ++f) {
             const size_t i = static_cast<size_t>(f) * 2;
-            const float l = std::fabs(audio.stereo[i]);
-            const float r = std::fabs(audio.stereo[i + 1]);
-            peak = std::max(peak, std::max(l, r));
+            if (i + 1 < stereoWaveform.size()) {
+                const float l = std::fabs(stereoWaveform[i]);
+                const float r = std::fabs(stereoWaveform[i + 1]);
+                peak = std::max(peak, std::max(l, r));
+            }
         }
 
         const int amp = static_cast<int>(std::round(peak * static_cast<float>(halfHeight)));
@@ -738,9 +899,13 @@ void UiDrawArrangeLanes(HDC hdc, const RECT& rect, const AppState& state) {
     HPEN lanePen = CreatePen(PS_SOLID, 1, RGB(40, 44, 50));
     HGDIOBJ oldPen = SelectObject(hdc, lanePen);
 
+    const int laneScrollY = state.ui.tracksScrollY;
+    const int laneRowH = Dpi(kTrackRowHeight);
     for (size_t i = 0; i < state.core.project.tracks.size(); ++i) {
-        const int y = rect.top + static_cast<int>(i) * kTrackRowHeight;
-        RECT lane{rect.left, y, rect.right, y + kTrackRowHeight};
+        const int y = rect.top + static_cast<int>(i) * laneRowH - laneScrollY;
+        if (y >= rect.bottom) break;
+        if (y + laneRowH <= rect.top) continue;
+        RECT lane{rect.left, y, rect.right, y + laneRowH};
         Fill(hdc, lane, (i % 2 == 0) ? kPalette.laneDark : kPalette.laneLight);
         MoveToEx(hdc, lane.left, lane.bottom - 1, nullptr);
         LineTo(hdc, lane.right, lane.bottom - 1);
@@ -752,6 +917,60 @@ void UiDrawArrangeLanes(HDC hdc, const RECT& rect, const AppState& state) {
         SelectObject(hdc, (beat % 4 == 0) ? barPen : beatPen);
         MoveToEx(hdc, x, rect.top, nullptr);
         LineTo(hdc, x, rect.bottom);
+    }
+
+    // Draw live recording clip if currently recording
+    if (state.audio.recording && state.audio.recordTrackIndex >= 0 && 
+        state.audio.recordTrackIndex < static_cast<int>(state.core.project.tracks.size()) &&
+        !state.audio.liveRecordingWaveform.empty()) {
+        
+        RECT recordingClipRect{};
+        if (UiLayoutClipRectForDraw(rect, state, state.audio.liveRecordingClip, &recordingClipRect)) {
+            // Draw clip background
+            Fill(hdc, recordingClipRect, state.audio.liveRecordingClip.color);
+            
+            // Draw name badge
+            const int clipInnerLeft = recordingClipRect.left + 2;
+            const int clipInnerRight = recordingClipRect.right - 2;
+            const int clipInnerTop = recordingClipRect.top + 2;
+            const int clipInnerBottom = recordingClipRect.bottom - 2;
+            const int badgeHeight = 15;
+            const int badgeMaxWidth = 140;
+            RECT labelRect{clipInnerLeft + 2, clipInnerTop + 1, 
+                          std::min(clipInnerRight - 2, clipInnerLeft + badgeMaxWidth), 
+                          clipInnerTop + 1 + badgeHeight};
+            Fill(hdc, labelRect, RGB(20, 23, 28));
+            StrokeRect(hdc, labelRect, RGB(60, 66, 74));
+            
+            // Draw waveform
+            RECT waveRect{clipInnerLeft, labelRect.bottom + 1, clipInnerRight, clipInnerBottom};
+            if (waveRect.right > waveRect.left && waveRect.bottom > waveRect.top) {
+                const std::uint64_t totalFrames = state.audio.liveRecordingFramesProcessed;
+                if (totalFrames > 0) {
+                    // Use a constant frames-per-pixel derived from the view
+                    // (samples-per-beat and pixels-per-beat are both stable
+                    // during recording). This keeps each pixel's source range
+                    // fixed as the clip grows, so the waveform doesn't jitter.
+                    const double samplesPerBeat = static_cast<double>(SamplesPerBeat(state));
+                    const double pixelsPerBeat = static_cast<double>(width) /
+                        static_cast<double>(std::max(0.0001f, state.ui.viewBeatsVisible));
+                    const double framesPerPixel = (pixelsPerBeat > 0.0)
+                        ? (samplesPerBeat / pixelsPerBeat)
+                        : 0.0;
+                    DrawLiveRecordingWaveform(hdc, waveRect, state.audio.liveRecordingWaveform, totalFrames, framesPerPixel);
+                }
+            }
+            
+            // Draw border
+            StrokeRect(hdc, recordingClipRect, RGB(24, 24, 24));
+            
+            // Draw label
+            RECT textRect{labelRect.left + 4, labelRect.top, labelRect.right - 4, labelRect.bottom};
+            SetBkMode(hdc, TRANSPARENT);
+            SetTextColor(hdc, RGB(240, 240, 240));
+            DrawTextW(hdc, state.audio.liveRecordingClip.name.c_str(), -1, &textRect, 
+                     DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        }
     }
 
     for (size_t i = 0; i < state.core.project.clips.size(); ++i) {
@@ -816,11 +1035,20 @@ void UiDrawArrangeLanes(HDC hdc, const RECT& rect, const AppState& state) {
         DrawTextW(hdc, state.core.project.clips[i].name.c_str(), -1, &textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     }
 
-    const int playheadX = UiLayoutBeatToX(rect, state, state.ui.playheadBeat);
+    int playheadX = UiLayoutBeatToX(rect, state, state.ui.playheadBeat);
     HPEN playheadPen = CreatePen(PS_SOLID, 2, kPalette.playhead);
     SelectObject(hdc, playheadPen);
-    MoveToEx(hdc, playheadX, rect.top, nullptr);
-    LineTo(hdc, playheadX, rect.bottom);
+    if (playheadX >= rect.left && playheadX <= rect.right) {
+        RECT lr{
+            std::max<LONG>(playheadX - 1, rect.left),
+            rect.top,
+            std::min<LONG>(playheadX + 1, rect.right),
+            rect.bottom
+        };
+        if (lr.right > lr.left) {
+            Fill(hdc, lr, kPalette.playhead);
+        }
+    }
 
     DeleteObject(playheadPen);
     DeleteObject(barPen);

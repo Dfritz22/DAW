@@ -1,21 +1,19 @@
 #include "core/CoreState.h"
-#include <algorithm>
-#include <cmath>
+#include "core/timeline_math.h"
+
+// Thin adapter: pure math lives in libs/core. The app sees CoreState-shaped
+// helpers; this file only does the field lookup.
 
 float TimelineSamplesPerBeat(const CoreState& state) {
-    int sr = state.project.projectSampleRate;
-    if (sr <= 0) sr = 1;
-    return static_cast<float>(sr) * 60.0f / state.project.bpm;
+    return daw::core::SamplesPerBeat(state.project.projectSampleRate, state.project.bpm);
 }
 
 std::uint64_t TimelineFramesFromBeats(const CoreState& state, float beat) {
-    return static_cast<std::uint64_t>(
-    std::llround(static_cast<double>(beat) * static_cast<double>(TimelineSamplesPerBeat(state))));
+    return daw::core::FramesFromBeats(state.project.projectSampleRate, state.project.bpm, beat);
 }
 
 float TimelineBeatsFromFrames(const CoreState& state, std::uint64_t frame) {
-    const float spb = std::max(1.0f, TimelineSamplesPerBeat(state));
-    return static_cast<float>(frame) / spb;
+    return daw::core::BeatsFromFrames(state.project.projectSampleRate, state.project.bpm, frame);
 }
 
 float SamplesPerBeat(const CoreState& state) {

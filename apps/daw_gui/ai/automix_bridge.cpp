@@ -490,6 +490,15 @@ bool ApplyAutoMixToFaders(HWND hwnd, AppState& state) {
                 state.core.project.tracks[static_cast<size_t>(trackIndex)].insertBypass = by;
                 state.core.project.tracks[static_cast<size_t>(trackIndex)].insertConfig = pp;
                 state.core.project.tracks[static_cast<size_t>(trackIndex)].insertSlots = slots;
+                // The track's insert chain just changed (effect types, configs,
+                // and slot count may all be different). Stale per-slot DSP
+                // state — especially reverb comb buffers / delay lines / EQ
+                // biquad memory — would be reused with new configs and can
+                // produce a runaway/NaN burst followed by silence. Reset.
+                if (state.audio.trackInsertDspState.size() != state.core.project.tracks.size()) {
+                    state.audio.trackInsertDspState.resize(state.core.project.tracks.size());
+                }
+                state.audio.trackInsertDspState[static_cast<size_t>(trackIndex)] = InsertDspStateArray{};
                 if (slots > 0) ++appliedFx;
             }
 
@@ -525,6 +534,9 @@ bool ApplyAutoMixToFaders(HWND hwnd, AppState& state) {
         state.core.project.buses[3].insertBypass = by;
         state.core.project.buses[3].insertConfig = pp;
         state.core.project.buses[3].insertSlots = slots;
+        // Master bus chain changed — reset its per-slot DSP state for the
+        // same reason as tracks above.
+        state.audio.busInsertDspState[3] = InsertDspStateArray{};
     }
 
     LeaveCriticalSection(&state.audio.audioStateLock);

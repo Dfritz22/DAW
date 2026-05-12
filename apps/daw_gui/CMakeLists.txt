@@ -2,10 +2,12 @@ add_executable(daw_gui WIN32
     main.cpp
     app_state_api.cpp
     ui/draw.cpp
+    ui/panel.cpp
+    ui/dock.cpp
+    ui/dock_persist.cpp
     io/wav_io.cpp
     io/project_io.cpp
     ai/automix_bridge.cpp
-    dsp/chain.cpp
     core/automation.cpp
     ui/layout.cpp
     core/timeline.cpp
@@ -23,9 +25,17 @@ add_executable(daw_gui WIN32
 target_link_libraries(daw_gui
     PRIVATE
         daw_core
+        daw::base
+        daw::platform
+        daw::io
+        daw::dsp
+        daw::core
+        daw::engine
     Winmm
     Comdlg32
     Ole32
+    Msimg32
+    Shell32
 )
 
 target_include_directories(daw_gui

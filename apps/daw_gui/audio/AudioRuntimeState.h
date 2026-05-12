@@ -38,9 +38,22 @@ inline bool IsWasapiBackend(AudioBackend backend) {
     return backend == AudioBackend::WasapiShared || backend == AudioBackend::WasapiExclusive;
 }
 
+// High-level audio engine lifecycle state. Used as a single source of truth
+// for "is the engine ready to accept transport commands?". Set by
+// AudioInitializeRuntime(); read by transport entry points.
+enum class AudioEngineState {
+    Uninitialized = 0,  // Pre-init. Devices not enumerated, SR unknown.
+    Ready,              // Devices enumerated, SR known. Safe to Play/Record.
+    Running,            // A backend is currently rendering or capturing.
+    Error,              // Init or runtime error. Transport should refuse to start.
+};
+
 struct AudioRuntimeState {
     HWND hwnd {nullptr};
     CoreState* coreContext {nullptr};
+
+    std::atomic<AudioEngineState> engineState {AudioEngineState::Uninitialized};
+    std::wstring engineInitError;
 
     bool playing {false};
     bool recording {false};
@@ -67,11 +80,34 @@ struct AudioRuntimeState {
     std::atomic<std::uint64_t> playbackFrameCursor {0};
     CRITICAL_SECTION audioStateLock {};
 
+    // Realtime-thread scratch buffer reused by the engine when the device
+    // sample rate differs from the project sample rate. Owning it here keeps
+    // the realtime callback heap-allocation-free.
+    std::vector<std::int16_t> engineSrcScratchPcm;
+
+    // Stateful linear resampler state for the engine SRC path. `engineSrcPhase`
+    // is the fractional source-sample position in [0, 1). `engineSrcLastL/R`
+    // hold the last input frame from the previous callback so we can
+    // interpolate continuously across callback boundaries (otherwise every
+    // buffer edge produces an audible click). `engineSrcPrimed` indicates the
+    // last-frame snapshot is valid; reset on transport start/seek/SR change.
+    double engineSrcPhase {0.0};
+    std::int16_t engineSrcLastL {0};
+    std::int16_t engineSrcLastR {0};
+    bool engineSrcPrimed {false};
+
     AudioBackend audioBackend {AudioBackend::WasapiShared};
     int preferredSampleRate {0};
     int preferredBufferFrames {kAudioBufferFrames};
     int activeDeviceSampleRate {0};
     int activeDeviceBufferFrames {0};
+
+    // Last (projectSR, deviceSR) pair the user explicitly acknowledged in the
+    // SR-mismatch dialog. Used to suppress the dialog on every Play once the
+    // user has accepted that real-time SRC will run. Reset whenever either SR
+    // changes so a new mismatch always re-prompts.
+    int acknowledgedMismatchProjectSR {0};
+    int acknowledgedMismatchDeviceSR {0};
 
     std::vector<UINT> inputDeviceIds;
     std::vector<std::wstring> inputDeviceNames;
@@ -104,8 +140,19 @@ struct AudioRuntimeState {
     std::uint64_t recordPrerollFrames {0};
     std::uint64_t countInEndFrame {0};  // When count-in clicks stop (absolute frame position)
     bool countingIn {false};
+    // Free-time cursor for count-in. Starts at 0, advances by `frames` each
+    // engine callback while countingIn is true. When it reaches
+    // recordPrerollFrames the count-in is done. The playback cursor does NOT
+    // advance during count-in; the playhead stays at recordStartFrame.
+    std::atomic<std::uint64_t> countInFrameCursor {0};
     std::vector<std::int16_t> monitorInputPcm;
     size_t monitorInputReadPos {0};
+
+    // Live recording clip displayed while recording (UI-safe copy).
+    // Updated by UI timer from recordedInputPcm. Discarded when recording stops.
+    ClipItem liveRecordingClip;
+    std::vector<float> liveRecordingWaveform;  // Pre-computed stereo waveform for fast drawing
+    std::uint64_t liveRecordingFramesProcessed {0};  // Frames already in waveform
 
     // Last known runtime audio format diagnostics.
     int lastOpenedInputSampleRate {0};
@@ -126,4 +173,15 @@ struct AudioRuntimeState {
     // Runtime-only DSP state for insert chains (not serialized)
     mutable std::vector<InsertDspStateArray> trackInsertDspState;
     mutable std::array<InsertDspStateArray, kBusCount> busInsertDspState {};
+
+    // Pre-allocated mix-buffer scratch reused across realtime callbacks. The
+    // engine grows these on demand (when frames or trackCount goes up) but
+    // never shrinks them, so the steady-state callback path performs ZERO
+    // heap allocations. Without this every callback was constructing several
+    // std::vector<float> instances, fragmenting the heap; over minutes of
+    // playback the allocator slowed down enough to miss small-buffer
+    // deadlines.
+    std::array<std::vector<float>, kBusCount> engineBusScratch;
+    std::vector<std::vector<float>>           engineTrackScratch;
+    std::vector<float>                        engineMasterScratch;
 };

@@ -28,6 +28,23 @@ void DeviceRefreshOutputDevices(AudioRuntimeState& audio);
 
 // ── Diagnostics ───────────────────────────────────────────────────────────────
 std::wstring DeviceBuildAudioDiagnosticsReport(const CoreState& core, const AudioRuntimeState& audio);
+int DeviceProbeCurrentOutputSampleRate(const AudioRuntimeState& audio);
+
+// ── Engine lifecycle ──────────────────────────────────────────────────────────
+// Single entry point that performs all "before the UI accepts transport" setup:
+//   - enumerates input/output devices,
+//   - probes a usable sample rate,
+//   - seeds CoreState.projectSampleRate if unset,
+//   - initializes the audio state critical section,
+//   - transitions audio.engineState to Ready (or Error on failure).
+// Safe to call once at startup. Returns true on success.
+bool AudioInitializeRuntime(HWND hwnd, CoreState& core, AudioRuntimeState& audio);
+
+// Invariant guard called at the top of StartPlayback / StartRecording.
+// Repairs missing sample rate, verifies engineState != Error, and ensures
+// projectSampleRate > 0. Returns true if the engine is safe to start a
+// transport command. On false, audio.engineInitError contains a reason.
+bool AudioEnsureReadyForTransport(CoreState& core, AudioRuntimeState& audio);
 
 // ── Playback cursor ───────────────────────────────────────────────────────────
 // Returns the current absolute project-frame position of the playhead,

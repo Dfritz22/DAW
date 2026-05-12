@@ -18,7 +18,11 @@ RECT UiDrawGetInspectorPanelRect(const RECT& client, const AppState& state);
 
 // ── Draw functions (defined in draw.cpp) ──
 void UiDrawTopBar(HDC hdc, const RECT& client, AppState& state);
+void UiDrawTransport(HDC hdc, const RECT& rect, AppState& state);
+void UiDrawTools(HDC hdc, const RECT& rect, AppState& state);
+void UiDrawStatusBar(HDC hdc, const RECT& rect, const AppState& state);
 void UiDrawInsertInspector(HDC hdc, const RECT& client, const AppState& state);
 void UiDrawLeftTrackPanel(HDC hdc, const RECT& rect, const AppState& state);
+void UiDrawBusesPanel(HDC hdc, const RECT& rect, const AppState& state);
 void UiDrawRuler(HDC hdc, const RECT& rect, const AppState& state);
 void UiDrawArrangeLanes(HDC hdc, const RECT& rect, const AppState& state);

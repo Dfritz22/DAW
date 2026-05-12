@@ -1,13 +1,21 @@
 #include "engine_utils.h"
 #include "core/timeline.h"
+#include "core/track_audibility.h"
+#include "dsp/chain.h"
+#include "dsp/resample.h"
+#include "dsp/util.h"
+#include "engine/clip_reader.h"
+#include "engine/timeline_layout.h"
 
 #include <algorithm>
-#include <cmath>
 
-// ── Public definitions ────────────────────────────────────────────────────────
+// CoreState/AudioRuntimeState-aware helpers stay here. Pure DSP (DbToLinear,
+// resamplers) lives in libs/dsp; this file's same-named free functions are
+// now thin shims that delegate, preserving the public surface used by
+// engine.cpp, device_*.cpp, and main.cpp.
 
 float DbToLinear(float db) {
-    return std::pow(10.0f, db / 20.0f);
+    return daw::dsp::DbToLinear(db);
 }
 
 float BusGainDbAt(const CoreState& core, int busIndex) {
@@ -38,45 +46,51 @@ void EnsureInsertDspStateStorage(const CoreState& core, AudioRuntimeState& audio
 }
 
 bool IsTrackAudible(const CoreState& core, int trackIndex) {
-    if (trackIndex < 0 || trackIndex >= static_cast<int>(core.project.tracks.size())) {
-        return false;
-    }
-
-    const bool muted =
-        trackIndex < static_cast<int>(core.project.tracks.size()) &&
-        core.project.tracks[static_cast<size_t>(trackIndex)].mute;
-    const bool soloed =
-        trackIndex < static_cast<int>(core.project.tracks.size()) &&
-        core.project.tracks[static_cast<size_t>(trackIndex)].solo;
-
-    bool anySolo = false;
-    for (size_t i = 0; i < core.project.tracks.size(); ++i) {
-        if (core.project.tracks[i].solo) {
-            anySolo = true;
-            break;
-        }
-    }
-
-    if (muted) {
-        return false;
-    }
-    if (anySolo && !soloed) {
-        return false;
-    }
-    return true;
+    return daw::core::IsTrackAudible(core.project.tracks, trackIndex);
 }
 
 std::uint64_t ComputeProjectEndFrameLocked(const CoreState& core) {
-    std::uint64_t maxFrame = 0;
-    for (const ClipItem& clip : core.project.clips) {
-        if (clip.audioIndex < 0 || clip.audioIndex >= static_cast<int>(core.project.audio.size())) {
-            continue;
-        }
-        const std::uint64_t clipStartTL   = TimelineFramesFromBeats(core, clip.startBeat);
-        const std::uint64_t clipLenFrames = TimelineFramesFromBeats(core, clip.lengthBeats);
-        maxFrame = std::max(maxFrame, clipStartTL + clipLenFrames);
+    return daw::engine::ComputeProjectEndFrame(
+        core.project.clips,
+        static_cast<int>(core.project.audio.size()),
+        TimelineSamplesPerBeat(core));
+}
+
+void ApplyTrackInsertChain(
+    const CoreState& core,
+    AudioRuntimeState& audio,
+    int trackIndex,
+    std::vector<float>& buf,
+    float sampleRate)
+{
+    if (trackIndex < 0 || trackIndex >= static_cast<int>(core.project.tracks.size())) {
+        return;
     }
-    return maxFrame;
+    const auto& t = core.project.tracks[static_cast<size_t>(trackIndex)];
+    DspApplyInsertChain(buf, sampleRate,
+        t.insertEffects, t.insertBypass, t.insertConfig,
+        audio.trackInsertDspState[static_cast<size_t>(trackIndex)],
+        t.insertSlots);
+}
+
+void ApplyBusInsertChain(
+    const CoreState& core,
+    AudioRuntimeState& audio,
+    int busIndex,
+    std::vector<float>& buf,
+    float sampleRate)
+{
+    if (busIndex < 0 || busIndex >= static_cast<int>(core.project.buses.size())) {
+        return;
+    }
+    const auto& b = core.project.buses[static_cast<size_t>(busIndex)];
+    if (b.insertSlots <= 0) {
+        return;
+    }
+    DspApplyInsertChain(buf, sampleRate,
+        b.insertEffects, b.insertBypass, b.insertConfig,
+        audio.busInsertDspState[static_cast<size_t>(busIndex)],
+        b.insertSlots);
 }
 
 bool ReadClipSampleAtProjectFrame(
@@ -86,67 +100,30 @@ bool ReadClipSampleAtProjectFrame(
     std::uint64_t sourceOffsetFrames,
     float* outL,
     float* outR) {
-    if (outL == nullptr || outR == nullptr || audio.frames == 0 || audio.stereo.empty() || projectSampleRate <= 0) {
-        return false;
-    }
-
-    const int srcRate = (audio.sampleRate > 0) ? audio.sampleRate : projectSampleRate;
-    const double ratio = static_cast<double>(srcRate) / static_cast<double>(projectSampleRate);
-    const double srcPos = static_cast<double>(sourceOffsetFrames) + static_cast<double>(clipFrameInProjectRate) * ratio;
-    if (srcPos < 0.0) {
-        return false;
-    }
-
-    const double maxSrc = static_cast<double>(audio.frames - 1);
-    if (srcPos > maxSrc) {
-        return false;
-    }
-
-    const std::uint64_t i0 = static_cast<std::uint64_t>(srcPos);
-    const std::uint64_t i1 = std::min<std::uint64_t>(i0 + 1, audio.frames - 1);
-    const float frac = static_cast<float>(srcPos - static_cast<double>(i0));
-
-    const size_t b0 = static_cast<size_t>(i0) * 2;
-    const size_t b1 = static_cast<size_t>(i1) * 2;
-    if (b0 + 1 >= audio.stereo.size() || b1 + 1 >= audio.stereo.size()) {
-        return false;
-    }
-
-    const float l0 = audio.stereo[b0];
-    const float r0 = audio.stereo[b0 + 1];
-    const float l1 = audio.stereo[b1];
-    const float r1 = audio.stereo[b1 + 1];
-    *outL = l0 + (l1 - l0) * frac;
-    *outR = r0 + (r1 - r0) * frac;
-    return true;
+    return daw::engine::ReadClipSample(audio, clipFrameInProjectRate, projectSampleRate, sourceOffsetFrames, outL, outR);
 }
 
 void ResampleStereoPcm16Linear(const std::int16_t* src, int srcFrames, std::int16_t* dst, int dstFrames) {
-    if (src == nullptr || dst == nullptr || srcFrames <= 0 || dstFrames <= 0) {
-        return;
-    }
-    if (srcFrames == 1) {
-        const std::int16_t l = src[0];
-        const std::int16_t r = src[1];
-        for (int i = 0; i < dstFrames; ++i) {
-            dst[i * 2] = l;
-            dst[i * 2 + 1] = r;
-        }
-        return;
-    }
+    daw::dsp::ResampleStereoPcm16Linear(src, srcFrames, dst, dstFrames);
+}
 
-    const double maxSrcPos = static_cast<double>(srcFrames - 1);
-    for (int i = 0; i < dstFrames; ++i) {
-        const double t = (dstFrames > 1)
-            ? (static_cast<double>(i) * maxSrcPos / static_cast<double>(dstFrames - 1))
-            : 0.0;
-        const int i0 = std::clamp(static_cast<int>(std::floor(t)), 0, srcFrames - 1);
-        const int i1 = std::min(i0 + 1, srcFrames - 1);
-        const double frac = t - static_cast<double>(i0);
+void ResampleStereoFloatLinear(const float* src, int srcFrames, float* dst, int dstFrames) {
+    daw::dsp::ResampleStereoFloatLinear(src, srcFrames, dst, dstFrames);
+}
 
-        const double l = static_cast<double>(src[i0 * 2]) * (1.0 - frac) + static_cast<double>(src[i1 * 2]) * frac;
-        const double r = static_cast<double>(src[i0 * 2 + 1]) * (1.0 - frac) + static_cast<double>(src[i1 * 2 + 1]) * frac;
-        dst[i * 2] = static_cast<std::int16_t>(std::clamp(std::lrint(l), static_cast<long>(-32768), static_cast<long>(32767)));
-        dst[i * 2 + 1] = static_cast<std::int16_t>(std::clamp(std::lrint(r), static_cast<long>(-32768), static_cast<long>(32767)));
-    }
+void ResampleStereoFloatSincHQ(
+    const float* src, int srcFrames, int srcSampleRate,
+    float* dst,       int dstFrames, int dstSampleRate) {
+    daw::dsp::ResampleStereoFloatSincHQ(src, srcFrames, srcSampleRate, dst, dstFrames, dstSampleRate);
+}
+
+int ResampleStereoPcm16LinearStateful(
+    const std::int16_t* src, int srcFrames,
+    std::int16_t* dst,       int dstFrames,
+    double step,
+    double* phase,
+    std::int16_t* lastL, std::int16_t* lastR,
+    bool* primed) {
+    return daw::dsp::ResampleStereoPcm16LinearStateful(
+        src, srcFrames, dst, dstFrames, step, phase, lastL, lastR, primed);
 }

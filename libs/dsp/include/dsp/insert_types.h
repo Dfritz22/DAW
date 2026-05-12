@@ -1,8 +1,12 @@
 #pragma once
 
-#ifdef DAW_PUBLIC_API
-#error "This header is internal-only."
-#endif
+// ── DSP insert types (frozen contract) ──────────────────────────────────────
+// POD configuration and persistent-state structs shared by every insert
+// processor in `daw::dsp`. The caller (engine, offline mixdown, render)
+// owns one `InsertConfigArray` + `InsertDspStateArray` per voice/track/bus
+// and threads them into `daw::dsp::ApplyInsertChain`.
+//
+// Layer rule: lives in libs/dsp, headers may depend on `base` only.
 
 #include <array>
 #include <cstdint>

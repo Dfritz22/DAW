@@ -1,6 +1,7 @@
-#include "chain.h"
-#include <cmath>
+#include "dsp/chain.h"
+
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 // ── DSP insert processing ──────────────────────────────────────────────────
@@ -103,7 +104,6 @@ static void DspApplyEQ(std::vector<float>& buf, const InsertConfig& config, Inse
 
 static void DspApplyCompressor(std::vector<float>& buf, const InsertConfig& config, InsertDspState& state, float sampleRate) {
     if (buf.size() < 2) return;
-    const float threshold = std::pow(10.0f, config.cmp_threshold_db / 20.0f);
     const float ratio = std::max(1.0f, config.cmp_ratio);
     const float makeup = std::pow(10.0f, config.cmp_makeup_db / 20.0f);
     const float attackCoef  = std::exp(-1.0f / (config.cmp_attack_ms   * 0.001f * sampleRate));
@@ -300,7 +300,6 @@ static void DspApplyDeEsser(std::vector<float>& buf, const InsertConfig& config,
     const float w0  = 2.0f * 3.14159265f * scFreq / sampleRate;
     const float cosW = std::cos(w0);
     const float alpha = std::sin(w0) / (2.0f * scQ);
-    // peak with 0dB gain = passthrough, use bandpass-like approach: just the alpha term
     const float b0sc =  alpha,  b1sc = 0.0f,  b2sc = -alpha;
     const float a0sc =  1.0f + alpha,  a1sc = -2.0f * cosW,  a2sc = 1.0f - alpha;
     const float nb0 = b0sc/a0sc, nb1 = b1sc/a0sc, nb2 = b2sc/a0sc;

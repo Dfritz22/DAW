@@ -1,6 +1,7 @@
 #include "project_io.h"
 
 #include "core/internal_app_services.h"
+#include "daw_audio.h"
 #include "wav_io.h"
 
 #include <fstream>
@@ -412,6 +413,16 @@ bool IoLoadProject(const std::wstring& path, AppState& state) {
     const std::string json((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     if (json.empty()) return false;
 
+    // Strict version gate. The project file format is a single source of
+    // truth — there are no shipped legacy versions to support, and we
+    // refuse to silently load anything we don't understand. Every bump
+    // requires an explicit migration path here.
+    {
+        double ver = 0.0;
+        if (!JsonReadDouble(json, "version", &ver)) return false;
+        if (static_cast<int>(ver) != 1) return false;
+    }
+
     // Clear current session
     state.core.project.tracks.clear();
     state.core.project.buses.assign(kBusCount, BusData{});
@@ -585,7 +596,6 @@ bool IoLoadProject(const std::wstring& path, AppState& state) {
                 LoadedAudio audio{};
                 std::wstring err;
                 if (std::filesystem::exists(srcPath) && IoLoadWavStereo(srcPath, &audio, &err)) {
-                    if (state.core.project.projectSampleRate == 0) state.core.project.projectSampleRate = audio.sampleRate;
                     state.core.project.audio.push_back(std::move(audio));
                 } else {
                     // Push placeholder so clip audio_index references stay valid
@@ -661,6 +671,14 @@ bool IoLoadProject(const std::wstring& path, AppState& state) {
     }
 
     state.core.projectFilePath = path;
+
+    // If the project file did not specify a sample rate (legacy/missing field),
+    // fall back to the modern industry default rather than probing the device.
+    // The device must never determine the project rate.
+    if (state.core.project.projectSampleRate <= 0) {
+        state.core.project.projectSampleRate = 48000;
+    }
+
     state.core.projectModified = false;
 
     // Runtime DSP state is not serialized; reset to defaults after load.

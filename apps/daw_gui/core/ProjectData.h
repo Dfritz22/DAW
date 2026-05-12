@@ -1,74 +1,22 @@
 #pragma once
+
 #ifdef DAW_PUBLIC_API
 #error "This header is internal-only."
 #endif
 
-#include <vector>
-#include <string>
-#include <cstdint>
-#include <array>
-#include "dsp/insert_types.h"
+// Persistent project data lives in libs/core. The app keeps this thin
+// alias header so existing callsites (TrackData, BusData, ProjectData,
+// PROJECT_BUS_COUNT, etc.) keep compiling unchanged.
 
-// Forward declarations of types from state.h (avoid circular includes)
-struct LoadedAudio;
-struct ClipItem;
+#include "core/project_data.h"
 
-// ── Persistent project data model ────────────────────────────────────────────
-// Contains all project-level data that is saved/loaded from .dawproj files.
-// This is separate from UI state (viewport, selection, editing modes, etc.)
-// and audio device state (backend, sample rate preference, device names, etc.)
+using TrackData    = daw::core::TrackData;
+using BusData      = daw::core::BusData;
+using ProjectData  = daw::core::ProjectData;
 
-// Note: These match the constants in state.h but we can't include it to avoid circular dependency
-constexpr int PROJECT_MAX_INSERT_SLOTS = kMaxInsertSlots;
-constexpr int PROJECT_BUS_COUNT = 4;
+using ProjectInsertEffectArray = daw::core::ProjectInsertEffectArray;
+using ProjectInsertBypassArray = daw::core::ProjectInsertBypassArray;
+using ProjectInsertConfigArray = daw::core::ProjectInsertConfigArray;
 
-using ProjectInsertEffectArray = std::array<std::uint8_t, PROJECT_MAX_INSERT_SLOTS>;
-using ProjectInsertBypassArray = std::array<bool, PROJECT_MAX_INSERT_SLOTS>;
-using ProjectInsertConfigArray = std::array<InsertConfig, PROJECT_MAX_INSERT_SLOTS>;
-
-struct TrackData {
-    std::wstring name;
-    float gainDb {0.0f};
-    bool mute {false};
-    bool solo {false};
-    bool recordArm {false};
-    int busIndex {1};  // default to Music bus
-    float pan {0.0f};
-    int insertSlots {0};
-    ProjectInsertEffectArray insertEffects;
-    ProjectInsertBypassArray insertBypass;
-    ProjectInsertConfigArray insertConfig;
-};
-
-struct BusData {
-    std::wstring name;
-    float gainDb {0.0f};
-    bool mute {false};
-    float pan {0.0f};
-    int insertSlots {0};
-    ProjectInsertEffectArray insertEffects;
-    ProjectInsertBypassArray insertBypass;
-    ProjectInsertConfigArray insertConfig;
-};
-
-struct ProjectData {
-    // Project metadata
-    float bpm {120.0f};
-    int projectSampleRate {0};
-
-    // Persistent tracks and buses
-    std::vector<TrackData> tracks;
-    std::vector<BusData> buses;  // Fixed size PROJECT_BUS_COUNT, but stored in vector
-
-    // Audio files and clips
-    std::vector<LoadedAudio> audio;
-    std::vector<ClipItem> clips;
-
-    ProjectData() {
-        // Initialize buses with defaults for PROJECT_BUS_COUNT
-        buses.reserve(PROJECT_BUS_COUNT);
-        for (int i = 0; i < PROJECT_BUS_COUNT; ++i) {
-            buses.push_back(BusData{});
-        }
-    }
-};
+constexpr int PROJECT_MAX_INSERT_SLOTS = daw::core::kProjectMaxInsertSlots;
+constexpr int PROJECT_BUS_COUNT        = daw::core::kProjectBusCount;

@@ -11,6 +11,19 @@
 #include <cstring>
 #include <sstream>
 
+// INITGUID must be defined BEFORE the propkey headers so the property key
+// constants get a definition (not just a declaration) in this TU.
+#define INITGUID
+#include <initguid.h>
+#include <propsys.h>
+#include <propvarutil.h>
+#include <functiondiscoverykeys_devpkey.h>
+#include <mmdeviceapi.h>
+// Define PKEY_AudioEngine_DeviceFormat ourselves (the SDK only declares it).
+extern "C" const PROPERTYKEY DECLSPEC_SELECTANY PKEY_AudioEngine_DeviceFormat_Local = {
+    { 0xf19f064d, 0x082c, 0x4e27, { 0xbc, 0x73, 0x68, 0x82, 0xa1, 0xbb, 0x8e, 0x4c } }, 0
+};
+
 namespace {
 constexpr UINT kMsgPlaybackFinished = WM_APP + 1;
 }
@@ -149,6 +162,7 @@ static DWORD WINAPI WasapiRenderThreadProc(LPVOID param) {
     WAVEFORMATEX*       mixFmt       = nullptr;
     WAVEFORMATEX*       exclusiveFmt = nullptr;
     bool                fellBackToShared = false;
+    AUDCLNT_SHAREMODE   openedShareMode  = AUDCLNT_SHAREMODE_SHARED;
 
     auto fail = [&](const wchar_t* msg) {
         if (renderClient) { renderClient->Release(); renderClient = nullptr; }
@@ -180,34 +194,160 @@ static DWORD WINAPI WasapiRenderThreadProc(LPVOID param) {
                 ? audio->preferredSampleRate
                 : core.project.projectSampleRate;
 
-            if (requestedSR > 0) {
-                const size_t fmtBytes = sizeof(WAVEFORMATEX) + static_cast<size_t>(mixFmt->cbSize);
-                exclusiveFmt = reinterpret_cast<WAVEFORMATEX*>(CoTaskMemAlloc(fmtBytes));
-                if (exclusiveFmt != nullptr) {
-                    std::memcpy(exclusiveFmt, mixFmt, fmtBytes);
-                    exclusiveFmt->nSamplesPerSec = static_cast<DWORD>(requestedSR);
-                    exclusiveFmt->nAvgBytesPerSec = exclusiveFmt->nSamplesPerSec * exclusiveFmt->nBlockAlign;
-                    WAVEFORMATEX* closest = nullptr;
-                    hr = audioClient->IsFormatSupported(AUDCLNT_SHAREMODE_EXCLUSIVE, exclusiveFmt, &closest);
-                    if (closest != nullptr) {
-                        CoTaskMemFree(closest);
-                        closest = nullptr;
+            // 1) Try the format Windows has configured for this endpoint
+            //    (Sound Control Panel → Properties → Advanced → Default Format).
+            //    For Exclusive mode this is virtually always the format the
+            //    driver actually wants. Read PKEY_AudioEngine_DeviceFormat.
+            WAVEFORMATEX* deviceFmt = nullptr;
+            {
+                IPropertyStore* propStore = nullptr;
+                if (SUCCEEDED(device->OpenPropertyStore(STGM_READ, &propStore)) && propStore != nullptr) {
+                    PROPVARIANT pv; PropVariantInit(&pv);
+                    if (SUCCEEDED(propStore->GetValue(PKEY_AudioEngine_DeviceFormat_Local, &pv))
+                        && pv.vt == VT_BLOB && pv.blob.cbSize >= sizeof(WAVEFORMATEX)
+                        && pv.blob.pBlobData != nullptr) {
+                        const WAVEFORMATEX* src = reinterpret_cast<const WAVEFORMATEX*>(pv.blob.pBlobData);
+                        const size_t need = sizeof(WAVEFORMATEX) + src->cbSize;
+                        if (pv.blob.cbSize >= need) {
+                            deviceFmt = reinterpret_cast<WAVEFORMATEX*>(CoTaskMemAlloc(need));
+                            if (deviceFmt) std::memcpy(deviceFmt, src, need);
+                        }
                     }
-                    if (SUCCEEDED(hr)) {
-                        shareMode = AUDCLNT_SHAREMODE_EXCLUSIVE;
-                        openFmt = exclusiveFmt;
-                    } else {
-                        fellBackToShared = true;
-                    }
-                } else {
-                    fellBackToShared = true;
+                    PropVariantClear(&pv);
+                    propStore->Release();
                 }
-            } else {
-                fellBackToShared = true;
             }
 
-            if (fellBackToShared) {
-                audio->lastPlaybackInitError = L"WASAPI exclusive failed; falling back to WASAPI shared mode.";
+            std::wstring exclusiveFailReason;
+            bool exclusiveOk = false;
+
+            // Reject any negotiated/closest format the render loop can't write.
+            // We only support IEEE float (any bit depth, but typically 32) and
+            // 16-bit PCM. Anything else (24-bit packed, 24-in-32, 32-bit int)
+            // would silently fall into the memset-zero branch below.
+            auto formatIsRenderable = [](const WAVEFORMATEX* f) -> bool {
+                if (!f) return false;
+                const bool fl = (f->wFormatTag == WAVE_FORMAT_IEEE_FLOAT) ||
+                                (f->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+                                 reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(f)->SubFormat == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT);
+                const bool i16 = (f->wBitsPerSample == 16) &&
+                                 ((f->wFormatTag == WAVE_FORMAT_PCM) ||
+                                  (f->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+                                   reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(f)->SubFormat == KSDATAFORMAT_SUBTYPE_PCM));
+                return fl || i16;
+            };
+
+            auto tryFormat = [&](WAVEFORMATEX* fmt, const wchar_t* label) -> bool {
+                if (!fmt) return false;
+                WAVEFORMATEX* closest = nullptr;
+                HRESULT hrSup = audioClient->IsFormatSupported(AUDCLNT_SHAREMODE_EXCLUSIVE, fmt, &closest);
+                if (hrSup == S_FALSE && closest != nullptr) {
+                    if (!formatIsRenderable(closest)) {
+                        CoTaskMemFree(closest);
+                        wchar_t buf[160]{};
+                        swprintf_s(buf, L"  - %s: closest=non-renderable\n", label);
+                        exclusiveFailReason += buf;
+                        return false;
+                    }
+                    const size_t cBytes = sizeof(WAVEFORMATEX) + static_cast<size_t>(closest->cbSize);
+                    if (exclusiveFmt) { CoTaskMemFree(exclusiveFmt); exclusiveFmt = nullptr; }
+                    exclusiveFmt = reinterpret_cast<WAVEFORMATEX*>(CoTaskMemAlloc(cBytes));
+                    if (exclusiveFmt) std::memcpy(exclusiveFmt, closest, cBytes);
+                    CoTaskMemFree(closest);
+                    return exclusiveFmt != nullptr;
+                }
+                if (closest != nullptr) { CoTaskMemFree(closest); closest = nullptr; }
+                if (SUCCEEDED(hrSup)) {
+                    if (!formatIsRenderable(fmt)) {
+                        wchar_t buf[160]{};
+                        swprintf_s(buf, L"  - %s: non-renderable\n", label);
+                        exclusiveFailReason += buf;
+                        return false;
+                    }
+                    const size_t fBytes = sizeof(WAVEFORMATEX) + static_cast<size_t>(fmt->cbSize);
+                    if (exclusiveFmt) { CoTaskMemFree(exclusiveFmt); exclusiveFmt = nullptr; }
+                    exclusiveFmt = reinterpret_cast<WAVEFORMATEX*>(CoTaskMemAlloc(fBytes));
+                    if (exclusiveFmt) std::memcpy(exclusiveFmt, fmt, fBytes);
+                    return exclusiveFmt != nullptr;
+                }
+                wchar_t buf[160]{};
+                swprintf_s(buf, L"  - %s: 0x%08lX\n", label, static_cast<unsigned long>(hrSup));
+                exclusiveFailReason += buf;
+                return false;
+            };
+
+            // Try the device's configured format first.
+            if (deviceFmt) {
+                wchar_t lbl[96]{};
+                swprintf_s(lbl, L"DeviceFormat %luHz %dch %dbit", deviceFmt->nSamplesPerSec,
+                           deviceFmt->nChannels, deviceFmt->wBitsPerSample);
+                if (tryFormat(deviceFmt, lbl)) exclusiveOk = true;
+            }
+
+            // 2) Build SR candidates and try several bit depths / subtypes.
+            if (!exclusiveOk) {
+                int candidates[8]{};
+                int candCount = 0;
+                auto pushCand = [&](int sr) {
+                    if (sr <= 0) return;
+                    for (int i = 0; i < candCount; ++i) if (candidates[i] == sr) return;
+                    if (candCount < 8) candidates[candCount++] = sr;
+                };
+                pushCand(requestedSR);
+                if (deviceFmt) pushCand(static_cast<int>(deviceFmt->nSamplesPerSec));
+                pushCand(static_cast<int>(mixFmt->nSamplesPerSec));
+                pushCand(48000);
+                pushCand(44100);
+                pushCand(96000);
+                pushCand(88200);
+
+                struct FmtSpec { WORD bits; WORD validBits; bool isFloat; const wchar_t* name; };
+                // The render loop only knows how to write IEEE float and 16-bit
+                // PCM. Don't try anything else here; otherwise we'd "succeed"
+                // and then write silence to the device buffer.
+                const FmtSpec specs[] = {
+                    {32, 32, true,  L"f32"},
+                    {16, 16, false, L"i16"},
+                };
+
+                // Use a WAVEFORMATEXTENSIBLE on the stack for trials.
+                WAVEFORMATEXTENSIBLE wfx{};
+                for (const auto& spec : specs) {
+                    if (exclusiveOk) break;
+                    for (int ci = 0; ci < candCount && !exclusiveOk; ++ci) {
+                        std::memset(&wfx, 0, sizeof(wfx));
+                        wfx.Format.wFormatTag      = WAVE_FORMAT_EXTENSIBLE;
+                        wfx.Format.nChannels       = static_cast<WORD>(deviceFmt ? deviceFmt->nChannels : mixFmt->nChannels);
+                        if (wfx.Format.nChannels < 2) wfx.Format.nChannels = 2;
+                        wfx.Format.nSamplesPerSec  = static_cast<DWORD>(candidates[ci]);
+                        wfx.Format.wBitsPerSample  = spec.bits;
+                        wfx.Format.nBlockAlign     = static_cast<WORD>(wfx.Format.nChannels * (wfx.Format.wBitsPerSample / 8));
+                        wfx.Format.nAvgBytesPerSec = wfx.Format.nSamplesPerSec * wfx.Format.nBlockAlign;
+                        wfx.Format.cbSize          = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
+                        wfx.Samples.wValidBitsPerSample = spec.validBits;
+                        wfx.dwChannelMask = (wfx.Format.nChannels == 2) ? (SPEAKER_FRONT_LEFT | SPEAKER_FRONT_RIGHT) : 0;
+                        wfx.SubFormat = spec.isFloat ? KSDATAFORMAT_SUBTYPE_IEEE_FLOAT : KSDATAFORMAT_SUBTYPE_PCM;
+
+                        wchar_t lbl[96]{};
+                        swprintf_s(lbl, L"%s %dHz %dch", spec.name, candidates[ci], wfx.Format.nChannels);
+                        if (tryFormat(reinterpret_cast<WAVEFORMATEX*>(&wfx), lbl)) {
+                            exclusiveOk = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (deviceFmt) { CoTaskMemFree(deviceFmt); deviceFmt = nullptr; }
+
+            if (exclusiveOk && exclusiveFmt != nullptr) {
+                shareMode = AUDCLNT_SHAREMODE_EXCLUSIVE;
+                openFmt = exclusiveFmt;
+            } else {
+                fellBackToShared = true;
+                std::wstring msg = L"WASAPI Exclusive: device rejected all candidate formats. Falling back to Shared.\nDetails:\n";
+                msg += exclusiveFailReason;
+                audio->lastPlaybackInitError = msg;
             }
         }
 
@@ -215,13 +355,47 @@ static DWORD WINAPI WasapiRenderThreadProc(LPVOID param) {
             hnsBuffer = static_cast<REFERENCE_TIME>((10000000LL * static_cast<long long>(audio->preferredBufferFrames)) / static_cast<long long>(openFmt->nSamplesPerSec));
             hnsBuffer = std::max<REFERENCE_TIME>(hnsBuffer, 10000);
         }
+        // For Exclusive mode, the requested buffer must be at least the
+        // device's minimum period or Initialize will fail. Honor that.
+        if (shareMode == AUDCLNT_SHAREMODE_EXCLUSIVE) {
+            REFERENCE_TIME devDefault = 0, devMin = 0;
+            if (SUCCEEDED(audioClient->GetDevicePeriod(&devDefault, &devMin))) {
+                if (hnsBuffer < devMin) hnsBuffer = devMin;
+            }
+        }
 
         hr = audioClient->Initialize(shareMode, 0, hnsBuffer, (shareMode == AUDCLNT_SHAREMODE_EXCLUSIVE) ? hnsBuffer : 0, openFmt, nullptr);
+        if (hr == AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED && shareMode == AUDCLNT_SHAREMODE_EXCLUSIVE) {
+            // The driver wants a specific aligned buffer size; ask for it,
+            // release the client, recreate, and re-Initialize with the
+            // aligned period (per MSDN guidance).
+            UINT32 alignedFrames = 0;
+            if (SUCCEEDED(audioClient->GetBufferSize(&alignedFrames)) && alignedFrames > 0) {
+                hnsBuffer = static_cast<REFERENCE_TIME>(
+                    (10000000.0 * alignedFrames) / static_cast<double>(openFmt->nSamplesPerSec) + 0.5);
+                audioClient->Release();
+                audioClient = nullptr;
+                hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(&audioClient));
+                if (SUCCEEDED(hr) && audioClient != nullptr) {
+                    hr = audioClient->Initialize(AUDCLNT_SHAREMODE_EXCLUSIVE, 0, hnsBuffer, hnsBuffer, openFmt, nullptr);
+                }
+            }
+        }
         if (FAILED(hr)) {
             if (shareMode == AUDCLNT_SHAREMODE_EXCLUSIVE) {
                 fellBackToShared = true;
-                audio->lastPlaybackInitError = L"WASAPI exclusive initialization failed; using WASAPI shared mode.";
-                hr = audioClient->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, hnsBuffer, 0, mixFmt, nullptr);
+                wchar_t msg[160]{};
+                swprintf_s(msg, L"WASAPI Exclusive Initialize failed (0x%08lX). Falling back to Shared.",
+                           static_cast<unsigned long>(hr));
+                audio->lastPlaybackInitError = msg;
+                if (audioClient == nullptr) {
+                    hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(&audioClient));
+                }
+                if (SUCCEEDED(hr) && audioClient != nullptr) {
+                    hr = audioClient->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, hnsBuffer, 0, mixFmt, nullptr);
+                    openFmt = mixFmt;
+                    shareMode = AUDCLNT_SHAREMODE_SHARED;
+                }
             }
             if (FAILED(hr)) {
                 fail(L"Initialize");
@@ -231,10 +405,18 @@ static DWORD WINAPI WasapiRenderThreadProc(LPVOID param) {
 
         hr = audioClient->GetService(__uuidof(IAudioRenderClient), reinterpret_cast<void**>(&renderClient));
         if (FAILED(hr) || renderClient == nullptr) { fail(L"GetService"); return 0; }
+        openedShareMode = shareMode;
     } while (false);
 
     {
-        WAVEFORMATEX fmtCopy = *mixFmt;
+        WAVEFORMATEX fmtCopy{};
+        // Use the format we ACTUALLY opened with (openFmt), not always mixFmt.
+        // Otherwise the engine will think the device opened at the shared-mode
+        // mix rate even when Exclusive negotiated a different rate, which
+        // makes srcDeviceActive lie and the realtime SRC math go wrong.
+        WAVEFORMATEX* effectiveFmt = (openedShareMode == AUDCLNT_SHAREMODE_EXCLUSIVE && exclusiveFmt != nullptr)
+            ? exclusiveFmt : mixFmt;
+        fmtCopy = *effectiveFmt;
         EnterCriticalSection(&audio->audioStateLock);
         audio->wasapiOutFormat              = fmtCopy;
         audio->lastOpenedOutputSampleRate   = static_cast<int>(fmtCopy.nSamplesPerSec);
@@ -243,14 +425,20 @@ static DWORD WINAPI WasapiRenderThreadProc(LPVOID param) {
         LeaveCriticalSection(&audio->audioStateLock);
     }
 
-    const UINT32 nChannels   = mixFmt->nChannels;
-    const bool   isFloat     = (mixFmt->wFormatTag == WAVE_FORMAT_IEEE_FLOAT) ||
-                               (mixFmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
-                                reinterpret_cast<WAVEFORMATEXTENSIBLE*>(mixFmt)->SubFormat == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT);
-    const bool   isPcm16     = (mixFmt->wBitsPerSample == 16) &&
-                               ((mixFmt->wFormatTag == WAVE_FORMAT_PCM) ||
-                                (mixFmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
-                                 reinterpret_cast<WAVEFORMATEXTENSIBLE*>(mixFmt)->SubFormat == KSDATAFORMAT_SUBTYPE_PCM));
+    // Pick the effective format we actually opened with for all downstream
+    // sample-format / channel decisions. Was always reading mixFmt before,
+    // which is wrong in Exclusive mode if we negotiated a different SR or
+    // format from the device's shared mix format.
+    WAVEFORMATEX* activeFmt = (openedShareMode == AUDCLNT_SHAREMODE_EXCLUSIVE && exclusiveFmt != nullptr)
+        ? exclusiveFmt : mixFmt;
+    const UINT32 nChannels   = activeFmt->nChannels;
+    const bool   isFloat     = (activeFmt->wFormatTag == WAVE_FORMAT_IEEE_FLOAT) ||
+                               (activeFmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+                                reinterpret_cast<WAVEFORMATEXTENSIBLE*>(activeFmt)->SubFormat == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT);
+    const bool   isPcm16     = (activeFmt->wBitsPerSample == 16) &&
+                               ((activeFmt->wFormatTag == WAVE_FORMAT_PCM) ||
+                                (activeFmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+                                 reinterpret_cast<WAVEFORMATEXTENSIBLE*>(activeFmt)->SubFormat == KSDATAFORMAT_SUBTYPE_PCM));
 
     if (exclusiveFmt != nullptr) {
         CoTaskMemFree(exclusiveFmt);
@@ -346,6 +534,7 @@ static DWORD WINAPI WasapiRecordThreadProc(LPVOID param) {
         return 0;
     }
     CoreState& core = *audio->coreContext;
+    (void)core;
 
     HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     const bool coInitOk = SUCCEEDED(hr) || hr == RPC_E_CHANGED_MODE;
@@ -397,9 +586,7 @@ static DWORD WINAPI WasapiRecordThreadProc(LPVOID param) {
         audio->recordInputChannels = outCh;
         audio->lastOpenedInputSampleRate = sr;
         audio->lastOpenedInputChannels = outCh;
-        if (core.project.projectSampleRate <= 0 && sr > 0) {
-            core.project.projectSampleRate = sr;
-        }
+        // Project sample rate is owned by ProjectData; do not mutate from device code.
 
         if (FAILED(audioClient->Start())) {
             audio->lastRecordInitError = L"WASAPI capture start failed";
@@ -408,7 +595,31 @@ static DWORD WINAPI WasapiRecordThreadProc(LPVOID param) {
 
         audio->recordInitState.store(1);
 
+        // True once we've drained any queued capture packets that were filled
+        // (in whole or in part) during count-in. Without this drain, the very
+        // first packet seen after countingIn flips false would prepend up to
+        // ~hundreds of ms of stale audio captured during the click-in,
+        // shifting the user's performance later in the recorded clip.
+        bool prerollDrained = false;
+
         while (!audio->recordStopRequested.load()) {
+            // On the count-in -> capture transition, throw away whatever the
+            // capture client has queued so the first appended packet contains
+            // only post-count-in audio.
+            if (!prerollDrained && !audio->countingIn) {
+                UINT32 stalePacket = 0;
+                while (SUCCEEDED(captureClient->GetNextPacketSize(&stalePacket)) && stalePacket > 0) {
+                    BYTE* sd = nullptr;
+                    UINT32 sf = 0;
+                    DWORD sflags = 0;
+                    if (FAILED(captureClient->GetBuffer(&sd, &sf, &sflags, nullptr, nullptr))) {
+                        break;
+                    }
+                    captureClient->ReleaseBuffer(sf);
+                }
+                prerollDrained = true;
+            }
+
             UINT32 packetFrames = 0;
             if (FAILED(captureClient->GetNextPacketSize(&packetFrames))) {
                 break;
@@ -429,7 +640,7 @@ static DWORD WINAPI WasapiRecordThreadProc(LPVOID param) {
                 }
 
                 const bool silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0;
-                if (!silent && data != nullptr && frames > 0 && !audio->countingIn) {
+                if (!silent && data != nullptr && frames > 0 && !audio->countingIn && prerollDrained) {
                     // Skip recording during count-in (only record after count-in ends)
                     const bool isFloat = (mixFmt->wFormatTag == WAVE_FORMAT_IEEE_FLOAT) ||
                         (mixFmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE && reinterpret_cast<WAVEFORMATEXTENSIBLE*>(mixFmt)->SubFormat == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT);
@@ -514,6 +725,8 @@ bool DeviceStartWasapiAudio(HWND hwnd, CoreState& core, AudioRuntimeState& audio
     const float startBeat = std::max(0.0f, playheadBeat);
     const std::uint64_t startFrame = TimelineFramesFromBeats(core, startBeat);
     audio.playbackFrameCursor.store(startFrame);
+    audio.engineSrcPrimed = false;
+    audio.engineSrcPhase  = 0.0;
     const std::uint64_t endFrame = ComputeProjectEndFrameLocked(core);
     LeaveCriticalSection(&audio.audioStateLock);
 
@@ -534,21 +747,51 @@ bool DeviceStartWasapiAudio(HWND hwnd, CoreState& core, AudioRuntimeState& audio
         if (audio.wasapiOutInitState.load() == 1) {
             audio.playbackStartTick = GetTickCount64();
             const int devSR = audio.activeDeviceSampleRate;
+
+            // The device may silently ignore the requested sample rate (USB
+            // class-compliant interfaces, the AXE-FX II, etc. are hard-locked
+            // to their native rate). Detect that and tell the user once, then
+            // snap `preferredSampleRate` to the rate the device actually
+            // opened at so the UI (Audio Settings combo, Audio menu
+            // checkmark, project file save) reflects reality instead of the
+            // unmet wish.
+            if (audio.preferredSampleRate > 0 && devSR > 0 && audio.preferredSampleRate != devSR) {
+                std::wstringstream warn;
+                warn << L"The audio device did not accept the requested sample rate ("
+                     << audio.preferredSampleRate << L" Hz).\n\n"
+                     << L"It opened at its native rate (" << devSR << L" Hz) instead. "
+                     << L"Many USB audio interfaces are hard-locked to a single sample rate "
+                     << L"and the rate must be changed in the device's own driver / control panel.\n\n"
+                     << L"The Audio Settings will now show the device's actual sample rate.";
+                MessageBoxW(hwnd, warn.str().c_str(), L"Device sample rate not changed", MB_OK | MB_ICONWARNING);
+                audio.preferredSampleRate = devSR;
+            }
+
             const bool hasTimelineAudio = !core.project.clips.empty() || !core.project.audio.empty();
             if (hasTimelineAudio && core.project.projectSampleRate > 0 && devSR > 0 && core.project.projectSampleRate != devSR) {
-                std::wstringstream mismatch;
-                mismatch
-                    << L"The selected device does not support " << core.project.projectSampleRate << L" Hz.\n\n"
-                    << L"Yes: Switch project to " << devSR << L" Hz\n"
-                    << L"No: Use device at " << devSR << L" Hz and resample project audio in real time\n"
-                    << L"Cancel: Abort playback (choose a different device from Audio menu)";
-                const int choice = MessageBoxW(hwnd, mismatch.str().c_str(), L"Sample Rate Mismatch", MB_YESNOCANCEL | MB_ICONWARNING);
-                if (choice == IDYES) {
-                    core.project.projectSampleRate = devSR;
-                } else if (choice == IDCANCEL) {
-                    DeviceStopWasapiAudio(audio);
-                    audio.playing = false;
-                    return false;
+                // Suppress the dialog if the user has already acknowledged
+                // this exact (project SR, device SR) pair. Many devices
+                // (USB-class, AXE-FX II, etc.) refuse SR changes, so popping
+                // this on every Play would be a constant nuisance once the
+                // user has accepted the SRC tradeoff.
+                const bool alreadyAcknowledged =
+                    audio.acknowledgedMismatchProjectSR == core.project.projectSampleRate &&
+                    audio.acknowledgedMismatchDeviceSR  == devSR;
+                if (!alreadyAcknowledged) {
+                    std::wstringstream mismatch;
+                    mismatch
+                        << L"Project sample rate (" << core.project.projectSampleRate << L" Hz) does not match the device's sample rate (" << devSR << L" Hz).\n\n"
+                        << L"The audio device did not accept a sample-rate change, so real-time sample rate conversion will be applied to keep playback and recording at the project rate.\n\n"
+                        << L"This dialog will not appear again until the project or device sample rate changes.\n\n"
+                        << L"Continue?";
+                    const int choice = MessageBoxW(hwnd, mismatch.str().c_str(), L"Sample Rate Mismatch", MB_OKCANCEL | MB_ICONINFORMATION);
+                    if (choice == IDCANCEL) {
+                        DeviceStopWasapiAudio(audio);
+                        audio.playing = false;
+                        return false;
+                    }
+                    audio.acknowledgedMismatchProjectSR = core.project.projectSampleRate;
+                    audio.acknowledgedMismatchDeviceSR  = devSR;
                 }
             }
             if (!audio.lastPlaybackInitError.empty()) {
@@ -595,19 +838,8 @@ bool DeviceStartWasapiRecording(HWND hwnd, CoreState& core, AudioRuntimeState& a
 
     // Ensure project sample rate is set before computing preroll duration
     // Will be set from input device format or from output device when playback starts
-    if (core.project.projectSampleRate <= 0) {
-        // Try to get from the last successfully opened input/output format
-        if (audio.lastOpenedInputSampleRate > 0) {
-            core.project.projectSampleRate = audio.lastOpenedInputSampleRate;
-        } else if (audio.lastOpenedOutputSampleRate > 0) {
-            core.project.projectSampleRate = audio.lastOpenedOutputSampleRate;
-        } else if (audio.preferredSampleRate > 0) {
-            core.project.projectSampleRate = audio.preferredSampleRate;
-        } else {
-            // Fallback to sensible default
-            core.project.projectSampleRate = 44100;
-        }
-    }
+    // Project sample rate is owned by ProjectData (default 48000). Device code
+    // does not write to it; SRC will reconcile any device/project mismatch.
 
     const std::uint64_t timelineStartFrame = audio.playing
         ? DeviceGetRenderedPlaybackFrame(core, audio)
@@ -621,6 +853,24 @@ bool DeviceStartWasapiRecording(HWND hwnd, CoreState& core, AudioRuntimeState& a
     audio.recordStartFrame = timelineStartFrame;
     audio.countInEndFrame = timelineStartFrame + audio.recordPrerollFrames;
     audio.countingIn = (audio.recordPrerollFrames > 0);
+    audio.countInFrameCursor.store(0);
+    // Mark recording active BEFORE starting the playback backend so the very
+    // first engine callback sees recording=true and keeps the render loop
+    // alive (otherwise an empty-project + metronome-only or count-in-only
+    // session can race and immediately tear down).
+    audio.recording = true;
+
+    // Always start the playback backend during recording. The render thread
+    // owns playbackFrameCursor advance (and therefore the visible playhead);
+    // without it, recording with no clips, no metronome, and no count-in
+    // would capture audio fine but the playhead would never move.
+    if (!audio.playing) {
+        if (!DeviceStartWasapiAudio(hwnd, core, audio, playheadBeat)) {
+            audio.countingIn = false;
+            audio.recording = false;
+            return false;
+        }
+    }
 
     audio.recordUsingWasapi = true;
     audio.recordStopRequested.store(false);
@@ -630,6 +880,7 @@ bool DeviceStartWasapiRecording(HWND hwnd, CoreState& core, AudioRuntimeState& a
     if (audio.recordThread == nullptr) {
         audio.countingIn = false;
         audio.recordUsingWasapi = false;
+        audio.recording = false;
         return false;
     }
 
@@ -644,6 +895,7 @@ bool DeviceStartWasapiRecording(HWND hwnd, CoreState& core, AudioRuntimeState& a
         audio.recordThread = nullptr;
         audio.countingIn = false;
         audio.recordUsingWasapi = false;
+        audio.recording = false;
         if (!audio.lastRecordInitError.empty()) {
             MessageBoxW(hwnd, (L"WASAPI capture failed: " + audio.lastRecordInitError + L"\nFalling back to MME.").c_str(), L"Record", MB_OK | MB_ICONWARNING);
         }
@@ -662,6 +914,19 @@ bool DeviceStartWasapiRecording(HWND hwnd, CoreState& core, AudioRuntimeState& a
     }
 
     audio.recording = true;
+    
+    // Initialize live recording clip for real-time waveform display.
+    // Note: startBeat will be set correctly in the UI timer callback.
+    audio.liveRecordingClip.trackIndex = armedTrack;
+    audio.liveRecordingClip.audioIndex = -1;
+    audio.liveRecordingClip.startBeat = 0.0f;
+    audio.liveRecordingClip.lengthBeats = 0.0f;
+    audio.liveRecordingClip.color = CoreRgb(88, 131, 199);
+    audio.liveRecordingClip.name = L"[Recording]";
+    audio.liveRecordingClip.sourceOffsetFrames = 0;
+    audio.liveRecordingWaveform.clear();
+    audio.liveRecordingFramesProcessed = 0;
+    
     return true;
 }
 

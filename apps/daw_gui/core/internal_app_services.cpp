@@ -1,5 +1,10 @@
 #include "core/internal_app_services.h"
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
+
 namespace daw::internal::core {
 
 InsertEffectArray DefaultInsertEffects() {
@@ -64,6 +69,20 @@ std::filesystem::path FindRepoRoot() {
             return fromCwd;
         }
     }
+
+#ifdef _WIN32
+    // Fall back to scanning up from the executable's own directory so the app
+    // can locate the repo even when launched with an unrelated working dir.
+    wchar_t exeBuf[MAX_PATH] = {0};
+    const DWORD len = GetModuleFileNameW(nullptr, exeBuf, MAX_PATH);
+    if (len > 0 && len < MAX_PATH) {
+        std::filesystem::path exePath(exeBuf);
+        std::filesystem::path fromExe = scanUp(exePath.parent_path());
+        if (!fromExe.empty()) {
+            return fromExe;
+        }
+    }
+#endif
 
     return {};
 }
