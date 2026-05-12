@@ -11,6 +11,7 @@ add_executable(daw_gui WIN32
     core/automation.cpp
     ui/layout.cpp
     ui/wndproc/wheel.cpp
+    ui/wndproc/timer.cpp
     core/timeline.cpp
     core/timeline_edit.cpp
     core/internal_app_services.cpp
