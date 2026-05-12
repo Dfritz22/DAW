@@ -1,5 +1,6 @@
 add_executable(test_vm
     test_timeline_view.cpp
+    test_timeline_zoom.cpp
 )
 
 target_link_libraries(test_vm

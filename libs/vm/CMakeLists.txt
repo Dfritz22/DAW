@@ -1,5 +1,6 @@
 add_library(daw_vm STATIC
     src/timeline_view.cpp
+    src/timeline_zoom.cpp
 )
 add_library(daw::vm ALIAS daw_vm)
 

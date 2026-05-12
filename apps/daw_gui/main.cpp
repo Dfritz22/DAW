@@ -11,6 +11,7 @@
 #include "ai/automix_bridge.h"
 #include "audio/engine_utils.h"
 #include "audio/transport_adapter.h"
+#include "vm/timeline_zoom.h"
 
 using daw::internal::core::DefaultInsertBypass;
 using daw::internal::core::DefaultInsertConfig;
@@ -818,12 +819,13 @@ static void HandleMenuCommand(HWND hwnd, AppState& state, UINT cmd) {
     } else if (cmd == kCmdFileExit) {
         PostMessage(hwnd, WM_CLOSE, 0, 0);
     } else if (cmd == kCmdViewZoomIn) {
-        state.ui.viewBeatsVisible = std::max(4.0f, state.ui.viewBeatsVisible * 0.85f);
+        state.ui.viewBeatsVisible = daw::vm::ZoomVisible(state.ui.viewBeatsVisible, daw::vm::kKeyZoomInFactor);
     } else if (cmd == kCmdViewZoomOut) {
-        state.ui.viewBeatsVisible = std::min(128.0f, state.ui.viewBeatsVisible * 1.15f);
+        state.ui.viewBeatsVisible = daw::vm::ZoomVisible(state.ui.viewBeatsVisible, daw::vm::kKeyZoomOutFactor);
     } else if (cmd == kCmdViewReset) {
-        state.ui.viewStartBeat = 0.0f;
-        state.ui.viewBeatsVisible = 32.0f;
+        const auto reset = daw::vm::ResetView();
+        state.ui.viewStartBeat    = reset.viewStartBeat;
+        state.ui.viewBeatsVisible = reset.viewBeatsVisible;
     } else if (cmd == kCmdWindowResetLayout) {
         // Rebuild the dock tree from scratch. Splitter ratios reset too.
         // Also wipe the persisted layout so a crash before the next save
@@ -1061,7 +1063,7 @@ static bool ReplaceProjectWithSingleWav(AppState& state, const std::wstring& wav
     state.ui.selectedClipIndex = 0;
     state.ui.playheadBeat = 0.0f;
     state.ui.viewStartBeat = 0.0f;
-    state.ui.viewBeatsVisible = std::clamp(std::max(16.0f, lengthBeats + 4.0f), 16.0f, 128.0f);
+    state.ui.viewBeatsVisible = daw::vm::FitVisibleToContent(lengthBeats);
     state.core.projectFilePath.clear();
     state.core.projectModified = true;
     LeaveCriticalSection(&state.audio.audioStateLock);
@@ -1516,7 +1518,7 @@ void ImportWavFiles(HWND hwnd, AppState& state) {
         }
         LeaveCriticalSection(&state.audio.audioStateLock);
         state.ui.viewStartBeat = 0.0f;
-        state.ui.viewBeatsVisible = std::clamp(std::max(16.0f, endBeat + 4.0f), 16.0f, 128.0f);
+        state.ui.viewBeatsVisible = daw::vm::FitVisibleToContent(endBeat);
     }
 
     if (!skipped.empty()) {
@@ -2389,7 +2391,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
                 const float viewRight = state->ui.viewStartBeat + state->ui.viewBeatsVisible;
                 if (state->ui.playheadBeat > viewRight - 1.0f) {
-                    state->ui.viewStartBeat = state->ui.playheadBeat - (state->ui.viewBeatsVisible * 0.75f);
+                    state->ui.viewStartBeat = daw::vm::AutoScrollViewStart(state->ui.viewBeatsVisible, state->ui.playheadBeat);
                 }
                 needRepaint = true;
             }
@@ -2568,12 +2570,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         if (wParam == VK_OEM_PLUS || wParam == VK_ADD) {
-            state->ui.viewBeatsVisible = std::max(4.0f, state->ui.viewBeatsVisible * 0.85f);
+            state->ui.viewBeatsVisible = daw::vm::ZoomVisible(state->ui.viewBeatsVisible, daw::vm::kKeyZoomInFactor);
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
         if (wParam == VK_OEM_MINUS || wParam == VK_SUBTRACT) {
-            state->ui.viewBeatsVisible = std::min(128.0f, state->ui.viewBeatsVisible * 1.15f);
+            state->ui.viewBeatsVisible = daw::vm::ZoomVisible(state->ui.viewBeatsVisible, daw::vm::kKeyZoomOutFactor);
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
@@ -3549,15 +3551,14 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
 
             if (ctrl) {
-                const float oldVisible = state->ui.viewBeatsVisible;
-                state->ui.viewBeatsVisible = (delta > 0)
-                    ? std::max(4.0f, state->ui.viewBeatsVisible * 0.9f)
-                    : std::min(128.0f, state->ui.viewBeatsVisible * 1.1f);
-
+                const float factor = (delta > 0) ? daw::vm::kWheelZoomInFactor : daw::vm::kWheelZoomOutFactor;
                 const int focusX = std::clamp(wpt.x, wlayout.arrange.left, wlayout.arrange.right);
                 const float beatAtCursor = UiLayoutXToBeat(wlayout.arrange, *state, focusX);
-                const float ratio = (beatAtCursor - state->ui.viewStartBeat) / oldVisible;
-                state->ui.viewStartBeat = beatAtCursor - ratio * state->ui.viewBeatsVisible;
+                const auto z = daw::vm::ZoomVisibleAround(state->ui.viewStartBeat,
+                                                           state->ui.viewBeatsVisible,
+                                                           beatAtCursor, factor);
+                state->ui.viewStartBeat    = z.viewStartBeat;
+                state->ui.viewBeatsVisible = z.viewBeatsVisible;
             } else if ((GET_KEYSTATE_WPARAM(wParam) & MK_SHIFT) != 0) {
                 // Shift+wheel over arrange: vertical track scroll.
                 const int step = Dpi(kTrackRowHeight);
@@ -3566,8 +3567,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 const int maxScroll = UiLayoutMaxTracksScrollY(wlayout.leftPanel, *state);
                 state->ui.tracksScrollY = std::clamp(state->ui.tracksScrollY, 0, maxScroll);
             } else {
-                const float step = state->ui.viewBeatsVisible * 0.08f;
-                state->ui.viewStartBeat += (delta > 0) ? -step : step;
+                const float step = state->ui.viewBeatsVisible * daw::vm::kWheelPanStepFraction;
+                state->ui.viewStartBeat = daw::vm::PanViewStartBeat(state->ui.viewStartBeat,
+                                                                     (delta > 0) ? -step : step);
             }
             state->ui.viewStartBeat = std::max(0.0f, state->ui.viewStartBeat);
             InvalidateRect(hwnd, nullptr, FALSE);
