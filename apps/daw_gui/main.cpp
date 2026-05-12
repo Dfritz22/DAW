@@ -47,9 +47,6 @@ void ApplyBalancePan(float pan, float* left, float* right) {
     }
 }
 
-void ImportWavFiles(HWND hwnd, AppState& state);
-void ConvertImportedAudioToProjectSampleRate(HWND hwnd, AppState& state);
-
 // Forward declarations for audio orchestration (defined after DoAutoMaster/DoExportMix)
 void StopPlayback(AppState& state, bool rewind);
 void StopRecording(AppState& state, bool commitTake);

@@ -23,3 +23,7 @@ void NudgeSelectedClip(AppState& state, float deltaBeats);
 void DeleteSelectedClip(AppState& state);
 int AddNewTrack(AppState& state);
 void DeleteTrackAt(AppState& state, int trackIndex);
+
+// WAV import / SR-conversion. Defined in main.cpp (pending its own TU).
+void ImportWavFiles(HWND hwnd, AppState& state);
+void ConvertImportedAudioToProjectSampleRate(HWND hwnd, AppState& state);

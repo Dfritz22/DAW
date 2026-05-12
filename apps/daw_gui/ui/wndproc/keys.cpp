@@ -6,9 +6,6 @@
 #include "daw_project.h"
 #include "vm/timeline_zoom.h"
 
-// Forward decl — defined in main.cpp until file IO is its own module.
-void ImportWavFiles(HWND hwnd, AppState& state);
-
 LRESULT WndProcOnKeyDown(HWND hwnd, WPARAM wParam, AppState& state) {
     using daw::internal::core::UpdateWindowTitle;
 
