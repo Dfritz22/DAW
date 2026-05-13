@@ -275,3 +275,99 @@ build/tests/lint after each.
 | **Total** | | | **-3727** (4008 → 281) |
 
 184/184 tests + layer_lint clean throughout.
+
+---
+
+## 9. Multithreading audit (added in light of upcoming plugin support)
+
+### Current threads
+
+| # | Thread | Owner | Lifetime | Sync |
+|---|---|---|---|---|
+| 1 | UI / message pump | `wWinMain` | App | Owns `core.project`, `ui.*`, all GDI |
+| 2 | Audio output (`audioThread`) | `device_wasapi.cpp` / `device_mme.cpp` | StartPlayback → StopPlayback | `audioStateLock` + atomics |
+| 3 | Audio input/record (`recordThread`) | same | StartRecording → StopRecording | same |
+| 4 | AutoMix worker (`automixThread`) | `ai/automix_bridge.cpp` | Per AutoMix run | `automixRunning` + `audioStateLock` |
+| 5 | Python child process | spawned by 4 | Per AutoMix run | OS pipes, `WaitForSingleObject` |
+
+### Sync primitives
+
+- **1 × `CRITICAL_SECTION audioStateLock`** — coarse lock guarding `core.project.{tracks,audio,clips,buses}` and most mutable `audio.*` fields.
+- **8 × `std::atomic<…>`** — engineState, audioStopRequested, audioThreadRunning, wasapiOutInitState, automixRunning, playbackFrameCursor, recordStopRequested, countInFrameCursor, recordInitState.
+- **`PostMessage(hwnd, kMsg…)`** — audio → UI one-way notifications (kMsgPlaybackFinished, kMsgCountInComplete, kMsgAutoMixFinished). Lock-free, OS queue.
+- **`WaitForSingleObject(thread, INFINITE)`** for shutdown joins.
+
+### What works well today
+
+1. Single coarse lock — no deadlock surface (one lock can't form a cycle).
+2. Atomics correctly used for cross-thread flags; default `seq_cst` is free on x86 TSO.
+3. Audio → UI is lock-free via `PostMessage`.
+4. Realtime allocation mostly tamed (Phase 12d-extra pre-allocated mix scratch). First callback allocates; steady-state is alloc-free.
+5. Engine state machine (`AudioEngineState` atomic enum) is the right pattern.
+6. Thread joins are clean on shutdown.
+
+### Latent issues (M1–M8)
+
+| # | Issue | Severity | Plugin impact |
+|---|---|---|---|
+| **M1** | Audio thread takes `audioStateLock` directly via `EnterCriticalSection`. On UI contention (AutoMix, project save, plugin GUI), audio callback blocks → glitch. | MEDIUM today | **CRITICAL with plugins.** A plugin GUI running on UI thread that touches state via `EnterCriticalSection` can stall audio for milliseconds. Solution: `TryEnterCriticalSection` + emit-silence fallback, OR a snapshot/double-buffer pattern (see "Plugin-readiness rework" below). |
+| **M2** | No realtime-allocation tripwire. | LOW today | **HIGH with plugins.** Plugin SDKs often allocate inside `process()` (especially GUI sync paths). You can't fix their code, but you need a debug hook that reports when the audio thread allocates — at minimum so you know which plugin is the culprit. |
+| **M3** | Default `seq_cst` ordering. | INFO | INFO — non-issue until ARM port. Plugins don't change this. |
+| **M4** | `automixThread` HANDLE leak / shutdown stall risk. | LOW | LOW — unchanged. |
+| **M5** | `PostMessage` failure not checked. | LOW | LOW. Plugin parameter-change notifications might amplify queue pressure; revisit if that becomes a real path. |
+| **M6** | No formal thread-ownership annotations on struct fields. | LOW | **MEDIUM with plugins.** Plugin-state fields (instances, parameter caches, GUI handles) need very clear ownership rules. Annotate as you add them. |
+| **M7** | `engine.cpp:107-133` resizes scratch buffers each callback. | LOW | LOW. Just pre-size to `kMaxFramesPerCallback*2` at engine init. |
+| **M8** | `recordThread` writes `core.project.audio` while audio reads. Both lock; correct but coarse. | INFO | INFO. |
+
+### Plugin-readiness rework — the structural change
+
+Once VST3 / CLAP plugins land, the **single coarse lock model breaks down**. Plugins demand four threading guarantees that the current architecture doesn't provide:
+
+1. **Audio thread must never block** (M1 promotion). Plugin process callbacks are invoked from your audio thread; if your callback can stall waiting for a UI mutation, every plugin in the chain stalls with it. The fix is a **lock-free state snapshot pattern**:
+   - UI thread builds a new immutable `MixSnapshot` (track gains, pan, insert chain configs, automation values for the next block) under the lock.
+   - UI thread atomic-publishes the snapshot pointer.
+   - Audio thread atomic-loads the pointer at the top of each callback and reads from the immutable snapshot (no lock).
+   - Old snapshots freed on UI thread after a grace period (RCU-lite or hazard pointer).
+   - Effort: ~1 week. Touches `engine.cpp` mix loop and `app_state_api.cpp` mutators.
+
+2. **Plugin "main thread" identity.** VST3 spec defines a "main thread" for `IComponentHandler`, parameter notifications, and editor lifecycle. AU is similar. CLAP uses `[main-thread]` annotations. Today your "UI thread" can serve this role, but the plugin SDK shims will need to verify thread identity (e.g. `GetCurrentThreadId() == g_mainThreadId`) and you'll need an **explicit single-threaded-apartment-style dispatcher** for plugin → UI notifications (cf. `PostMessage` pattern).
+
+3. **Plugin parameter automation must be sample-accurate per block.** Today track automation is read directly from `core.project` per callback. With plugins, you need to feed parameter changes into the plugin's per-block event list. This requires a **lock-free parameter-change queue** (single-producer UI → single-consumer audio) — typically a ring buffer (e.g. `boost::lockfree::spsc_queue` or a hand-rolled SPSC). Effort: ~3 days per format.
+
+4. **Plugin scanning / instantiation off the audio thread.** First-time scan of a VST3 directory can take seconds (DLL load, factory enumeration). Must run on a dedicated worker thread (similar to current `automixThread`) so neither UI nor audio stalls. Cache results to disk.
+
+### Recommended sequencing (additions to the hardening plan)
+
+These slot into the existing roadmap without changing prior ordering:
+
+| Phase | Step | Pre-req | Notes |
+|---|---|---|---|
+| 22 (existing) | **D — Realtime allocation audit** | — | Add `DAW_RT_ALLOC_TRACE` operator-new override that asserts when called on audio TID. Pre-size `engineBusScratch` to `kMaxFramesPerCallback*2` at engine init (M7). |
+| **23 (new)** | **J — Audio-thread non-blocking guarantee** (M1) | D | Replace `EnterCriticalSection` in audio callbacks with `TryEnterCriticalSection`; emit silence + log on failure. Add 1 unit test that holds the lock for 100 ms and verifies the audio callback doesn't block. |
+| **24 (new)** | **K — Lock-free MixSnapshot publication** | J | Build immutable per-block snapshot on UI thread; audio thread reads atomically. Removes `audioStateLock` from audio callback entirely. Foundational for plugin support. |
+| **25 (new)** | **L — Thread identity formalization** | K | Add `daw::threading::{IsMainThread(), IsAudioThread()}` predicates + asserts at entry of each `WndProcOn*`, mix callback, and orchestration helper. Annotate every `AppState` field with `// [thread: …]` (M6). |
+| **26 (new)** | **M — SPSC parameter-change ring buffer** | L | Single-producer (UI) → single-consumer (audio) queue. Used by automation today; required by plugin parameter automation tomorrow. |
+| **27 (new)** | **N — Plugin scanning worker thread + cache** | M | Dedicated thread for VST3/CLAP/AU scan; on-disk cache (versioned by plugin file mtime + size). |
+| 28 (future) | **O — VST3 host integration** | N | Out of scope of this document; gates on J–N. |
+| 29 (future) | **P — CLAP host integration** | N | Same. |
+
+### Why this matters now (not later)
+
+Steps J–N are individually small (1–5 days each) but **must happen before the first plugin lands**, not after. Once a plugin's `process()` callback runs inside your audio thread, retrofitting the lock-free path means stop-the-world: every existing `EnterCriticalSection` site in the audio path becomes a potential stall, and every plugin that misbehaves makes it look like *your* code is the bug.
+
+Doing J–N as a coordinated mini-phase (Phase 23–27) before plugin work begins is dramatically cheaper than trying to retrofit threading invariants later.
+
+### What does NOT need changing
+
+- Coarse lock for **non-audio** mutations (project save, AutoMix, dock layout). UI thread + worker threads can keep `audioStateLock` — it's only the audio callback that must be lock-free.
+- `PostMessage` for audio → UI signaling. Stays as the canonical pattern.
+- Atomic flags for transport state. Already correct.
+- `engineState` state machine. Already correct.
+
+### Verdict
+
+Current threading is **solid for the present feature set** but **structurally insufficient for plugins**. Recommendation: schedule Phases 23–27 (J/K/L/M/N) as the immediate post-hardening work, *before* any plugin SDK integration. Keep them as a single coordinated mini-phase rather than spreading them across plugin-format tickets.
+
+This represents a real shift in roadmap weight — original plan ended at Step D. Plugin support requires recognizing that **the audio thread becomes a hard real-time API** the moment third-party code runs on it.
+</newString>
+</invoke>
