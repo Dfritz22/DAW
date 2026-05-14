@@ -3,6 +3,7 @@ add_executable(daw_gui WIN32
     app_state_api.cpp
     ui/draw.cpp
     ui/draw/chrome.cpp
+    ui/draw/inspector.cpp
     ui/panel.cpp
     ui/dock.cpp
     ui/dock_drop.cpp
