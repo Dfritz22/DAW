@@ -1,7 +1,6 @@
 add_executable(daw_gui WIN32
     main.cpp
     app_state_api.cpp
-    ui/draw.cpp
     ui/draw/chrome.cpp
     ui/draw/inspector.cpp
     ui/draw/mixer_strips.cpp
