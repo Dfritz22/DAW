@@ -21,7 +21,7 @@ LRESULT WndProcOnKeyDown(HWND hwnd, WPARAM wParam, AppState& state) {
     if (wParam == VK_HOME) {
         daw::app::DispatchTransportEvent(hwnd, state,
             daw::services::TransportEvent::StopPressed, /*rewindOnStop=*/true);
-        state.ui.viewStartBeat = 0.0f;
+        state.ui.view.viewStartBeat = 0.0f;
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     }
@@ -110,8 +110,8 @@ LRESULT WndProcOnKeyDown(HWND hwnd, WPARAM wParam, AppState& state) {
         return 0;
     }
     if (wParam == VK_ESCAPE) {
-        if (state.ui.fxInspectorOpen) {
-            state.ui.fxInspectorOpen = false;
+        if (state.ui.inspector.fxInspectorOpen) {
+            state.ui.inspector.fxInspectorOpen = false;
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
@@ -122,7 +122,7 @@ LRESULT WndProcOnKeyDown(HWND hwnd, WPARAM wParam, AppState& state) {
             return 0;
         }
 
-        if (state.ui.selectedClipIndex >= 0 && state.ui.selectedClipIndex < static_cast<int>(state.core.project.clips.size())) {
+        if (state.ui.view.selectedClipIndex >= 0 && state.ui.view.selectedClipIndex < static_cast<int>(state.core.project.clips.size())) {
             DeleteSelectedClip(state);
             state.core.projectModified = true;
             UpdateWindowTitle(hwnd, state.core);
@@ -130,8 +130,8 @@ LRESULT WndProcOnKeyDown(HWND hwnd, WPARAM wParam, AppState& state) {
             return 0;
         }
 
-        if (state.ui.selectedTrackIndex >= 0 && state.ui.selectedTrackIndex < static_cast<int>(state.core.project.tracks.size())) {
-            DeleteTrackAt(state, state.ui.selectedTrackIndex);
+        if (state.ui.view.selectedTrackIndex >= 0 && state.ui.view.selectedTrackIndex < static_cast<int>(state.core.project.tracks.size())) {
+            DeleteTrackAt(state, state.ui.view.selectedTrackIndex);
             state.core.projectModified = true;
             UpdateWindowTitle(hwnd, state.core);
             InvalidateRect(hwnd, nullptr, FALSE);
@@ -139,12 +139,12 @@ LRESULT WndProcOnKeyDown(HWND hwnd, WPARAM wParam, AppState& state) {
         return 0;
     }
     if (wParam == VK_OEM_PLUS || wParam == VK_ADD) {
-        state.ui.viewBeatsVisible = daw::vm::ZoomVisible(state.ui.viewBeatsVisible, daw::vm::kKeyZoomInFactor);
+        state.ui.view.viewBeatsVisible = daw::vm::ZoomVisible(state.ui.view.viewBeatsVisible, daw::vm::kKeyZoomInFactor);
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     }
     if (wParam == VK_OEM_MINUS || wParam == VK_SUBTRACT) {
-        state.ui.viewBeatsVisible = daw::vm::ZoomVisible(state.ui.viewBeatsVisible, daw::vm::kKeyZoomOutFactor);
+        state.ui.view.viewBeatsVisible = daw::vm::ZoomVisible(state.ui.view.viewBeatsVisible, daw::vm::kKeyZoomOutFactor);
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     }

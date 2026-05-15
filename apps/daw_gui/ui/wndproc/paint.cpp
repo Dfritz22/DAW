@@ -49,7 +49,7 @@ LRESULT WndProcOnPaint(HWND hwnd, AppState& state) {
     // walker emits one entry per leaf + one per splitter so we can
     // both dispatch to the panel registry and render draggable
     // dividers.
-    if (!state.ui.dockRoot) {
+    if (!state.ui.dock.dockRoot) {
         // Try to restore the user's last layout from
         // %APPDATA%\DAW\layout.json. Falls back to the built-in
         // default if missing/invalid. Floating panels persisted
@@ -57,25 +57,25 @@ LRESULT WndProcOnPaint(HWND hwnd, AppState& state) {
         // so a torn-off Mixer survives a restart in the same spot.
         daw::ui::DockLayoutDocument doc = daw::ui::DockLoadLayout();
         if (doc.root) {
-            state.ui.dockRoot = std::move(doc.root);
+            state.ui.dock.dockRoot = std::move(doc.root);
             for (const auto& f : doc.floating) {
                 SpawnFloatingPanelAt(state, f.panel,
                                      f.x, f.y, f.w, f.h,
                                      /*restoreOnFail=*/false);
             }
         } else {
-            state.ui.dockRoot = daw::ui::DockBuildDefault();
+            state.ui.dock.dockRoot = daw::ui::DockBuildDefault();
         }
     }
     RECT bodyRect{client.left, client.top + Dpi(kTopBarHeight), client.right, client.bottom - Dpi(kStatusBarHeight)};
-    state.ui.dockLayout.clear();
-    state.ui.dockSplitters.clear();
-    state.ui.dockTabs.clear();
-    daw::ui::DockLayout(state.ui.dockRoot.get(), bodyRect,
-                        state.ui.dockLayout, &state.ui.dockSplitters);
+    state.ui.dock.dockLayout.clear();
+    state.ui.dock.dockSplitters.clear();
+    state.ui.dock.dockTabs.clear();
+    daw::ui::DockLayout(state.ui.dock.dockRoot.get(), bodyRect,
+                        state.ui.dock.dockLayout, &state.ui.dock.dockSplitters);
 
     // Render dock leaves (panel content + per-leaf tab strip) and
-    // splitter dividers. Side effect: populates state.ui.dockTabs
+    // splitter dividers. Side effect: populates state.ui.dock.dockTabs
     // for the tab hit-test in WM_LBUTTONDOWN.
     UiDrawDockLeavesAndSplitters(memDc, state, smallFont);
 
@@ -86,7 +86,7 @@ LRESULT WndProcOnPaint(HWND hwnd, AppState& state) {
     UiDrawDockDropOverlay(memDc, state);
 
     // Inspector panel floats on top of everything
-    if (state.ui.fxInspectorOpen)
+    if (state.ui.inspector.fxInspectorOpen)
         UiDrawInsertInspector(memDc, client, state);
 
     // ── Status bar (fixed bottom strip, not dockable) ────────────

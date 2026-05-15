@@ -14,11 +14,11 @@ LRESULT WndProcOnPlaybackTimer(HWND hwnd, AppState& state) {
     // recording starts the playback backend).
     if (state.audio.playing) {
         const std::uint64_t absoluteFrame = DeviceGetRenderedPlaybackFrame(state);
-        state.ui.playheadBeat = BeatsFromFrames(state, absoluteFrame);
+        state.ui.view.playheadBeat = BeatsFromFrames(state, absoluteFrame);
 
-        const float viewRight = state.ui.viewStartBeat + state.ui.viewBeatsVisible;
-        if (state.ui.playheadBeat > viewRight - 1.0f) {
-            state.ui.viewStartBeat = daw::vm::AutoScrollViewStart(state.ui.viewBeatsVisible, state.ui.playheadBeat);
+        const float viewRight = state.ui.view.viewStartBeat + state.ui.view.viewBeatsVisible;
+        if (state.ui.view.playheadBeat > viewRight - 1.0f) {
+            state.ui.view.viewStartBeat = daw::vm::AutoScrollViewStart(state.ui.view.viewBeatsVisible, state.ui.view.playheadBeat);
         }
         needRepaint = true;
     }

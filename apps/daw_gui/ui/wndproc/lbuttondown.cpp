@@ -34,17 +34,17 @@ static bool LButtonOnDockSplitterOrTab(HWND hwnd, AppState& state, POINT pt) {
             // the floating WM_PAINT). They have no dock tree of their own,
             // so skip splitter / tab hit-tests in that case to avoid
             // spurious matches against the main window's dock layout.
-            const bool isMainHwnd = (hwnd == state.ui.hwnd);
+            const bool isMainHwnd = (hwnd == state.ui.view.hwnd);
 
             // ── Dock splitter drag start ────────────────────────────────
             // Check splitters before anything else so the user can grab a
             // divider even if its hit zone overlaps a panel's controls.
             if (isMainHwnd) {
-                for (const auto& sp : state.ui.dockSplitters) {
+                for (const auto& sp : state.ui.dock.dockSplitters) {
                     if (PtInRect(&sp.rect, pt)) {
-                        state.ui.draggingSplitter       = true;
-                        state.ui.dragSplitterNode       = sp.node;
-                        state.ui.dragSplitterHorizontal = sp.horizontal;
+                        state.ui.dock.draggingSplitter       = true;
+                        state.ui.dock.dragSplitterNode       = sp.node;
+                        state.ui.dock.dragSplitterHorizontal = sp.horizontal;
                         SetCapture(hwnd);
                         return true;
                     }
@@ -53,7 +53,7 @@ static bool LButtonOnDockSplitterOrTab(HWND hwnd, AppState& state, POINT pt) {
 
             // ── Dock tab click → activate that tab + arm potential drag ──
             if (isMainHwnd) {
-                for (const auto& tab : state.ui.dockTabs) {
+                for (const auto& tab : state.ui.dock.dockTabs) {
                     if (PtInRect(&tab.rect, pt)) {
                         if (tab.node != nullptr) {
                             tab.node->activeTab = tab.tabIndex;
@@ -65,13 +65,13 @@ static bool LButtonOnDockSplitterOrTab(HWND hwnd, AppState& state, POINT pt) {
                             const daw::ui::PanelKind pk =
                                 tab.node->panels[static_cast<size_t>(tab.tabIndex)];
                             if (!daw::ui::PanelGet(pk).primary) {
-                                state.ui.dragTabArmed   = true;
-                                state.ui.dragTabActive  = false;
-                                state.ui.dragTabSource  = tab.node;
-                                state.ui.dragTabIndex   = tab.tabIndex;
-                                state.ui.dragTabPanel   = pk;
-                                state.ui.dragTabStartPt = pt;
-                                state.ui.dragTabCurPt   = pt;
+                                state.ui.dock.dragTabArmed   = true;
+                                state.ui.dock.dragTabActive  = false;
+                                state.ui.dock.dragTabSource  = tab.node;
+                                state.ui.dock.dragTabIndex   = tab.tabIndex;
+                                state.ui.dock.dragTabPanel   = pk;
+                                state.ui.dock.dragTabStartPt = pt;
+                                state.ui.dock.dragTabCurPt   = pt;
                                 SetCapture(hwnd);
                             }
                             InvalidateRect(hwnd, nullptr, FALSE);
@@ -85,7 +85,7 @@ static bool LButtonOnDockSplitterOrTab(HWND hwnd, AppState& state, POINT pt) {
 }
 
 static bool LButtonOnTopBarButtons(HWND hwnd, AppState& state, POINT pt) {
-            if (PtInRect(&state.ui.playRect, pt)) {
+            if (PtInRect(&state.ui.topBar.playRect, pt)) {
                 using daw::services::TransportEvent;
                 const auto ev = state.audio.playing ? TransportEvent::StopPressed
                                                      : TransportEvent::PlayPressed;
@@ -93,14 +93,14 @@ static bool LButtonOnTopBarButtons(HWND hwnd, AppState& state, POINT pt) {
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return true;
             }
-            if (PtInRect(&state.ui.stopRect, pt)) {
+            if (PtInRect(&state.ui.topBar.stopRect, pt)) {
                 // Stop button always rewinds.
                 daw::app::DispatchTransportEvent(hwnd, state,
                     daw::services::TransportEvent::StopPressed, /*rewindOnStop=*/true);
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return true;
             }
-            if (PtInRect(&state.ui.recordRect, pt)) {
+            if (PtInRect(&state.ui.topBar.recordRect, pt)) {
                 using daw::services::TransportEvent;
                 TransportEvent ev;
                 if (state.audio.recording || state.audio.countingIn) {
@@ -114,54 +114,54 @@ static bool LButtonOnTopBarButtons(HWND hwnd, AppState& state, POINT pt) {
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return true;
             }
-            if (PtInRect(&state.ui.importRect, pt)) {
+            if (PtInRect(&state.ui.topBar.importRect, pt)) {
                 ImportWavFiles(hwnd, state);
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return true;
             }
-            if (PtInRect(&state.ui.automixRect, pt)) {
+            if (PtInRect(&state.ui.topBar.automixRect, pt)) {
                 StartAutoMixAsync(hwnd, state);
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return true;
             }
-            if (PtInRect(&state.ui.vocalCheckRect, pt)) {
+            if (PtInRect(&state.ui.topBar.vocalCheckRect, pt)) {
                 AnalyzeSelectedTrackQuality(hwnd, state);
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return true;
             }
-            if (PtInRect(&state.ui.autoMasterRect, pt)) {
+            if (PtInRect(&state.ui.topBar.autoMasterRect, pt)) {
                 DoAutoMaster(hwnd, state);
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return true;
             }
-            if (PtInRect(&state.ui.metPlayRect, pt)) {
+            if (PtInRect(&state.ui.topBar.metPlayRect, pt)) {
                 state.audio.metronomePlay = !state.audio.metronomePlay;
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return true;
             }
-            if (PtInRect(&state.ui.metRecRect, pt)) {
+            if (PtInRect(&state.ui.topBar.metRecRect, pt)) {
                 state.audio.metronomeRecord = !state.audio.metronomeRecord;
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return true;
             }
-            if (PtInRect(&state.ui.monitorRect, pt)) {
+            if (PtInRect(&state.ui.topBar.monitorRect, pt)) {
                 state.audio.inputMonitoring = !state.audio.inputMonitoring;
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return true;
             }
-            if (PtInRect(&state.ui.bpmDownRect, pt)) {
+            if (PtInRect(&state.ui.topBar.bpmDownRect, pt)) {
                 const bool coarse = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
                 state.core.project.bpm = static_cast<float>(std::max(40, static_cast<int>(state.core.project.bpm) - (coarse ? 5 : 1)));
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return true;
             }
-            if (PtInRect(&state.ui.bpmUpRect, pt)) {
+            if (PtInRect(&state.ui.topBar.bpmUpRect, pt)) {
                 const bool coarse = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
                 state.core.project.bpm = static_cast<float>(std::min(260, static_cast<int>(state.core.project.bpm) + (coarse ? 5 : 1)));
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return true;
             }
-            if (PtInRect(&state.ui.countInRect, pt)) {
+            if (PtInRect(&state.ui.topBar.countInRect, pt)) {
                 state.audio.countInEnabled = !state.audio.countInEnabled;
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return true;
@@ -170,21 +170,21 @@ static bool LButtonOnTopBarButtons(HWND hwnd, AppState& state, POINT pt) {
 }
 
 static bool LButtonOnFxInspector(HWND hwnd, AppState& state, POINT pt, const RECT& client) {
-            if (state.ui.fxInspectorOpen && state.ui.fxInspectorIndex >= 0) {
+            if (state.ui.inspector.fxInspectorOpen && state.ui.inspector.fxInspectorIndex >= 0) {
                 const RECT inspPanel = UiDrawGetInspectorPanelRect(client, state);
                 if (!PtInRect(&inspPanel, pt)) {
                     // Click outside → close
-                    state.ui.fxInspectorOpen = false;
+                    state.ui.inspector.fxInspectorOpen = false;
                     InvalidateRect(hwnd, nullptr, FALSE);
                     return false;
                 } else {
                     // Click inside inspector - handle controls
-                    const int idx = state.ui.fxInspectorIndex;
+                    const int idx = state.ui.inspector.fxInspectorIndex;
                     int* pSlots       = nullptr;
                     InsertEffectArray* pEffects = nullptr;
                     InsertBypassArray* pBypass  = nullptr;
                     InsertConfigArray* pParams  = nullptr;
-                    if (state.ui.fxInspectorIsTrack) {
+                    if (state.ui.inspector.fxInspectorIsTrack) {
                         if (idx < static_cast<int>(state.core.project.tracks.size()))
                             pSlots = &state.core.project.tracks[static_cast<size_t>(idx)].insertSlots;
                         if (idx < static_cast<int>(state.core.project.tracks.size()))
@@ -209,7 +209,7 @@ static bool LButtonOnFxInspector(HWND hwnd, AppState& state, POINT pt, const REC
                     // Close button
                     RECT closeBtn{inspPanel.right - 24, inspPanel.top + 4, inspPanel.right - 4, inspPanel.top + kUiDrawInspHeaderH - 4};
                     if (PtInRect(&closeBtn, pt)) {
-                        state.ui.fxInspectorOpen = false;
+                        state.ui.inspector.fxInspectorOpen = false;
                         InvalidateRect(hwnd, nullptr, FALSE);
                         return true;
                     }
@@ -267,15 +267,15 @@ static bool LButtonOnFxInspector(HWND hwnd, AppState& state, POINT pt, const REC
                             return true;
                         }
                         if (PtInRect(&arrowBtn, pt)) {
-                            state.ui.fxInspectorSelectedSlot = (state.ui.fxInspectorSelectedSlot == s) ? -1 : s;
+                            state.ui.inspector.fxInspectorSelectedSlot = (state.ui.inspector.fxInspectorSelectedSlot == s) ? -1 : s;
                             InvalidateRect(hwnd, nullptr, FALSE);
                             return true;
                         }
                     }
 
                     // Param knob clicks in the expanded strip
-                    if (state.ui.fxInspectorSelectedSlot >= 0 && state.ui.fxInspectorSelectedSlot < slotCount && pParams && pEffects) {
-                        const int selSlot = state.ui.fxInspectorSelectedSlot;
+                    if (state.ui.inspector.fxInspectorSelectedSlot >= 0 && state.ui.inspector.fxInspectorSelectedSlot < slotCount && pParams && pEffects) {
+                        const int selSlot = state.ui.inspector.fxInspectorSelectedSlot;
                         const int paramTop = slotsTop + slotCount * kUiDrawInspSlotH;
                         const int ky = paramTop + 16;
                         const int kw = (kUiDrawInspW - 12) / 4;
@@ -315,10 +315,10 @@ static bool LButtonOnFxInspector(HWND hwnd, AppState& state, POINT pt, const REC
                                 case 60:curVal=P.dee_threshold_db; break; case 61:curVal=P.dee_freq_hz; break; case 62:curVal=P.dee_bandwidth_hz; break; case 63:curVal=P.dee_reduction_db; break;
                                 case 70:curVal=P.lim_ceiling_db; break; case 71:curVal=P.lim_release_ms; break;
                                 }
-                                state.ui.draggingParamKnob = true;
-                                state.ui.paramKnobParamId  = knobs[k].paramId * 100 + selSlot;  // encode slot in lower 2 digits
-                                state.ui.paramKnobDragStartY   = pt.y;
-                                state.ui.paramKnobDragStartVal = curVal;
+                                state.ui.tools.draggingParamKnob = true;
+                                state.ui.tools.paramKnobParamId  = knobs[k].paramId * 100 + selSlot;  // encode slot in lower 2 digits
+                                state.ui.tools.paramKnobDragStartY   = pt.y;
+                                state.ui.tools.paramKnobDragStartVal = curVal;
                                 SetCapture(hwnd);
                                 return true;
                             }
@@ -334,8 +334,8 @@ static bool LButtonOnFxInspector(HWND hwnd, AppState& state, POINT pt, const REC
 static bool LButtonOnRuler(HWND hwnd, AppState& state, POINT pt, const LayoutRects& layout) {
             if (PtInRect(&layout.ruler, pt)) {
                 const float beat = std::max(0.0f, UiLayoutXToBeat(layout.ruler, state, pt.x));
-                state.ui.playheadBeat = UiLayoutSnapBeat(beat);
-                state.ui.draggingPlayhead = true;
+                state.ui.view.playheadBeat = UiLayoutSnapBeat(beat);
+                state.ui.tools.draggingPlayhead = true;
                 SetCapture(hwnd);
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return true;
@@ -346,7 +346,7 @@ static bool LButtonOnRuler(HWND hwnd, AppState& state, POINT pt, const LayoutRec
 static bool LButtonOnTracksAndBusesPanel(HWND hwnd, AppState& state, POINT pt, const LayoutRects& layout) {
             const bool inTracksLeaf = (PtInRect(&layout.leftPanel, pt) && pt.y > layout.leftPanel.top + Dpi(kRulerHeight));
             bool inBusesLeaf = false;
-            for (const auto& leaf : state.ui.dockLayout) {
+            for (const auto& leaf : state.ui.dock.dockLayout) {
                 if (leaf.activePanel == daw::ui::PanelKind::Buses && PtInRect(&leaf.rect, pt)) {
                     inBusesLeaf = true;
                     break;
@@ -356,14 +356,14 @@ static bool LButtonOnTracksAndBusesPanel(HWND hwnd, AppState& state, POINT pt, c
                 const bool inTracksRegion = inTracksLeaf && (pt.y < UiLayoutTracksRegionBottom(layout.leftPanel));
                 const int trackIndex = UiLayoutTrackIndexFromY(layout.arrange, state, pt.y);
                 if (inTracksRegion && trackIndex >= 0 && trackIndex < static_cast<int>(state.core.project.tracks.size())) {
-                    state.ui.selectedTrackIndex = trackIndex;
-                    state.ui.selectedClipIndex = -1;
+                    state.ui.view.selectedTrackIndex = trackIndex;
+                    state.ui.view.selectedClipIndex = -1;
 
                     RECT busRect{};
                     RECT panKnobRect{};
                     RECT panValRect{};
                     RECT fxRect{};
-                    UiLayoutGetTrackRoutingRects(layout.leftPanel, trackIndex, &busRect, &panKnobRect, &panValRect, &fxRect, state.ui.tracksScrollY);
+                    UiLayoutGetTrackRoutingRects(layout.leftPanel, trackIndex, &busRect, &panKnobRect, &panValRect, &fxRect, state.ui.view.tracksScrollY);
                     if (PtInRect(&busRect, pt)) {
                         EnterCriticalSection(&state.audio.audioStateLock);
                         if (trackIndex < static_cast<int>(state.core.project.tracks.size())) {
@@ -378,9 +378,9 @@ static bool LButtonOnTracksAndBusesPanel(HWND hwnd, AppState& state, POINT pt, c
                     }
                     if (PtInRect(&fxRect, pt)) {
                         // Open insert-chain inspector for this track
-                        state.ui.fxInspectorOpen    = true;
-                        state.ui.fxInspectorIsTrack = true;
-                        state.ui.fxInspectorIndex   = trackIndex;
+                        state.ui.inspector.fxInspectorOpen    = true;
+                        state.ui.inspector.fxInspectorIsTrack = true;
+                        state.ui.inspector.fxInspectorIndex   = trackIndex;
                         InvalidateRect(hwnd, nullptr, FALSE);
                         return true;
                     }
@@ -395,11 +395,11 @@ static bool LButtonOnTracksAndBusesPanel(HWND hwnd, AppState& state, POINT pt, c
                             LeaveCriticalSection(&state.audio.audioStateLock);
                         } else if (trackIndex < static_cast<int>(state.core.project.tracks.size())) {
                             // Start drag
-                            state.ui.draggingPan    = true;
-                            state.ui.dragPanIsBus   = false;
-                            state.ui.dragPanIndex   = trackIndex;
-                            state.ui.dragPanStartY  = pt.y;
-                            state.ui.dragPanStartVal = state.core.project.tracks[static_cast<size_t>(trackIndex)].pan;
+                            state.ui.tools.draggingPan    = true;
+                            state.ui.tools.dragPanIsBus   = false;
+                            state.ui.tools.dragPanIndex   = trackIndex;
+                            state.ui.tools.dragPanStartY  = pt.y;
+                            state.ui.tools.dragPanStartVal = state.core.project.tracks[static_cast<size_t>(trackIndex)].pan;
                             SetCapture(hwnd);
                         }
                         InvalidateRect(hwnd, nullptr, FALSE);
@@ -409,7 +409,7 @@ static bool LButtonOnTracksAndBusesPanel(HWND hwnd, AppState& state, POINT pt, c
                     RECT muteRect{};
                     RECT soloRect{};
                     RECT recRect{};
-                    UiLayoutGetTrackButtonRects(layout.leftPanel, trackIndex, &muteRect, &soloRect, &recRect, state.ui.tracksScrollY);
+                    UiLayoutGetTrackButtonRects(layout.leftPanel, trackIndex, &muteRect, &soloRect, &recRect, state.ui.view.tracksScrollY);
                     if (PtInRect(&muteRect, pt)) {
                         EnterCriticalSection(&state.audio.audioStateLock);
                         if (trackIndex < static_cast<int>(state.core.project.tracks.size())) {
@@ -440,16 +440,16 @@ static bool LButtonOnTracksAndBusesPanel(HWND hwnd, AppState& state, POINT pt, c
 
                     RECT rail{};
                     RECT knob{};
-                    UiLayoutGetTrackFaderRects(layout.leftPanel, trackIndex, &rail, &knob, state.ui.tracksScrollY);
+                    UiLayoutGetTrackFaderRects(layout.leftPanel, trackIndex, &rail, &knob, state.ui.view.tracksScrollY);
                     RECT hitRect{rail.left - 12, rail.top, rail.right + 12, rail.bottom};
                     if (PtInRect(&hitRect, pt)) {
                         PushUndo(state);
-                        state.ui.draggingFader = true;
-                        state.ui.dragFaderTrack = trackIndex;
-                        state.ui.dragFaderStartY = pt.y;
+                        state.ui.tools.draggingFader = true;
+                        state.ui.tools.dragFaderTrack = trackIndex;
+                        state.ui.tools.dragFaderStartY = pt.y;
                         EnterCriticalSection(&state.audio.audioStateLock);
-                        state.ui.dragFaderStartDb = UiLayoutGainFromFaderY(rail, pt.y);
-                        state.core.project.tracks[static_cast<size_t>(trackIndex)].gainDb = state.ui.dragFaderStartDb;
+                        state.ui.tools.dragFaderStartDb = UiLayoutGainFromFaderY(rail, pt.y);
+                        state.core.project.tracks[static_cast<size_t>(trackIndex)].gainDb = state.ui.tools.dragFaderStartDb;
                         LeaveCriticalSection(&state.audio.audioStateLock);
                         SetCapture(hwnd);
                         InvalidateRect(hwnd, nullptr, FALSE);
@@ -461,7 +461,7 @@ static bool LButtonOnTracksAndBusesPanel(HWND hwnd, AppState& state, POINT pt, c
                 // works regardless of where the panel has been moved/sized.
                 RECT busPanelRect{};
                 bool hasBusPanel = false;
-                for (const auto& leaf : state.ui.dockLayout) {
+                for (const auto& leaf : state.ui.dock.dockLayout) {
                     if (leaf.activePanel == daw::ui::PanelKind::Buses) {
                         busPanelRect = leaf.rect;
                         hasBusPanel = true;
@@ -492,20 +492,20 @@ static bool LButtonOnTracksAndBusesPanel(HWND hwnd, AppState& state, POINT pt, c
                             state.core.project.buses[static_cast<size_t>(b)].gainDb = std::min(kFaderMaxDb, state.core.project.buses[static_cast<size_t>(b)].gainDb + 1.0f);
                         } else if ((PtInRect(&panKnobRect, pt) || PtInRect(&panValRect, pt)) && b < static_cast<int>(state.core.project.buses.size())) {
                             LeaveCriticalSection(&state.audio.audioStateLock);
-                            state.ui.draggingPan    = true;
-                            state.ui.dragPanIsBus   = true;
-                            state.ui.dragPanIndex   = b;
-                            state.ui.dragPanStartY  = pt.y;
-                            state.ui.dragPanStartVal = state.core.project.buses[static_cast<size_t>(b)].pan;
+                            state.ui.tools.draggingPan    = true;
+                            state.ui.tools.dragPanIsBus   = true;
+                            state.ui.tools.dragPanIndex   = b;
+                            state.ui.tools.dragPanStartY  = pt.y;
+                            state.ui.tools.dragPanStartVal = state.core.project.buses[static_cast<size_t>(b)].pan;
                             SetCapture(hwnd);
                             InvalidateRect(hwnd, nullptr, FALSE);
                             return true;
                         } else if (PtInRect(&fxRect, pt) && b < static_cast<int>(state.core.project.buses.size())) {
                             // Open insert-chain inspector for this bus
                             LeaveCriticalSection(&state.audio.audioStateLock);
-                            state.ui.fxInspectorOpen    = true;
-                            state.ui.fxInspectorIsTrack = false;
-                            state.ui.fxInspectorIndex   = b;
+                            state.ui.inspector.fxInspectorOpen    = true;
+                            state.ui.inspector.fxInspectorIsTrack = false;
+                            state.ui.inspector.fxInspectorIndex   = b;
                             InvalidateRect(hwnd, nullptr, FALSE);
                             return true;
                         }
@@ -524,15 +524,15 @@ static bool LButtonOnTracksAndBusesPanel(HWND hwnd, AppState& state, POINT pt, c
 static bool LButtonOnArrangeClip(HWND hwnd, AppState& state, POINT pt, const LayoutRects& layout) {
     if (!PtInRect(&layout.arrange, pt)) return false;
             if (PtInRect(&layout.arrange, pt)) {
-                state.ui.selectedClipIndex = -1;
+                state.ui.view.selectedClipIndex = -1;
                 for (int i = static_cast<int>(state.core.project.clips.size()) - 1; i >= 0; --i) {
                     RECT r{};
                     if (!UiLayoutClipRectForDraw(layout.arrange, state, state.core.project.clips[static_cast<size_t>(i)], &r)) {
                         continue;
                     }
                     if (PtInRect(&r, pt)) {
-                        state.ui.selectedClipIndex = i;
-                        state.ui.selectedTrackIndex = state.core.project.clips[static_cast<size_t>(i)].trackIndex;
+                        state.ui.view.selectedClipIndex = i;
+                        state.ui.view.selectedTrackIndex = state.core.project.clips[static_cast<size_t>(i)].trackIndex;
 
                         constexpr int kEdgeThresh = 7;
                         const int fullLeft  = UiLayoutBeatToX(layout.arrange, state, state.core.project.clips[static_cast<size_t>(i)].startBeat);
@@ -542,20 +542,20 @@ static bool LButtonOnArrangeClip(HWND hwnd, AppState& state, POINT pt, const Lay
 
                         if (nearLeft || nearRight) {
                             // Trim
-                            state.ui.trimmingClip         = true;
-                            state.ui.trimClipIndex        = i;
-                            state.ui.trimIsLeft           = nearLeft;
-                            state.ui.trimOrigStart        = state.core.project.clips[static_cast<size_t>(i)].startBeat;
-                            state.ui.trimOrigLen          = state.core.project.clips[static_cast<size_t>(i)].lengthBeats;
-                            state.ui.trimOrigSourceOffset = state.core.project.clips[static_cast<size_t>(i)].sourceOffsetFrames;
+                            state.ui.tools.trimmingClip         = true;
+                            state.ui.tools.trimClipIndex        = i;
+                            state.ui.tools.trimIsLeft           = nearLeft;
+                            state.ui.tools.trimOrigStart        = state.core.project.clips[static_cast<size_t>(i)].startBeat;
+                            state.ui.tools.trimOrigLen          = state.core.project.clips[static_cast<size_t>(i)].lengthBeats;
+                            state.ui.tools.trimOrigSourceOffset = state.core.project.clips[static_cast<size_t>(i)].sourceOffsetFrames;
                             PushUndo(state);
                             SetCapture(hwnd);
                         } else {
                             // Drag
                             PushUndo(state);
-                            state.ui.draggingClip = true;
-                            state.ui.dragClipIndex = i;
-                            state.ui.dragOffsetBeats = UiLayoutXToBeat(layout.arrange, state, pt.x) - state.core.project.clips[static_cast<size_t>(i)].startBeat;
+                            state.ui.tools.draggingClip = true;
+                            state.ui.tools.dragClipIndex = i;
+                            state.ui.tools.dragOffsetBeats = UiLayoutXToBeat(layout.arrange, state, pt.x) - state.core.project.clips[static_cast<size_t>(i)].startBeat;
                             SetCapture(hwnd);
                         }
                         break;

@@ -43,18 +43,18 @@ void WndProcOnMenuCommand(HWND hwnd, AppState& state, UINT cmd) {
     } else if (cmd == kCmdFileExit) {
         PostMessage(hwnd, WM_CLOSE, 0, 0);
     } else if (cmd == kCmdViewZoomIn) {
-        state.ui.viewBeatsVisible = daw::vm::ZoomVisible(state.ui.viewBeatsVisible, daw::vm::kKeyZoomInFactor);
+        state.ui.view.viewBeatsVisible = daw::vm::ZoomVisible(state.ui.view.viewBeatsVisible, daw::vm::kKeyZoomInFactor);
     } else if (cmd == kCmdViewZoomOut) {
-        state.ui.viewBeatsVisible = daw::vm::ZoomVisible(state.ui.viewBeatsVisible, daw::vm::kKeyZoomOutFactor);
+        state.ui.view.viewBeatsVisible = daw::vm::ZoomVisible(state.ui.view.viewBeatsVisible, daw::vm::kKeyZoomOutFactor);
     } else if (cmd == kCmdViewReset) {
         const auto reset = daw::vm::ResetView();
-        state.ui.viewStartBeat    = reset.viewStartBeat;
-        state.ui.viewBeatsVisible = reset.viewBeatsVisible;
+        state.ui.view.viewStartBeat    = reset.viewStartBeat;
+        state.ui.view.viewBeatsVisible = reset.viewBeatsVisible;
     } else if (cmd == kCmdWindowResetLayout) {
         // Rebuild the dock tree from scratch. Splitter ratios reset too.
         // Also wipe the persisted layout so a crash before the next save
         // can't resurrect the old custom arrangement.
-        state.ui.dockRoot = daw::ui::DockBuildDefault();
+        state.ui.dock.dockRoot = daw::ui::DockBuildDefault();
         daw::ui::DockDeleteLayoutFile();
         InvalidateRect(hwnd, nullptr, FALSE);
     } else if (cmd >= kCmdWindowPanelBase &&
@@ -64,14 +64,14 @@ void WndProcOnMenuCommand(HWND hwnd, AppState& state, UINT cmd) {
         // this branch is unreachable for them, but we guard anyway.
         const daw::ui::PanelKind k =
             static_cast<daw::ui::PanelKind>(cmd - kCmdWindowPanelBase);
-        if (!daw::ui::PanelGet(k).primary && state.ui.dockRoot) {
+        if (!daw::ui::PanelGet(k).primary && state.ui.dock.dockRoot) {
             daw::ui::DockNode* leaf =
-                daw::ui::DockFindLeafContaining(state.ui.dockRoot.get(), k);
+                daw::ui::DockFindLeafContaining(state.ui.dock.dockRoot.get(), k);
             if (leaf != nullptr) {
                 // Hide: remove every tab matching this panel from the leaf.
                 for (int i = static_cast<int>(leaf->panels.size()) - 1; i >= 0; --i) {
                     if (leaf->panels[static_cast<size_t>(i)] == k) {
-                        daw::ui::DockRemoveTab(state.ui.dockRoot, leaf, i);
+                        daw::ui::DockRemoveTab(state.ui.dock.dockRoot, leaf, i);
                     }
                 }
             } else {
@@ -80,18 +80,18 @@ void WndProcOnMenuCommand(HWND hwnd, AppState& state, UINT cmd) {
                 // any non-primary leaf, then to splitting off Arrange if
                 // every leaf is primary and single-tabbed.
                 daw::ui::DockNode* host = daw::ui::DockFindLeafContaining(
-                    state.ui.dockRoot.get(), daw::ui::PanelKind::Tracks);
+                    state.ui.dock.dockRoot.get(), daw::ui::PanelKind::Tracks);
                 if (host == nullptr) {
-                    host = daw::ui::DockFindNonPrimaryLeaf(state.ui.dockRoot.get());
+                    host = daw::ui::DockFindNonPrimaryLeaf(state.ui.dock.dockRoot.get());
                 }
                 if (host != nullptr) {
                     daw::ui::DockInsertTab(host, k,
                         static_cast<int>(host->panels.size()));
                 } else {
                     daw::ui::DockNode* arrange = daw::ui::DockFindLeafContaining(
-                        state.ui.dockRoot.get(), daw::ui::PanelKind::Arrange);
+                        state.ui.dock.dockRoot.get(), daw::ui::PanelKind::Arrange);
                     if (arrange != nullptr) {
-                        daw::ui::DockSplitWith(state.ui.dockRoot, arrange,
+                        daw::ui::DockSplitWith(state.ui.dock.dockRoot, arrange,
                             daw::ui::DockDropSide::Left, k, 0.25f);
                     }
                 }
