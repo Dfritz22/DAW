@@ -6,6 +6,7 @@ add_executable(daw_gui WIN32
     ui/draw/inspector.cpp
     ui/draw/mixer_strips.cpp
     ui/draw/timeline.cpp
+    ui/draw/dock_chrome.cpp
     ui/panel.cpp
     ui/dock.cpp
     ui/dock_drop.cpp
