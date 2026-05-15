@@ -45,7 +45,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (g_uiDpi <= 0) g_uiDpi = 96;
 
         auto* initial = new AppState();
-        initial->ui.hwnd = hwnd;
+        initial->hwnd = hwnd;
         AudioInitializeRuntime(hwnd, initial->core, initial->audio);
         SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(initial));
 

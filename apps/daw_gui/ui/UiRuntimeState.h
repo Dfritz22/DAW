@@ -111,7 +111,6 @@ struct UiViewState {
     float viewStartBeat   {0.0f};
     float viewBeatsVisible{32.0f};
     int   tracksScrollY   {0};
-    HWND  hwnd            {nullptr};   // hoisted to AppState in 18f
     int   selectedClipIndex  {-1};
     int   selectedTrackIndex {-1};
 };
@@ -216,7 +215,6 @@ struct UiRuntimeState {
     float& viewStartBeat      {view.viewStartBeat};
     float& viewBeatsVisible   {view.viewBeatsVisible};
     int&   tracksScrollY      {view.tracksScrollY};
-    HWND&  hwnd               {view.hwnd};
 
     RECT& playRect       {topBar.playRect};
     RECT& stopRect       {topBar.stopRect};

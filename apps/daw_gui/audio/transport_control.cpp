@@ -175,7 +175,7 @@ void StopRecording(AppState& state, bool commitTake) {
                     state.core.project.tracks[static_cast<size_t>(state.audio.recordTrackIndex)].name + L" Rec",
                 });
                 state.core.projectModified = true;
-                if (state.ui.view.hwnd) UpdateWindowTitle(state.ui.view.hwnd, state.core);
+                if (state.hwnd) UpdateWindowTitle(state.hwnd, state.core);
             }
             LeaveCriticalSection(&state.audio.audioStateLock);
         }

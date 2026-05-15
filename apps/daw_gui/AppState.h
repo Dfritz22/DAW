@@ -12,6 +12,7 @@ struct AppState {
     CoreState core;
     AudioRuntimeState audio;
     UiRuntimeState ui;
+    HWND hwnd {nullptr};   // Phase 18f: hoisted from UiViewState. Main window handle.
 };
 
 // ── Forward declarations ────────────────────────────────────────────────────

@@ -84,7 +84,7 @@ LRESULT CALLBACK FloatingWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             UpdateWindow(hwnd);
 
             AppState* state = fwd->state;
-            HWND      mainHwnd = state->ui.hwnd;
+            HWND      mainHwnd = state->hwnd;
 
             SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
             LRESULT res = WindowProc(hwnd, msg, wParam, lParam);
@@ -146,13 +146,13 @@ LRESULT CALLBACK FloatingWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         // When the user finishes moving / resizing the floating window,
         // check whether its center now sits over the main window's client
         // area. If so, re-dock the panel and destroy the floating frame.
-        if (fwd == nullptr || fwd->state == nullptr || fwd->state->ui.hwnd == nullptr) break;
+        if (fwd == nullptr || fwd->state == nullptr || fwd->state->hwnd == nullptr) break;
         RECT fwin; GetWindowRect(hwnd, &fwin);
         const POINT center{(fwin.left + fwin.right) / 2,
                            (fwin.top  + fwin.bottom) / 2};
-        RECT mwin; GetClientRect(fwd->state->ui.hwnd, &mwin);
+        RECT mwin; GetClientRect(fwd->state->hwnd, &mwin);
         POINT mTopLeft{0, 0};
-        ClientToScreen(fwd->state->ui.hwnd, &mTopLeft);
+        ClientToScreen(fwd->state->hwnd, &mTopLeft);
         OffsetRect(&mwin, mTopLeft.x, mTopLeft.y);
         if (PtInRect(&mwin, center)) {
             // PostMessage so we tear down outside this WM_EXITSIZEMOVE
@@ -173,7 +173,7 @@ LRESULT CALLBACK FloatingWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             auto& vec = fwd->state->ui.floatingPanels;
             vec.erase(std::remove_if(vec.begin(), vec.end(),
                 [hwnd](const auto& fp){ return fp.hwnd == hwnd; }), vec.end());
-            HWND mainHwnd = fwd->state->ui.hwnd;
+            HWND mainHwnd = fwd->state->hwnd;
             delete fwd;
             SetWindowLongPtr(hwnd, GWLP_USERDATA, 0);
             if (mainHwnd != nullptr) InvalidateRect(mainHwnd, nullptr, FALSE);
@@ -189,7 +189,7 @@ LRESULT CALLBACK FloatingWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 HWND SpawnFloatingPanelAt(AppState& state, daw::ui::PanelKind panel,
                           int x, int y, int w, int h,
                           bool restoreOnFail) {
-    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtr(state.ui.view.hwnd, GWLP_HINSTANCE));
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtr(state.hwnd, GWLP_HINSTANCE));
     const std::wstring title = std::wstring(daw::ui::PanelGet(panel).title) + L" — DAW";
     HWND fhwnd = CreateWindowExW(
         0,
@@ -197,14 +197,14 @@ HWND SpawnFloatingPanelAt(AppState& state, daw::ui::PanelKind panel,
         title.c_str(),
         WS_OVERLAPPEDWINDOW,
         x, y, w, h,
-        state.ui.view.hwnd,    // owner so it stays above main but isn't a child
+        state.hwnd,    // owner so it stays above main but isn't a child
         nullptr,
         hInst,
         nullptr);
     if (fhwnd == nullptr) {
         if (restoreOnFail) {
             DockReturnPanelToMain(state, panel);
-            InvalidateRect(state.ui.view.hwnd, nullptr, FALSE);
+            InvalidateRect(state.hwnd, nullptr, FALSE);
         }
         return nullptr;
     }

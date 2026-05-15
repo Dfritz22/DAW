@@ -684,13 +684,13 @@ bool AnalyzeSelectedTrackQuality(HWND hwnd, AppState& state) {
 
 DWORD WINAPI AutoMixThreadProc(LPVOID param) {
     auto* state = reinterpret_cast<AppState*>(param);
-    if (state == nullptr || state->ui.hwnd == nullptr) {
+    if (state == nullptr || state->hwnd == nullptr) {
         return 0;
     }
 
-    const bool ok = ApplyAutoMixToFaders(state->ui.hwnd, *state);
+    const bool ok = ApplyAutoMixToFaders(state->hwnd, *state);
     state->audio.automixRunning.store(false);
-    PostMessage(state->ui.hwnd, kMsgAutoMixFinished, ok ? 1 : 0, 0);
+    PostMessage(state->hwnd, kMsgAutoMixFinished, ok ? 1 : 0, 0);
     return 0;
 }
 

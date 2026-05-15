@@ -34,7 +34,7 @@ static bool LButtonOnDockSplitterOrTab(HWND hwnd, AppState& state, POINT pt) {
             // the floating WM_PAINT). They have no dock tree of their own,
             // so skip splitter / tab hit-tests in that case to avoid
             // spurious matches against the main window's dock layout.
-            const bool isMainHwnd = (hwnd == state.ui.view.hwnd);
+            const bool isMainHwnd = (hwnd == state.hwnd);
 
             // ── Dock splitter drag start ────────────────────────────────
             // Check splitters before anything else so the user can grab a
