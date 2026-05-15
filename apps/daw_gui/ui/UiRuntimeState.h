@@ -102,95 +102,88 @@ struct LayoutRects {
     RECT arrange;
 };
 
-struct UiRuntimeState {
-    float playheadBeat {0.0f};
-    float viewStartBeat {0.0f};
-    float viewBeatsVisible {32.0f};
+// Phase 18 / Step G: UiRuntimeState ownership split. Reference aliases at
+// UiRuntimeState scope keep pre-split callsites compiling during 18c-18f
+// migration; aliases removed in 18g.
 
-    // Vertical scroll offset for the tracks region (in pixels).
-    // Applied to track rows in both the left panel and the arrange area.
-    int tracksScrollY {0};
+struct UiViewState {
+    float playheadBeat    {0.0f};
+    float viewStartBeat   {0.0f};
+    float viewBeatsVisible{32.0f};
+    int   tracksScrollY   {0};
+    HWND  hwnd            {nullptr};   // hoisted to AppState in 18f
+    int   selectedClipIndex  {-1};
+    int   selectedTrackIndex {-1};
+};
 
-    HWND hwnd {nullptr};
-
-    RECT playRect {0, 0, 0, 0};
-    RECT stopRect {0, 0, 0, 0};
-    RECT recordRect {0, 0, 0, 0};
-    RECT importRect {0, 0, 0, 0};
-    RECT automixRect {0, 0, 0, 0};
+struct TopBarHitRects {
+    RECT playRect       {0, 0, 0, 0};
+    RECT stopRect       {0, 0, 0, 0};
+    RECT recordRect     {0, 0, 0, 0};
+    RECT importRect     {0, 0, 0, 0};
+    RECT automixRect    {0, 0, 0, 0};
     RECT vocalCheckRect {0, 0, 0, 0};
     RECT autoMasterRect {0, 0, 0, 0};
-    RECT metPlayRect {0, 0, 0, 0};
-    RECT metRecRect {0, 0, 0, 0};
-    RECT monitorRect {0, 0, 0, 0};
-    RECT bpmDownRect {0, 0, 0, 0};
-    RECT bpmUpRect {0, 0, 0, 0};
-    RECT countInRect {0, 0, 0, 0};
-    RECT fileMenuRect {0, 0, 0, 0};
-    RECT viewMenuRect {0, 0, 0, 0};
-    RECT audioMenuRect {0, 0, 0, 0};
-    RECT trackMenuRect {0, 0, 0, 0};
+    RECT metPlayRect    {0, 0, 0, 0};
+    RECT metRecRect     {0, 0, 0, 0};
+    RECT monitorRect    {0, 0, 0, 0};
+    RECT bpmDownRect    {0, 0, 0, 0};
+    RECT bpmUpRect      {0, 0, 0, 0};
+    RECT countInRect    {0, 0, 0, 0};
+    RECT fileMenuRect   {0, 0, 0, 0};
+    RECT viewMenuRect   {0, 0, 0, 0};
+    RECT audioMenuRect  {0, 0, 0, 0};
+    RECT trackMenuRect  {0, 0, 0, 0};
+};
 
-    bool draggingClip {false};
-    int dragClipIndex {-1};
-    float dragOffsetBeats {0.0f};
+struct EditToolState {
+    bool  draggingClip     {false};
+    int   dragClipIndex    {-1};
+    float dragOffsetBeats  {0.0f};
 
-    bool draggingFader {false};
-    int dragFaderTrack {-1};
-    int dragFaderStartY {0};
+    bool  draggingFader    {false};
+    int   dragFaderTrack   {-1};
+    int   dragFaderStartY  {0};
     float dragFaderStartDb {0.0f};
 
-    bool draggingPan {false};
-    bool dragPanIsBus {false};
-    int dragPanIndex {-1};
-    int dragPanStartY {0};
-    float dragPanStartVal {0.0f};
+    bool  draggingPan      {false};
+    bool  dragPanIsBus     {false};
+    int   dragPanIndex     {-1};
+    int   dragPanStartY    {0};
+    float dragPanStartVal  {0.0f};
 
-    int selectedClipIndex {-1};
-    int selectedTrackIndex {-1};
-
-    // Insert chain inspector panel
-    bool fxInspectorOpen {false};
-    bool fxInspectorIsTrack {true};
-    int fxInspectorIndex {-1};
-    int fxInspectorSelectedSlot {-1};
-
-    // Param knob drag state
-    bool draggingParamKnob {false};
-    int paramKnobParamId {-1};
-    int paramKnobDragStartY {0};
+    bool  draggingParamKnob     {false};
+    int   paramKnobParamId      {-1};
+    int   paramKnobDragStartY   {0};
     float paramKnobDragStartVal {0.0f};
 
-    // Playhead drag (ruler click)
-    bool draggingPlayhead {false};
+    bool  draggingPlayhead {false};
 
-    // Clip trim
-    bool trimmingClip {false};
-    int trimClipIndex {-1};
-    bool trimIsLeft {false};
-    float trimOrigStart {0.0f};
-    float trimOrigLen {0.0f};
+    bool          trimmingClip         {false};
+    int           trimClipIndex        {-1};
+    bool          trimIsLeft           {false};
+    float         trimOrigStart        {0.0f};
+    float         trimOrigLen          {0.0f};
     std::uint64_t trimOrigSourceOffset {0};
+};
 
-    // ── Dock tree ────────────────────────────────────────────────────────
-    // Owns the panel layout. Built lazily on first WM_PAINT (from the
-    // persisted layout.json or DockBuildDefault() if absent/invalid).
-    // Nullptr only during the first paint; the renderer early-returns in
-    // that window rather than rendering anything legacy.
+struct InspectorState {
+    bool fxInspectorOpen         {false};
+    bool fxInspectorIsTrack      {true};
+    int  fxInspectorIndex        {-1};
+    int  fxInspectorSelectedSlot {-1};
+};
+
+struct DockState {
     std::unique_ptr<daw::ui::DockNode>        dockRoot;
     std::vector<daw::ui::DockLeafLayout>      dockLayout;
     std::vector<daw::ui::DockSplitterLayout>  dockSplitters;
     std::vector<daw::ui::DockTabHit>          dockTabs;
 
-    // Splitter drag state
     bool                                      draggingSplitter {false};
     daw::ui::DockNode*                        dragSplitterNode {nullptr};
     bool                                      dragSplitterHorizontal {false};
 
-    // ── Tab drag state (Phase 2.2b) ──────────────────────────────────────
-    // Two-stage gesture: WM_LBUTTONDOWN on a tab arms the drag (records
-    // source); WM_MOUSEMOVE past `kDragTabThresholdPx` activates it; on
-    // WM_LBUTTONUP we commit the drop (reorder, tab-into, or split).
     bool                                      dragTabArmed   {false};
     bool                                      dragTabActive  {false};
     daw::ui::DockNode*                        dragTabSource  {nullptr};
@@ -199,23 +192,107 @@ struct UiRuntimeState {
     POINT                                     dragTabStartPt {0, 0};
     POINT                                     dragTabCurPt   {0, 0};
 
-    // Resolved drop target for the current frame (computed on WM_MOUSEMOVE,
-    // consumed by both the WM_PAINT preview overlay and WM_LBUTTONUP).
-    // dropTargetLeaf == nullptr means "no valid drop target under cursor".
     daw::ui::DockNode*                        dropTargetLeaf  {nullptr};
     daw::ui::DockDropSide                     dropTargetSide  {daw::ui::DockDropSide::Center};
-    int                                       dropTargetTabAt {-1};   // for Center: insertion index
+    int                                       dropTargetTabAt {-1};
     RECT                                      dropPreviewRect {0,0,0,0};
 
-    // ── Floating tear-off windows (Phase 4) ─────────────────────────────
-    // A user can drag a non-primary tab outside the main window to spawn
-    // a floating top-level OS window that displays that single panel.
-    // Closing the floating window re-docks the panel back to main.
-    // Phase 4a is display-only (no in-floating mouse interaction yet); 4b
-    // will route mouse messages through a per-panel hit dispatcher.
     struct FloatingPanel {
         HWND               hwnd  {nullptr};
         daw::ui::PanelKind panel {};
     };
     std::vector<FloatingPanel>                floatingPanels;
+};
+
+struct UiRuntimeState {
+    UiViewState     view;
+    TopBarHitRects  topBar;
+    EditToolState   tools;
+    InspectorState  inspector;
+    DockState       dock;
+
+    // ── Deprecated reference aliases (removed in Phase 18g) ──────────────
+    float& playheadBeat       {view.playheadBeat};
+    float& viewStartBeat      {view.viewStartBeat};
+    float& viewBeatsVisible   {view.viewBeatsVisible};
+    int&   tracksScrollY      {view.tracksScrollY};
+    HWND&  hwnd               {view.hwnd};
+
+    RECT& playRect       {topBar.playRect};
+    RECT& stopRect       {topBar.stopRect};
+    RECT& recordRect     {topBar.recordRect};
+    RECT& importRect     {topBar.importRect};
+    RECT& automixRect    {topBar.automixRect};
+    RECT& vocalCheckRect {topBar.vocalCheckRect};
+    RECT& autoMasterRect {topBar.autoMasterRect};
+    RECT& metPlayRect    {topBar.metPlayRect};
+    RECT& metRecRect     {topBar.metRecRect};
+    RECT& monitorRect    {topBar.monitorRect};
+    RECT& bpmDownRect    {topBar.bpmDownRect};
+    RECT& bpmUpRect      {topBar.bpmUpRect};
+    RECT& countInRect    {topBar.countInRect};
+    RECT& fileMenuRect   {topBar.fileMenuRect};
+    RECT& viewMenuRect   {topBar.viewMenuRect};
+    RECT& audioMenuRect  {topBar.audioMenuRect};
+    RECT& trackMenuRect  {topBar.trackMenuRect};
+
+    bool&  draggingClip          {tools.draggingClip};
+    int&   dragClipIndex         {tools.dragClipIndex};
+    float& dragOffsetBeats       {tools.dragOffsetBeats};
+    bool&  draggingFader         {tools.draggingFader};
+    int&   dragFaderTrack        {tools.dragFaderTrack};
+    int&   dragFaderStartY       {tools.dragFaderStartY};
+    float& dragFaderStartDb      {tools.dragFaderStartDb};
+    bool&  draggingPan           {tools.draggingPan};
+    bool&  dragPanIsBus          {tools.dragPanIsBus};
+    int&   dragPanIndex          {tools.dragPanIndex};
+    int&   dragPanStartY         {tools.dragPanStartY};
+    float& dragPanStartVal       {tools.dragPanStartVal};
+
+    int&   selectedClipIndex     {view.selectedClipIndex};
+    int&   selectedTrackIndex    {view.selectedTrackIndex};
+
+    bool& fxInspectorOpen         {inspector.fxInspectorOpen};
+    bool& fxInspectorIsTrack      {inspector.fxInspectorIsTrack};
+    int&  fxInspectorIndex        {inspector.fxInspectorIndex};
+    int&  fxInspectorSelectedSlot {inspector.fxInspectorSelectedSlot};
+
+    bool&  draggingParamKnob     {tools.draggingParamKnob};
+    int&   paramKnobParamId      {tools.paramKnobParamId};
+    int&   paramKnobDragStartY   {tools.paramKnobDragStartY};
+    float& paramKnobDragStartVal {tools.paramKnobDragStartVal};
+
+    bool&  draggingPlayhead      {tools.draggingPlayhead};
+
+    bool&          trimmingClip         {tools.trimmingClip};
+    int&           trimClipIndex        {tools.trimClipIndex};
+    bool&          trimIsLeft           {tools.trimIsLeft};
+    float&         trimOrigStart        {tools.trimOrigStart};
+    float&         trimOrigLen          {tools.trimOrigLen};
+    std::uint64_t& trimOrigSourceOffset {tools.trimOrigSourceOffset};
+
+    std::unique_ptr<daw::ui::DockNode>&        dockRoot       {dock.dockRoot};
+    std::vector<daw::ui::DockLeafLayout>&      dockLayout     {dock.dockLayout};
+    std::vector<daw::ui::DockSplitterLayout>&  dockSplitters  {dock.dockSplitters};
+    std::vector<daw::ui::DockTabHit>&          dockTabs       {dock.dockTabs};
+
+    bool&                                      draggingSplitter       {dock.draggingSplitter};
+    daw::ui::DockNode*&                        dragSplitterNode       {dock.dragSplitterNode};
+    bool&                                      dragSplitterHorizontal {dock.dragSplitterHorizontal};
+
+    bool&                                      dragTabArmed   {dock.dragTabArmed};
+    bool&                                      dragTabActive  {dock.dragTabActive};
+    daw::ui::DockNode*&                        dragTabSource  {dock.dragTabSource};
+    int&                                       dragTabIndex   {dock.dragTabIndex};
+    daw::ui::PanelKind&                        dragTabPanel   {dock.dragTabPanel};
+    POINT&                                     dragTabStartPt {dock.dragTabStartPt};
+    POINT&                                     dragTabCurPt   {dock.dragTabCurPt};
+
+    daw::ui::DockNode*&                        dropTargetLeaf  {dock.dropTargetLeaf};
+    daw::ui::DockDropSide&                     dropTargetSide  {dock.dropTargetSide};
+    int&                                       dropTargetTabAt {dock.dropTargetTabAt};
+    RECT&                                      dropPreviewRect {dock.dropPreviewRect};
+
+    using FloatingPanel = DockState::FloatingPanel;
+    std::vector<FloatingPanel>&                floatingPanels {dock.floatingPanels};
 };
