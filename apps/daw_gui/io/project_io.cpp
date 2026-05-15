@@ -300,8 +300,8 @@ bool IoSaveProject(const std::wstring& path, AppState& state) {
     js << "  \"audio_preferred_buffer_frames\": " << state.audio.preferredBufferFrames << ",\n";
     js << "  \"audio_input_device_name\": \"" << JsonEscape(WstrToUtf8(state.audio.selectedInputDeviceName)) << "\",\n";
     js << "  \"audio_output_device_name\": \"" << JsonEscape(WstrToUtf8(state.audio.selectedOutputDeviceName)) << "\",\n";
-    js << "  \"view_start_beat\": " << state.ui.viewStartBeat << ",\n";
-    js << "  \"view_beats_visible\": " << state.ui.viewBeatsVisible << ",\n";
+    js << "  \"view_start_beat\": " << state.ui.view.viewStartBeat << ",\n";
+    js << "  \"view_beats_visible\": " << state.ui.view.viewBeatsVisible << ",\n";
 
     // Fixed buses
     js << "  \"buses\": [\n";
@@ -428,10 +428,10 @@ bool IoLoadProject(const std::wstring& path, AppState& state) {
     state.core.project.buses.assign(kBusCount, BusData{});
     state.core.project.audio.clear();
     state.core.project.clips.clear();
-    state.ui.selectedTrackIndex = -1;
-    state.ui.selectedClipIndex  = -1;
-    state.ui.playheadBeat  = 0.0f;
-    state.ui.viewStartBeat = 0.0f;
+    state.ui.view.selectedTrackIndex = -1;
+    state.ui.view.selectedClipIndex  = -1;
+    state.ui.view.playheadBeat  = 0.0f;
+    state.ui.view.viewStartBeat = 0.0f;
 
     // Top-level scalars
     double dval = 0.0;
@@ -443,8 +443,8 @@ bool IoLoadProject(const std::wstring& path, AppState& state) {
     if (JsonReadDouble(json, "audio_preferred_buffer_frames", &dval)) state.audio.preferredBufferFrames = std::max(64, static_cast<int>(dval));
     if (JsonReadString(json, "audio_input_device_name", &sval)) state.audio.selectedInputDeviceName = Utf8ToWstr(sval);
     if (JsonReadString(json, "audio_output_device_name", &sval)) state.audio.selectedOutputDeviceName = Utf8ToWstr(sval);
-    if (JsonReadDouble(json, "view_start_beat", &dval))    state.ui.viewStartBeat      = static_cast<float>(dval);
-    if (JsonReadDouble(json, "view_beats_visible", &dval)) state.ui.viewBeatsVisible   = static_cast<float>(dval);
+    if (JsonReadDouble(json, "view_start_beat", &dval))    state.ui.view.viewStartBeat      = static_cast<float>(dval);
+    if (JsonReadDouble(json, "view_beats_visible", &dval)) state.ui.view.viewBeatsVisible   = static_cast<float>(dval);
 
     // Parse fixed buses array (optional for backward compatibility)
     {

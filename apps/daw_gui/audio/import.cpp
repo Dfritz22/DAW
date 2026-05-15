@@ -145,8 +145,8 @@ void ImportWavFiles(HWND hwnd, AppState& state) {
             endBeat = std::max(endBeat, clip.startBeat + clip.lengthBeats);
         }
         LeaveCriticalSection(&state.audio.audioStateLock);
-        state.ui.viewStartBeat = 0.0f;
-        state.ui.viewBeatsVisible = daw::vm::FitVisibleToContent(endBeat);
+        state.ui.view.viewStartBeat = 0.0f;
+        state.ui.view.viewBeatsVisible = daw::vm::FitVisibleToContent(endBeat);
     }
 
     if (!skipped.empty()) {

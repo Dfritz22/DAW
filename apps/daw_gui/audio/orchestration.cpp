@@ -143,11 +143,11 @@ bool ReplaceProjectWithSingleWav(AppState& state, const std::wstring& wavPath, s
             state.core.project.tracks.back().name,
         });
 
-    state.ui.selectedTrackIndex = 0;
-    state.ui.selectedClipIndex = 0;
-    state.ui.playheadBeat = 0.0f;
-    state.ui.viewStartBeat = 0.0f;
-    state.ui.viewBeatsVisible = daw::vm::FitVisibleToContent(lengthBeats);
+    state.ui.view.selectedTrackIndex = 0;
+    state.ui.view.selectedClipIndex = 0;
+    state.ui.view.playheadBeat = 0.0f;
+    state.ui.view.viewStartBeat = 0.0f;
+    state.ui.view.viewBeatsVisible = daw::vm::FitVisibleToContent(lengthBeats);
     state.core.projectFilePath.clear();
     state.core.projectModified = true;
     LeaveCriticalSection(&state.audio.audioStateLock);
@@ -167,8 +167,8 @@ bool DoAutoMaster(HWND hwnd, AppState& state) {
     std::wstring sourceWav;
     {
         EnterCriticalSection(&state.audio.audioStateLock);
-        if (!state.core.project.clips.empty() && state.ui.selectedClipIndex >= 0 && state.ui.selectedClipIndex < static_cast<int>(state.core.project.clips.size())) {
-            const ClipItem& c = state.core.project.clips[static_cast<size_t>(state.ui.selectedClipIndex)];
+        if (!state.core.project.clips.empty() && state.ui.view.selectedClipIndex >= 0 && state.ui.view.selectedClipIndex < static_cast<int>(state.core.project.clips.size())) {
+            const ClipItem& c = state.core.project.clips[static_cast<size_t>(state.ui.view.selectedClipIndex)];
             if (c.audioIndex >= 0 && c.audioIndex < static_cast<int>(state.core.project.audio.size())) {
                 sourceWav = state.core.project.audio[static_cast<size_t>(c.audioIndex)].sourcePath;
             }

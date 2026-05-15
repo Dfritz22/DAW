@@ -27,23 +27,23 @@ struct FloatingWndData {
 // then any non-primary leaf, then split off Arrange. Guarantees the panel
 // is always reachable after a floating window closes.
 void DockReturnPanelToMain(AppState& state, daw::ui::PanelKind panel) {
-    if (!state.ui.dockRoot) return;
-    if (daw::ui::DockFindLeafContaining(state.ui.dockRoot.get(), panel)) {
+    if (!state.ui.dock.dockRoot) return;
+    if (daw::ui::DockFindLeafContaining(state.ui.dock.dockRoot.get(), panel)) {
         return; // Already present (shouldn't happen, but be safe).
     }
     daw::ui::DockNode* host = daw::ui::DockFindLeafContaining(
-        state.ui.dockRoot.get(), daw::ui::PanelKind::Tracks);
+        state.ui.dock.dockRoot.get(), daw::ui::PanelKind::Tracks);
     if (host == nullptr) {
-        host = daw::ui::DockFindNonPrimaryLeaf(state.ui.dockRoot.get());
+        host = daw::ui::DockFindNonPrimaryLeaf(state.ui.dock.dockRoot.get());
     }
     if (host != nullptr) {
         daw::ui::DockInsertTab(host, panel,
             static_cast<int>(host->panels.size()));
     } else {
         daw::ui::DockNode* arrange = daw::ui::DockFindLeafContaining(
-            state.ui.dockRoot.get(), daw::ui::PanelKind::Arrange);
+            state.ui.dock.dockRoot.get(), daw::ui::PanelKind::Arrange);
         if (arrange != nullptr) {
-            daw::ui::DockSplitWith(state.ui.dockRoot, arrange,
+            daw::ui::DockSplitWith(state.ui.dock.dockRoot, arrange,
                 daw::ui::DockDropSide::Left, panel, 0.25f);
         }
     }
@@ -189,7 +189,7 @@ LRESULT CALLBACK FloatingWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 HWND SpawnFloatingPanelAt(AppState& state, daw::ui::PanelKind panel,
                           int x, int y, int w, int h,
                           bool restoreOnFail) {
-    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtr(state.ui.hwnd, GWLP_HINSTANCE));
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtr(state.ui.view.hwnd, GWLP_HINSTANCE));
     const std::wstring title = std::wstring(daw::ui::PanelGet(panel).title) + L" — DAW";
     HWND fhwnd = CreateWindowExW(
         0,
@@ -197,20 +197,20 @@ HWND SpawnFloatingPanelAt(AppState& state, daw::ui::PanelKind panel,
         title.c_str(),
         WS_OVERLAPPEDWINDOW,
         x, y, w, h,
-        state.ui.hwnd,    // owner so it stays above main but isn't a child
+        state.ui.view.hwnd,    // owner so it stays above main but isn't a child
         nullptr,
         hInst,
         nullptr);
     if (fhwnd == nullptr) {
         if (restoreOnFail) {
             DockReturnPanelToMain(state, panel);
-            InvalidateRect(state.ui.hwnd, nullptr, FALSE);
+            InvalidateRect(state.ui.view.hwnd, nullptr, FALSE);
         }
         return nullptr;
     }
     auto* fwd = new FloatingWndData{&state, panel};
     SetWindowLongPtr(fhwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(fwd));
-    state.ui.floatingPanels.push_back({fhwnd, panel});
+    state.ui.dock.floatingPanels.push_back({fhwnd, panel});
     ShowWindow(fhwnd, SW_SHOWNORMAL);
     return fhwnd;
 }

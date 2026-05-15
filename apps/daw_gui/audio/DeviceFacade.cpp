@@ -7,11 +7,11 @@ namespace daw::audio {
 
 bool StartPlaybackBackend(AppState& state) {
     if (IsWasapiBackend(state.audio.audioBackend)) {
-        if (DeviceStartWasapiAudio(state.ui.hwnd, state.core, state.audio, state.ui.playheadBeat)) {
+        if (DeviceStartWasapiAudio(state.ui.view.hwnd, state.core, state.audio, state.ui.view.playheadBeat)) {
             return true;
         }
     }
-    return DeviceStartPlaybackBackend(state.ui.hwnd, state.core, state.audio, state.ui.playheadBeat);
+    return DeviceStartPlaybackBackend(state.ui.view.hwnd, state.core, state.audio, state.ui.view.playheadBeat);
 }
 
 void StopPlaybackBackend(AppState& state) {
@@ -24,11 +24,11 @@ void StopPlaybackBackend(AppState& state) {
 
 bool StartRecordingBackend(AppState& state, int armedTrack, bool wasPlaying) {
     if (IsWasapiBackend(state.audio.audioBackend)) {
-        if (DeviceStartWasapiRecording(state.ui.hwnd, state.core, state.audio, armedTrack, wasPlaying, state.ui.playheadBeat)) {
+        if (DeviceStartWasapiRecording(state.ui.view.hwnd, state.core, state.audio, armedTrack, wasPlaying, state.ui.view.playheadBeat)) {
             return true;
         }
     }
-    return DeviceStartRecordingBackend(state.ui.hwnd, state.core, state.audio, armedTrack, wasPlaying, state.ui.playheadBeat);
+    return DeviceStartRecordingBackend(state.ui.view.hwnd, state.core, state.audio, armedTrack, wasPlaying, state.ui.view.playheadBeat);
 }
 
 void StopRecordingBackend(AppState& state) {

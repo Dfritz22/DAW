@@ -563,7 +563,7 @@ bool ApplyAutoMixToFaders(HWND hwnd, AppState& state) {
 }
 
 bool AnalyzeSelectedTrackQuality(HWND hwnd, AppState& state) {
-    const int trackIndex = state.ui.selectedTrackIndex;
+    const int trackIndex = state.ui.view.selectedTrackIndex;
     if (trackIndex < 0 || trackIndex >= static_cast<int>(state.core.project.tracks.size())) {
         MessageBoxW(hwnd, L"Select a track first, then run Vocal Check.", L"Vocal Check", MB_OK | MB_ICONINFORMATION);
         return false;

@@ -30,7 +30,7 @@ void StopPlayback(AppState& state, bool rewind) {
     state.audio.playing = false;
     state.audio.audioThreadRunning.store(false);
     if (rewind) {
-        state.ui.playheadBeat = 0.0f;
+        state.ui.view.playheadBeat = 0.0f;
         state.audio.playbackFrameCursor.store(0);
     }
     // Force the engine SRC resampler to re-prime on the next start so it
@@ -175,7 +175,7 @@ void StopRecording(AppState& state, bool commitTake) {
                     state.core.project.tracks[static_cast<size_t>(state.audio.recordTrackIndex)].name + L" Rec",
                 });
                 state.core.projectModified = true;
-                if (state.ui.hwnd) UpdateWindowTitle(state.ui.hwnd, state.core);
+                if (state.ui.view.hwnd) UpdateWindowTitle(state.ui.view.hwnd, state.core);
             }
             LeaveCriticalSection(&state.audio.audioStateLock);
         }

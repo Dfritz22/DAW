@@ -15,9 +15,9 @@ daw::vm::TimelineViewport MakeTimelineViewport(const RECT& arrange, const AppSta
                                   static_cast<int>(arrange.top),
                                   static_cast<int>(arrange.right),
                                   static_cast<int>(arrange.bottom)},
-        /*viewStartBeat*/    state.ui.viewStartBeat,
-        /*viewBeatsVisible*/ state.ui.viewBeatsVisible,
-        /*tracksScrollY*/    state.ui.tracksScrollY,
+        /*viewStartBeat*/    state.ui.view.viewStartBeat,
+        /*viewBeatsVisible*/ state.ui.view.viewBeatsVisible,
+        /*tracksScrollY*/    state.ui.view.tracksScrollY,
         /*rowHeightPx*/      Dpi(kTrackRowHeight),
         /*clipInsetYPx*/     Dpi(kClipInsetY),
         /*trackCount*/       static_cast<int>(state.core.project.tracks.size()),
@@ -143,7 +143,7 @@ LayoutRects UiLayoutComputeLayout(const RECT& client) {
 }
 
 RECT UiLayoutFindDockLeafRect(const AppState& state, daw::ui::PanelKind kind, const RECT& fallback) {
-    for (const auto& leaf : state.ui.dockLayout) {
+    for (const auto& leaf : state.ui.dock.dockLayout) {
         if (leaf.activePanel == kind) {
             // Strip the tab strip from the top — that's painted by the dock
             // chrome, not by the panel itself, so hit-tests must use the
@@ -165,7 +165,7 @@ LayoutRects UiLayoutComputeHitTestLayout(HWND hwnd, const AppState& state) {
     RECT client{};
     GetClientRect(hwnd, &client);
     LayoutRects fallback = UiLayoutComputeLayout(client);
-    if (state.ui.dockLayout.empty()) return fallback;
+    if (state.ui.dock.dockLayout.empty()) return fallback;
     LayoutRects out{};
     out.topBar    = fallback.topBar;
     out.leftPanel = UiLayoutFindDockLeafRect(state, daw::ui::PanelKind::Tracks,  fallback.leftPanel);

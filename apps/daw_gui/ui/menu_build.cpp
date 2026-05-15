@@ -148,8 +148,8 @@ static void PopulateWindowMenu(HMENU menu, AppState& state) {
     for (int i = 0; i < PanelCount(); ++i) {
         const PanelKind   k   = static_cast<PanelKind>(i);
         const PanelDef&   def = PanelGet(k);
-        const bool visible = (state.ui.dockRoot &&
-                              DockFindLeafContaining(state.ui.dockRoot.get(), k) != nullptr);
+        const bool visible = (state.ui.dock.dockRoot &&
+                              DockFindLeafContaining(state.ui.dock.dockRoot.get(), k) != nullptr);
         UINT flags = MF_STRING;
         if (visible)      flags |= MF_CHECKED;
         if (def.primary)  flags |= MF_GRAYED;   // primary panels can't be hidden
