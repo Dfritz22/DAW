@@ -22,10 +22,10 @@ void UiDrawTopBar(HDC hdc, const RECT& client, AppState& state) {
     RECT edge{client.left, top.bottom - 1, client.right, top.bottom};
     Fill(hdc, edge, kPalette.topBarEdge);
 
-    state.ui.fileMenuRect  = RECT{0, 0, 0, 0};
-    state.ui.viewMenuRect  = RECT{0, 0, 0, 0};
-    state.ui.audioMenuRect = RECT{0, 0, 0, 0};
-    state.ui.trackMenuRect = RECT{0, 0, 0, 0};
+    state.ui.topBar.fileMenuRect  = RECT{0, 0, 0, 0};
+    state.ui.topBar.viewMenuRect  = RECT{0, 0, 0, 0};
+    state.ui.topBar.audioMenuRect = RECT{0, 0, 0, 0};
+    state.ui.topBar.trackMenuRect = RECT{0, 0, 0, 0};
 
     // Legacy compatibility: top bar = transport (left half) + tools (mixed)
     // sharing the same horizontal strip. Once the dock tree owns the layout,
@@ -38,19 +38,19 @@ void UiDrawTopBar(HDC hdc, const RECT& client, AppState& state) {
 // Play / Stop / Record + BPM-/BPM+ / Count-In + status text + SRC indicator.
 // Stores hit-test rects in AppState so main.cpp WM_LBUTTONDOWN keeps working.
 void UiDrawTransport(HDC hdc, const RECT& rect, AppState& state) {
-    state.ui.playRect    = RECT{rect.left + Dpi(22),   rect.top + Dpi(34), rect.left + Dpi(96),   rect.top + Dpi(58)};
-    state.ui.stopRect    = RECT{rect.left + Dpi(104),  rect.top + Dpi(34), rect.left + Dpi(178),  rect.top + Dpi(58)};
-    state.ui.recordRect  = RECT{rect.left + Dpi(186),  rect.top + Dpi(34), rect.left + Dpi(260),  rect.top + Dpi(58)};
-    state.ui.bpmDownRect = RECT{rect.left + Dpi(1094), rect.top + Dpi(34), rect.left + Dpi(1126), rect.top + Dpi(58)};
-    state.ui.bpmUpRect   = RECT{rect.left + Dpi(1132), rect.top + Dpi(34), rect.left + Dpi(1164), rect.top + Dpi(58)};
-    state.ui.countInRect = RECT{rect.left + Dpi(1170), rect.top + Dpi(34), rect.left + Dpi(1292), rect.top + Dpi(58)};
+    state.ui.topBar.playRect    = RECT{rect.left + Dpi(22),   rect.top + Dpi(34), rect.left + Dpi(96),   rect.top + Dpi(58)};
+    state.ui.topBar.stopRect    = RECT{rect.left + Dpi(104),  rect.top + Dpi(34), rect.left + Dpi(178),  rect.top + Dpi(58)};
+    state.ui.topBar.recordRect  = RECT{rect.left + Dpi(186),  rect.top + Dpi(34), rect.left + Dpi(260),  rect.top + Dpi(58)};
+    state.ui.topBar.bpmDownRect = RECT{rect.left + Dpi(1094), rect.top + Dpi(34), rect.left + Dpi(1126), rect.top + Dpi(58)};
+    state.ui.topBar.bpmUpRect   = RECT{rect.left + Dpi(1132), rect.top + Dpi(34), rect.left + Dpi(1164), rect.top + Dpi(58)};
+    state.ui.topBar.countInRect = RECT{rect.left + Dpi(1170), rect.top + Dpi(34), rect.left + Dpi(1292), rect.top + Dpi(58)};
 
-    DrawButton(hdc, state.ui.playRect,    state.audio.playing   ? L"Playing"   : L"Play",   state.audio.playing);
-    DrawButton(hdc, state.ui.stopRect,    L"Stop", false);
-    DrawButton(hdc, state.ui.recordRect,  state.audio.recording ? L"Recording" : L"Record", state.audio.recording);
-    DrawButton(hdc, state.ui.bpmDownRect, L"BPM-", false);
-    DrawButton(hdc, state.ui.bpmUpRect,   L"BPM+", false);
-    DrawButton(hdc, state.ui.countInRect, state.audio.countInEnabled ? L"Count-In On" : L"Count-In Off", state.audio.countInEnabled);
+    DrawButton(hdc, state.ui.topBar.playRect,    state.audio.playing   ? L"Playing"   : L"Play",   state.audio.playing);
+    DrawButton(hdc, state.ui.topBar.stopRect,    L"Stop", false);
+    DrawButton(hdc, state.ui.topBar.recordRect,  state.audio.recording ? L"Recording" : L"Record", state.audio.recording);
+    DrawButton(hdc, state.ui.topBar.bpmDownRect, L"BPM-", false);
+    DrawButton(hdc, state.ui.topBar.bpmUpRect,   L"BPM+", false);
+    DrawButton(hdc, state.ui.topBar.countInRect, state.audio.countInEnabled ? L"Count-In On" : L"Count-In Off", state.audio.countInEnabled);
 }
 
 // ── Status bar (bottom strip — fixed, not movable) ───────────────────────────
@@ -64,7 +64,7 @@ void UiDrawStatusBar(HDC hdc, const RECT& rect, const AppState& state) {
 
     SetBkMode(hdc, TRANSPARENT);
 
-    const int visibleBars = std::max(1, static_cast<int>(std::round(state.ui.viewBeatsVisible / 4.0f)));
+    const int visibleBars = std::max(1, static_cast<int>(std::round(state.ui.view.viewBeatsVisible / 4.0f)));
     std::wstring status =
         L"BPM " + std::to_wstring(static_cast<int>(state.core.project.bpm)) +
         L"   |   SR " + std::to_wstring(state.core.project.projectSampleRate > 0 ? state.core.project.projectSampleRate : 0) +
@@ -81,19 +81,19 @@ void UiDrawStatusBar(HDC hdc, const RECT& rect, const AppState& state) {
 // ── Tools panel ──────────────────────────────────────────────────────────────
 // Import / AutoMix / Vocal Check / Auto Master / Met Play / Met Rec / Monitor.
 void UiDrawTools(HDC hdc, const RECT& rect, AppState& state) {
-    state.ui.importRect     = RECT{rect.left + Dpi(268),  rect.top + Dpi(34), rect.left + Dpi(378),  rect.top + Dpi(58)};
-    state.ui.automixRect    = RECT{rect.left + Dpi(386),  rect.top + Dpi(34), rect.left + Dpi(522),  rect.top + Dpi(58)};
-    state.ui.vocalCheckRect = RECT{rect.left + Dpi(530),  rect.top + Dpi(34), rect.left + Dpi(664),  rect.top + Dpi(58)};
-    state.ui.autoMasterRect = RECT{rect.left + Dpi(672),  rect.top + Dpi(34), rect.left + Dpi(806),  rect.top + Dpi(58)};
-    state.ui.metPlayRect    = RECT{rect.left + Dpi(814),  rect.top + Dpi(34), rect.left + Dpi(900),  rect.top + Dpi(58)};
-    state.ui.metRecRect     = RECT{rect.left + Dpi(906),  rect.top + Dpi(34), rect.left + Dpi(992),  rect.top + Dpi(58)};
-    state.ui.monitorRect    = RECT{rect.left + Dpi(998),  rect.top + Dpi(34), rect.left + Dpi(1088), rect.top + Dpi(58)};
+    state.ui.topBar.importRect     = RECT{rect.left + Dpi(268),  rect.top + Dpi(34), rect.left + Dpi(378),  rect.top + Dpi(58)};
+    state.ui.topBar.automixRect    = RECT{rect.left + Dpi(386),  rect.top + Dpi(34), rect.left + Dpi(522),  rect.top + Dpi(58)};
+    state.ui.topBar.vocalCheckRect = RECT{rect.left + Dpi(530),  rect.top + Dpi(34), rect.left + Dpi(664),  rect.top + Dpi(58)};
+    state.ui.topBar.autoMasterRect = RECT{rect.left + Dpi(672),  rect.top + Dpi(34), rect.left + Dpi(806),  rect.top + Dpi(58)};
+    state.ui.topBar.metPlayRect    = RECT{rect.left + Dpi(814),  rect.top + Dpi(34), rect.left + Dpi(900),  rect.top + Dpi(58)};
+    state.ui.topBar.metRecRect     = RECT{rect.left + Dpi(906),  rect.top + Dpi(34), rect.left + Dpi(992),  rect.top + Dpi(58)};
+    state.ui.topBar.monitorRect    = RECT{rect.left + Dpi(998),  rect.top + Dpi(34), rect.left + Dpi(1088), rect.top + Dpi(58)};
 
-    DrawButton(hdc, state.ui.importRect,     L"Import WAV", false);
-    DrawButton(hdc, state.ui.automixRect,    state.audio.automixRunning.load() ? L"AutoMixing..." : L"Apply AutoMix", state.audio.automixRunning.load());
-    DrawButton(hdc, state.ui.vocalCheckRect, L"Vocal Check", false);
-    DrawButton(hdc, state.ui.autoMasterRect, L"Auto Master", false);
-    DrawButton(hdc, state.ui.metPlayRect,    state.audio.metronomePlay   ? L"Met Play On" : L"Met Play Off", state.audio.metronomePlay);
-    DrawButton(hdc, state.ui.metRecRect,     state.audio.metronomeRecord ? L"Met Rec On"  : L"Met Rec Off",  state.audio.metronomeRecord);
-    DrawButton(hdc, state.ui.monitorRect,    state.audio.inputMonitoring ? L"Monitor On"  : L"Monitor Off",  state.audio.inputMonitoring);
+    DrawButton(hdc, state.ui.topBar.importRect,     L"Import WAV", false);
+    DrawButton(hdc, state.ui.topBar.automixRect,    state.audio.automixRunning.load() ? L"AutoMixing..." : L"Apply AutoMix", state.audio.automixRunning.load());
+    DrawButton(hdc, state.ui.topBar.vocalCheckRect, L"Vocal Check", false);
+    DrawButton(hdc, state.ui.topBar.autoMasterRect, L"Auto Master", false);
+    DrawButton(hdc, state.ui.topBar.metPlayRect,    state.audio.metronomePlay   ? L"Met Play On" : L"Met Play Off", state.audio.metronomePlay);
+    DrawButton(hdc, state.ui.topBar.metRecRect,     state.audio.metronomeRecord ? L"Met Rec On"  : L"Met Rec Off",  state.audio.metronomeRecord);
+    DrawButton(hdc, state.ui.topBar.monitorRect,    state.audio.inputMonitoring ? L"Monitor On"  : L"Monitor Off",  state.audio.inputMonitoring);
 }

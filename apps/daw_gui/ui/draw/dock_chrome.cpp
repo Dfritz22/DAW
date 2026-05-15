@@ -14,7 +14,7 @@
 void UiDrawDockLeavesAndSplitters(HDC hdc, AppState& state, HFONT smallFont) {
     SelectObject(hdc, smallFont);
     const int tabH = Dpi(daw::ui::kDockTabStripHeightPx);
-    for (const auto& leaf : state.ui.dockLayout) {
+    for (const auto& leaf : state.ui.dock.dockLayout) {
         const RECT leafRect = leaf.rect;
 
         // Lone primary panels render full-bleed (no tab strip). As soon as
@@ -69,7 +69,7 @@ void UiDrawDockLeavesAndSplitters(HDC hdc, AppState& state, HFONT smallFont) {
             SetTextColor(hdc, isActive ? RGB(235, 238, 244) : RGB(170, 175, 184));
             DrawTextW(hdc, pd.title, -1, &tabRect,
                       DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-            state.ui.dockTabs.push_back(daw::ui::DockTabHit{tabRect, leaf.node, ti});
+            state.ui.dock.dockTabs.push_back(daw::ui::DockTabHit{tabRect, leaf.node, ti});
             tabX += tabW + tabGap;
         }
 
@@ -79,8 +79,8 @@ void UiDrawDockLeavesAndSplitters(HDC hdc, AppState& state, HFONT smallFont) {
 
     // Draw splitters as a thin divider line (centered on the hit zone
     // rect). Highlighted while being dragged.
-    for (const auto& sp : state.ui.dockSplitters) {
-        const bool active = (state.ui.draggingSplitter && state.ui.dragSplitterNode == sp.node);
+    for (const auto& sp : state.ui.dock.dockSplitters) {
+        const bool active = (state.ui.dock.draggingSplitter && state.ui.dock.dragSplitterNode == sp.node);
         const COLORREF col = active ? RGB(110, 150, 220) : RGB(70, 74, 81);
         HBRUSH br = CreateSolidBrush(col);
         if (sp.horizontal) {
@@ -102,10 +102,10 @@ void UiDrawDockLeavesAndSplitters(HDC hdc, AppState& state, HFONT smallFont) {
 }
 
 void UiDrawDockDropOverlay(HDC hdc, const AppState& state) {
-    if (!state.ui.dragTabActive || state.ui.dropTargetLeaf == nullptr) {
+    if (!state.ui.dock.dragTabActive || state.ui.dock.dropTargetLeaf == nullptr) {
         return;
     }
-    const RECT pr = state.ui.dropPreviewRect;
+    const RECT pr = state.ui.dock.dropPreviewRect;
     if (pr.right <= pr.left || pr.bottom <= pr.top) {
         return;
     }
@@ -173,9 +173,9 @@ void UiDrawDockDropOverlay(HDC hdc, const AppState& state) {
     // For inner-leaf drops, find the actual leaf rect (the preview is
     // half/full of it). For outer (root) drops the preview is already the
     // right area.
-    if (state.ui.dropTargetLeaf != state.ui.dockRoot.get()) {
-        for (const auto& leaf : state.ui.dockLayout) {
-            if (leaf.node == state.ui.dropTargetLeaf) {
+    if (state.ui.dock.dropTargetLeaf != state.ui.dock.dockRoot.get()) {
+        for (const auto& leaf : state.ui.dock.dockLayout) {
+            if (leaf.node == state.ui.dock.dropTargetLeaf) {
                 compassHost = leaf.rect;
                 break;
             }
@@ -205,11 +205,11 @@ void UiDrawDockDropOverlay(HDC hdc, const AppState& state) {
     };
 
     using Side = daw::ui::DockDropSide;
-    const Side side = state.ui.dropTargetSide;
+    const Side side = state.ui.dock.dropTargetSide;
 
     // Outer (root) drops: only show the single edge square so it reads as
     // "pin to this edge of the whole dock".
-    if (state.ui.dropTargetLeaf == state.ui.dockRoot.get()) {
+    if (state.ui.dock.dropTargetLeaf == state.ui.dock.dockRoot.get()) {
         if      (side == Side::Left)   DrawSquare(cL, true);
         else if (side == Side::Right)  DrawSquare(cR, true);
         else if (side == Side::Top)    DrawSquare(cT, true);

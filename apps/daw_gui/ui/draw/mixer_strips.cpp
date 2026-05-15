@@ -38,7 +38,7 @@ void UiDrawLeftTrackPanel(HDC hdc, const RECT& rect, const AppState& state) {
     // Scrollable tracks region: clipped between the header and the pinned bus panel.
     const int tracksTop = UiLayoutTracksRegionTop(rect);
     const int tracksBottom = UiLayoutTracksRegionBottom(rect);
-    const int scrollY = state.ui.tracksScrollY;
+    const int scrollY = state.ui.view.tracksScrollY;
     const int tracksSaved = SaveDC(hdc);
     IntersectClipRect(hdc, rect.left, tracksTop, rect.right, tracksBottom);
 
@@ -49,7 +49,7 @@ void UiDrawLeftTrackPanel(HDC hdc, const RECT& rect, const AppState& state) {
         if (y + rowH <= tracksTop) continue;
         RECT row{rect.left, y, rect.right, y + rowH};
         Fill(hdc, row, (i % 2 == 0) ? RGB(39, 43, 49) : RGB(42, 47, 53));
-        if (static_cast<int>(i) == state.ui.selectedTrackIndex) {
+        if (static_cast<int>(i) == state.ui.view.selectedTrackIndex) {
             Fill(hdc, RECT{row.left, row.top, row.right, row.bottom}, RGB(55, 66, 84));
             StrokeRect(hdc, row, RGB(120, 143, 179));
         }
@@ -71,7 +71,7 @@ void UiDrawLeftTrackPanel(HDC hdc, const RECT& rect, const AppState& state) {
                   DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
         const float trPan = TrackPanAt(state, static_cast<int>(i));
-        DrawPanKnob(hdc, panKnobRect, trPan, static_cast<int>(i) == state.ui.selectedTrackIndex);
+        DrawPanKnob(hdc, panKnobRect, trPan, static_cast<int>(i) == state.ui.view.selectedTrackIndex);
         Fill(hdc, panValRect, RGB(40, 44, 49));
         StrokeRect(hdc, panValRect, RGB(82, 88, 97));
         Fill(hdc, fxRect, RGB(40, 44, 49));

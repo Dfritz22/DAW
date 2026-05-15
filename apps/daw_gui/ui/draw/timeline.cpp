@@ -27,14 +27,14 @@ void UiDrawRuler(HDC hdc, const RECT& rect, const AppState& state) {
     HGDIOBJ oldPen = SelectObject(hdc, beatPen);
 
     const int width = std::max(1, static_cast<int>(rect.right - rect.left));
-    const int firstBeat = static_cast<int>(std::floor(state.ui.viewStartBeat));
-    const int lastBeat = static_cast<int>(std::ceil(state.ui.viewStartBeat + state.ui.viewBeatsVisible));
+    const int firstBeat = static_cast<int>(std::floor(state.ui.view.viewStartBeat));
+    const int lastBeat = static_cast<int>(std::ceil(state.ui.view.viewStartBeat + state.ui.view.viewBeatsVisible));
 
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, kPalette.textMuted);
 
     for (int beat = firstBeat; beat <= lastBeat; ++beat) {
-        const float rel = (static_cast<float>(beat) - state.ui.viewStartBeat) / state.ui.viewBeatsVisible;
+        const float rel = (static_cast<float>(beat) - state.ui.view.viewStartBeat) / state.ui.view.viewBeatsVisible;
         const int x = rect.left + static_cast<int>(rel * static_cast<float>(width));
         const bool isBar = (beat % 4 == 0);
         SelectObject(hdc, isBar ? barPen : beatPen);
@@ -58,7 +58,7 @@ void UiDrawRuler(HDC hdc, const RECT& rect, const AppState& state) {
     // Playhead marker - downward-pointing triangle whose base meets the
     // arrange playhead line below. Apex points up.
     const int phX = rect.left + static_cast<int>(
-        ((state.ui.playheadBeat - state.ui.viewStartBeat) / std::max(1.0f, state.ui.viewBeatsVisible))
+        ((state.ui.view.playheadBeat - state.ui.view.viewStartBeat) / std::max(1.0f, state.ui.view.viewBeatsVisible))
         * static_cast<float>(width));
     if (phX >= rect.left && phX <= rect.right) {
         HBRUSH phBrush = CreateSolidBrush(kPalette.playhead);
@@ -222,15 +222,15 @@ void UiDrawArrangeLanes(HDC hdc, const RECT& rect, const AppState& state) {
     Fill(hdc, rect, kPalette.arrangeBg);
 
     const int width = std::max(1, static_cast<int>(rect.right - rect.left));
-    const int firstBeat = static_cast<int>(std::floor(state.ui.viewStartBeat));
-    const int lastBeat = static_cast<int>(std::ceil(state.ui.viewStartBeat + state.ui.viewBeatsVisible));
+    const int firstBeat = static_cast<int>(std::floor(state.ui.view.viewStartBeat));
+    const int lastBeat = static_cast<int>(std::ceil(state.ui.view.viewStartBeat + state.ui.view.viewBeatsVisible));
 
     HPEN barPen = CreatePen(PS_SOLID, 1, kPalette.barLine);
     HPEN beatPen = CreatePen(PS_SOLID, 1, kPalette.beatLine);
     HPEN lanePen = CreatePen(PS_SOLID, 1, RGB(40, 44, 50));
     HGDIOBJ oldPen = SelectObject(hdc, lanePen);
 
-    const int laneScrollY = state.ui.tracksScrollY;
+    const int laneScrollY = state.ui.view.tracksScrollY;
     const int laneRowH = Dpi(kTrackRowHeight);
     for (size_t i = 0; i < state.core.project.tracks.size(); ++i) {
         const int y = rect.top + static_cast<int>(i) * laneRowH - laneScrollY;
@@ -243,7 +243,7 @@ void UiDrawArrangeLanes(HDC hdc, const RECT& rect, const AppState& state) {
     }
 
     for (int beat = firstBeat; beat <= lastBeat; ++beat) {
-        const float rel = (static_cast<float>(beat) - state.ui.viewStartBeat) / state.ui.viewBeatsVisible;
+        const float rel = (static_cast<float>(beat) - state.ui.view.viewStartBeat) / state.ui.view.viewBeatsVisible;
         const int x = rect.left + static_cast<int>(rel * static_cast<float>(width));
         SelectObject(hdc, (beat % 4 == 0) ? barPen : beatPen);
         MoveToEx(hdc, x, rect.top, nullptr);
@@ -284,7 +284,7 @@ void UiDrawArrangeLanes(HDC hdc, const RECT& rect, const AppState& state) {
                     // fixed as the clip grows, so the waveform doesn't jitter.
                     const double samplesPerBeat = static_cast<double>(SamplesPerBeat(state));
                     const double pixelsPerBeat = static_cast<double>(width) /
-                        static_cast<double>(std::max(0.0001f, state.ui.viewBeatsVisible));
+                        static_cast<double>(std::max(0.0001f, state.ui.view.viewBeatsVisible));
                     const double framesPerPixel = (pixelsPerBeat > 0.0)
                         ? (samplesPerBeat / pixelsPerBeat)
                         : 0.0;
@@ -349,10 +349,10 @@ void UiDrawArrangeLanes(HDC hdc, const RECT& rect, const AppState& state) {
                 DrawClipWaveform(hdc, waveRect, audio, srcStart, srcEnd);
             }
         }
-        StrokeRect(hdc, clipRect, (state.ui.selectedClipIndex == static_cast<int>(i)) ? RGB(232, 232, 232) : RGB(24, 24, 24));
+        StrokeRect(hdc, clipRect, (state.ui.view.selectedClipIndex == static_cast<int>(i)) ? RGB(232, 232, 232) : RGB(24, 24, 24));
 
         // Trim edge handles on selected clip
-        if (state.ui.selectedClipIndex == static_cast<int>(i)) {
+        if (state.ui.view.selectedClipIndex == static_cast<int>(i)) {
             const int handleW = 5;
             RECT leftHandle  {clipRect.left,            clipRect.top, clipRect.left + handleW,  clipRect.bottom};
             RECT rightHandle {clipRect.right - handleW, clipRect.top, clipRect.right,            clipRect.bottom};
@@ -366,7 +366,7 @@ void UiDrawArrangeLanes(HDC hdc, const RECT& rect, const AppState& state) {
         DrawTextW(hdc, state.core.project.clips[i].name.c_str(), -1, &textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     }
 
-    int playheadX = UiLayoutBeatToX(rect, state, state.ui.playheadBeat);
+    int playheadX = UiLayoutBeatToX(rect, state, state.ui.view.playheadBeat);
     HPEN playheadPen = CreatePen(PS_SOLID, 2, kPalette.playhead);
     SelectObject(hdc, playheadPen);
     if (playheadX >= rect.left && playheadX <= rect.right) {

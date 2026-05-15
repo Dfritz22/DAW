@@ -22,16 +22,16 @@ using namespace daw::internal::ui;
 // ── Insert-chain inspector panel ─────────────────────────────────────────────
 // Returns the outer panel rect in client coordinates (declared in draw.h).
 RECT UiDrawGetInspectorPanelRect(const RECT& client, const AppState& state) {
-    const int idx = state.ui.fxInspectorIndex;
+    const int idx = state.ui.inspector.fxInspectorIndex;
     int slotCount = 0;
-    if (state.ui.fxInspectorIsTrack) {
+    if (state.ui.inspector.fxInspectorIsTrack) {
         if (idx >= 0 && idx < static_cast<int>(state.core.project.tracks.size()))
             slotCount = std::clamp(state.core.project.tracks[static_cast<size_t>(idx)].insertSlots, 0, kMaxInsertSlots);
     } else {
         if (idx >= 0 && idx < static_cast<int>(state.core.project.buses.size()))
             slotCount = std::clamp(state.core.project.buses[static_cast<size_t>(idx)].insertSlots, 0, kMaxInsertSlots);
     }
-    const bool hasSelected = (state.ui.fxInspectorSelectedSlot >= 0 && state.ui.fxInspectorSelectedSlot < slotCount);
+    const bool hasSelected = (state.ui.inspector.fxInspectorSelectedSlot >= 0 && state.ui.inspector.fxInspectorSelectedSlot < slotCount);
     RECT r{};
     r.left   = client.left + kUiDrawInspPadX;
     r.top    = client.top  + Dpi(kTopBarHeight) + Dpi(kRulerHeight) + Dpi(6);
@@ -41,7 +41,7 @@ RECT UiDrawGetInspectorPanelRect(const RECT& client, const AppState& state) {
 }
 
 void UiDrawInsertInspector(HDC hdc, const RECT& client, const AppState& state) {
-    if (!state.ui.fxInspectorOpen || state.ui.fxInspectorIndex < 0) return;
+    if (!state.ui.inspector.fxInspectorOpen || state.ui.inspector.fxInspectorIndex < 0) return;
 
     const RECT panel = UiDrawGetInspectorPanelRect(client, state);
 
@@ -57,8 +57,8 @@ void UiDrawInsertInspector(HDC hdc, const RECT& client, const AppState& state) {
     RECT headerRow{panel.left, panel.top, panel.right, panel.top + kUiDrawInspHeaderH};
     Fill(hdc, headerRow, RGB(44, 48, 56));
 
-    const int idx = state.ui.fxInspectorIndex;
-    std::wstring title = state.ui.fxInspectorIsTrack
+    const int idx = state.ui.inspector.fxInspectorIndex;
+    std::wstring title = state.ui.inspector.fxInspectorIsTrack
         ? (L"INSERTS - " + (idx < static_cast<int>(state.core.project.tracks.size()) ? state.core.project.tracks[static_cast<size_t>(idx)].name : L"Track"))
         : (L"INSERTS - " + std::wstring(BusName(idx)));
     RECT titleRect{headerRow.left + 8, headerRow.top, headerRow.right - 28, headerRow.bottom};
@@ -78,7 +78,7 @@ void UiDrawInsertInspector(HDC hdc, const RECT& client, const AppState& state) {
     RECT remBtn  {panel.left + 72, ctrlTop + 4, panel.left + 132, ctrlTop + kUiDrawInspCtrlH - 4};
 
     int slotCount = 0;
-    if (state.ui.fxInspectorIsTrack) {
+    if (state.ui.inspector.fxInspectorIsTrack) {
         if (idx >= 0 && idx < static_cast<int>(state.core.project.tracks.size()))
             slotCount = std::clamp(state.core.project.tracks[static_cast<size_t>(idx)].insertSlots, 0, kMaxInsertSlots);
     } else {
@@ -124,7 +124,7 @@ void UiDrawInsertInspector(HDC hdc, const RECT& client, const AppState& state) {
         // Effect type button
         const InsertEffectArray* effects = nullptr;
         const InsertBypassArray* bypass  = nullptr;
-        if (state.ui.fxInspectorIsTrack) {
+        if (state.ui.inspector.fxInspectorIsTrack) {
             if (idx < static_cast<int>(state.core.project.tracks.size()))
                 effects = &state.core.project.tracks[static_cast<size_t>(idx)].insertEffects;
             if (idx < static_cast<int>(state.core.project.tracks.size()))
@@ -139,7 +139,7 @@ void UiDrawInsertInspector(HDC hdc, const RECT& client, const AppState& state) {
         const int  effectType = (effects && s < kMaxInsertSlots)
             ? std::clamp(static_cast<int>((*effects)[static_cast<size_t>(s)]), 0, kInsertEffectTypeCount - 1) : 0;
         const bool slotBypassed = (bypass && s < kMaxInsertSlots) ? (*bypass)[static_cast<size_t>(s)] : false;
-        const bool isSelected = (s == state.ui.fxInspectorSelectedSlot);
+        const bool isSelected = (s == state.ui.inspector.fxInspectorSelectedSlot);
 
         // Effect type button: [EQ ] [CMP] etc.
         RECT typeBtn{panel.left + 26, rowTop + 2, panel.left + 84, rowBot - 2};
@@ -164,12 +164,12 @@ void UiDrawInsertInspector(HDC hdc, const RECT& client, const AppState& state) {
     }
 
     // ── Param expansion area for selected slot ────────────────────────────
-    if (state.ui.fxInspectorSelectedSlot >= 0 && state.ui.fxInspectorSelectedSlot < slotCount) {
-        const int selSlot = state.ui.fxInspectorSelectedSlot;
+    if (state.ui.inspector.fxInspectorSelectedSlot >= 0 && state.ui.inspector.fxInspectorSelectedSlot < slotCount) {
+        const int selSlot = state.ui.inspector.fxInspectorSelectedSlot;
 
         const InsertConfigArray* pParams = nullptr;
         const InsertEffectArray* pEff = nullptr;
-        if (state.ui.fxInspectorIsTrack) {
+        if (state.ui.inspector.fxInspectorIsTrack) {
             if (idx < static_cast<int>(state.core.project.tracks.size()))
                 pParams = &state.core.project.tracks[static_cast<size_t>(idx)].insertConfig;
             if (idx < static_cast<int>(state.core.project.tracks.size()))
