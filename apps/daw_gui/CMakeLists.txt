@@ -27,6 +27,7 @@ add_executable(daw_gui WIN32
     ui/menu_build.cpp
     ui/dialogs.cpp
     ui/floating.cpp
+    ui/repaint.cpp
     core/timeline.cpp
     core/timeline_edit.cpp
     core/internal_app_services.cpp

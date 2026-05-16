@@ -6,8 +6,10 @@
 
 #include <algorithm>
 #include <cstdint>
+#include "ui/repaint.h"
 
 LRESULT WndProcOnPlaybackTimer(HWND hwnd, AppState& state) {
+    (void)hwnd;
     bool needRepaint = false;
 
     // Update playhead during playback (also runs during recording, since
@@ -60,7 +62,7 @@ LRESULT WndProcOnPlaybackTimer(HWND hwnd, AppState& state) {
     }
 
     if (needRepaint) {
-        InvalidateRect(hwnd, nullptr, FALSE);
+        daw::ui::RequestRepaintAll(state);
     }
     return 0;
 }

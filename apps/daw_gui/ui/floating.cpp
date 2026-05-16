@@ -3,6 +3,7 @@
 #include "ui/dpi.h"
 #include "ui/UiRuntimeState.h"  // kFloatingClassName
 #include "ui/panel.h"           // PanelGet
+#include "ui/repaint.h"
 
 #include <algorithm>
 #include <string>
@@ -84,13 +85,12 @@ LRESULT CALLBACK FloatingWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             UpdateWindow(hwnd);
 
             AppState* state = fwd->state;
-            HWND      mainHwnd = state->hwnd;
 
             SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
             LRESULT res = WindowProc(hwnd, msg, wParam, lParam);
             SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(fwd));
 
-            if (mainHwnd != nullptr) InvalidateRect(mainHwnd, nullptr, FALSE);
+            daw::ui::RequestRepaintAll(*state);
             // Tab-drag started inside this floating window means "drag the
             // panel back into main". The drag itself is already armed in
             // main's hit-test code; we don't need to do anything special.
@@ -174,9 +174,10 @@ LRESULT CALLBACK FloatingWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             vec.erase(std::remove_if(vec.begin(), vec.end(),
                 [hwnd](const auto& fp){ return fp.hwnd == hwnd; }), vec.end());
             HWND mainHwnd = fwd->state->hwnd;
+            AppState* st = fwd->state;
             delete fwd;
             SetWindowLongPtr(hwnd, GWLP_USERDATA, 0);
-            if (mainHwnd != nullptr) InvalidateRect(mainHwnd, nullptr, FALSE);
+            if (mainHwnd != nullptr) daw::ui::RequestRepaintAll(*st);
         }
         return 0;
     }
@@ -204,7 +205,7 @@ HWND SpawnFloatingPanelAt(AppState& state, daw::ui::PanelKind panel,
     if (fhwnd == nullptr) {
         if (restoreOnFail) {
             DockReturnPanelToMain(state, panel);
-            InvalidateRect(state.hwnd, nullptr, FALSE);
+            daw::ui::RequestRepaintAll(state);
         }
         return nullptr;
     }

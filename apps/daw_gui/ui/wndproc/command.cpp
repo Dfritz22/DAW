@@ -16,6 +16,7 @@
 #include <iterator>
 #include <string>
 #include <vector>
+#include "ui/repaint.h"
 
 void WndProcOnMenuCommand(HWND hwnd, AppState& state, UINT cmd) {
     using daw::internal::core::UpdateWindowTitle;
@@ -56,7 +57,7 @@ void WndProcOnMenuCommand(HWND hwnd, AppState& state, UINT cmd) {
         // can't resurrect the old custom arrangement.
         state.ui.dock.dockRoot = daw::ui::DockBuildDefault();
         daw::ui::DockDeleteLayoutFile();
-        InvalidateRect(hwnd, nullptr, FALSE);
+        daw::ui::RequestRepaintAll(state);
     } else if (cmd >= kCmdWindowPanelBase &&
                cmd <  kCmdWindowPanelBase + static_cast<UINT>(daw::ui::PanelCount())) {
         // Toggle a panel: hide if currently visible, show as a tab in the
@@ -96,7 +97,7 @@ void WndProcOnMenuCommand(HWND hwnd, AppState& state, UINT cmd) {
                     }
                 }
             }
-            InvalidateRect(hwnd, nullptr, FALSE);
+            daw::ui::RequestRepaintAll(state);
         }
     } else if (cmd == kCmdAudioRefreshInputs) {
         DeviceRefreshInputDevices(state);
@@ -164,5 +165,5 @@ void WndProcOnMenuCommand(HWND hwnd, AppState& state, UINT cmd) {
         state.audio.selectedOutputDeviceName = state.audio.outputDeviceNames[idx];
     }
 
-    InvalidateRect(hwnd, nullptr, FALSE);
+    daw::ui::RequestRepaintAll(state);
 }

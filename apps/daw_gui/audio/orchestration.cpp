@@ -21,6 +21,7 @@
 #include <system_error>
 #include <vector>
 #include <windows.h>
+#include "ui/repaint.h"
 
 using daw::internal::core::FindRepoRoot;
 using daw::internal::core::QuoteArg;
@@ -275,7 +276,7 @@ bool DoAutoMaster(HWND hwnd, AppState& state) {
             return false;
         }
         UpdateWindowTitle(hwnd, state.core);
-        InvalidateRect(hwnd, nullptr, FALSE);
+        daw::ui::RequestRepaintAll(state);
     }
 
     return true;

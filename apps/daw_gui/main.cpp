@@ -24,6 +24,7 @@
 #include "ui/menu_build.h"
 #include "ui/dialogs.h"
 #include "ui/floating.h"
+#include "ui/repaint.h"
 
 using daw::internal::core::UpdateWindowTitle;
 
@@ -133,7 +134,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             daw::app::DispatchTransportEvent(hwnd, *state,
                 daw::services::TransportEvent::StopPressed,
                 /*rewindOnStop=*/false);
-            InvalidateRect(hwnd, nullptr, FALSE);
+            daw::ui::RequestRepaintAll(*state);
         }
         return 0;
     case kMsgCountInComplete:
@@ -142,7 +143,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             daw::app::DispatchTransportEvent(hwnd, *state,
                 daw::services::TransportEvent::CountInComplete,
                 /*rewindOnStop=*/false);
-            InvalidateRect(hwnd, nullptr, FALSE);
+            daw::ui::RequestRepaintAll(*state);
         }
         return 0;
     case kMsgAutoMixFinished:
@@ -151,7 +152,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 CloseHandle(state->audio.automixThread);
                 state->audio.automixThread = nullptr;
             }
-            InvalidateRect(hwnd, nullptr, FALSE);
+            daw::ui::RequestRepaintAll(*state);
         }
         return 0;
     case WM_TIMER:

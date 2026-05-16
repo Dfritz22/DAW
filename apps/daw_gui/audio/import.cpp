@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 #include <windows.h>
+#include "ui/repaint.h"
 
 using daw::internal::core::UpdateWindowTitle;
 
@@ -242,5 +243,5 @@ void ConvertImportedAudioToProjectSampleRate(HWND hwnd, AppState& state) {
                    converted, dstSR, failed);
         MessageBoxW(hwnd, done, L"Convert Audio", MB_OK | MB_ICONWARNING);
     }
-    InvalidateRect(hwnd, nullptr, FALSE);
+    daw::ui::RequestRepaintAll(state);
 }

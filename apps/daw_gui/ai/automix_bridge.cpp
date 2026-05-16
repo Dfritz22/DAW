@@ -4,6 +4,7 @@
 
 #include <fstream>
 #include <iterator>
+#include "ui/repaint.h"
 
 bool RenderTrackToStereoLocked(const AppState& state, int trackIndex,
                                std::vector<float>* outStereo, int* outSampleRate);
@@ -546,7 +547,7 @@ bool ApplyAutoMixToFaders(HWND hwnd, AppState& state) {
         return false;
     }
 
-    InvalidateRect(hwnd, nullptr, FALSE);
+    daw::ui::RequestRepaintAll(state);
     std::wstringstream status;
     status << L"AutoMix applied to " << applied << L" track(s).";
     if (hasFullSettings) {
@@ -708,5 +709,5 @@ void StartAutoMixAsync(HWND hwnd, AppState& state) {
         return;
     }
 
-    InvalidateRect(hwnd, nullptr, FALSE);
+    daw::ui::RequestRepaintAll(state);
 }

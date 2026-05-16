@@ -8,6 +8,7 @@
 
 #include <windowsx.h>
 #include <algorithm>
+#include "ui/repaint.h"
 
 LRESULT WndProcOnMouseMove(HWND hwnd, LPARAM lParam, AppState& state) {
     // ── Dock tab drag update ────────────────────────────────────────
@@ -25,7 +26,7 @@ LRESULT WndProcOnMouseMove(HWND hwnd, LPARAM lParam, AppState& state) {
         }
         if (state.ui.dock.dragTabActive) {
             ResolveDropTarget(state, pt);
-            InvalidateRect(hwnd, nullptr, FALSE);
+            daw::ui::RequestRepaintAll(state);
         }
         return 0;
     }
@@ -62,7 +63,7 @@ LRESULT WndProcOnMouseMove(HWND hwnd, LPARAM lParam, AppState& state) {
             }
             break;
         }
-        InvalidateRect(hwnd, nullptr, FALSE);
+        daw::ui::RequestRepaintAll(state);
         return 0;
     }
 
@@ -72,7 +73,7 @@ LRESULT WndProcOnMouseMove(HWND hwnd, LPARAM lParam, AppState& state) {
         const LayoutRects layout = UiLayoutComputeHitTestLayout(hwnd, state);
         const float beat = std::max(0.0f, UiLayoutXToBeat(layout.ruler, state, GET_X_LPARAM(lParam)));
         state.ui.view.playheadBeat = UiLayoutSnapBeat(beat);
-        InvalidateRect(hwnd, nullptr, FALSE);
+        daw::ui::RequestRepaintAll(state);
         return 0;
     }
 
@@ -96,7 +97,7 @@ LRESULT WndProcOnMouseMove(HWND hwnd, LPARAM lParam, AppState& state) {
             const float newEnd = std::max(mouseBeat, state.ui.tools.trimOrigStart + 0.25f);
             clip.lengthBeats = newEnd - clip.startBeat;
         }
-        InvalidateRect(hwnd, nullptr, FALSE);
+        daw::ui::RequestRepaintAll(state);
         return 0;
     }
 
@@ -120,7 +121,7 @@ LRESULT WndProcOnMouseMove(HWND hwnd, LPARAM lParam, AppState& state) {
         EnterCriticalSection(&state.audio.audioStateLock);
         state.core.project.tracks[static_cast<size_t>(state.ui.tools.dragFaderTrack)].gainDb = newDb;
         LeaveCriticalSection(&state.audio.audioStateLock);
-        InvalidateRect(hwnd, nullptr, FALSE);
+        daw::ui::RequestRepaintAll(state);
         return 0;
     }
 
@@ -141,7 +142,7 @@ LRESULT WndProcOnMouseMove(HWND hwnd, LPARAM lParam, AppState& state) {
                 state.core.project.tracks[static_cast<size_t>(state.ui.tools.dragPanIndex)].pan = newPan;
         }
         LeaveCriticalSection(&state.audio.audioStateLock);
-        InvalidateRect(hwnd, nullptr, FALSE);
+        daw::ui::RequestRepaintAll(state);
         return 0;
     }
 
@@ -197,7 +198,7 @@ LRESULT WndProcOnMouseMove(HWND hwnd, LPARAM lParam, AppState& state) {
             }
             LeaveCriticalSection(&state.audio.audioStateLock);
             state.core.projectModified = true;
-            InvalidateRect(hwnd, nullptr, FALSE);
+            daw::ui::RequestRepaintAll(state);
         }
         return 0;
     }
@@ -222,7 +223,7 @@ LRESULT WndProcOnMouseMove(HWND hwnd, LPARAM lParam, AppState& state) {
         clip.trackIndex = UiLayoutTrackIndexFromY(layout.arrange, state, mouseY);
         LeaveCriticalSection(&state.audio.audioStateLock);
 
-        InvalidateRect(hwnd, nullptr, FALSE);
+        daw::ui::RequestRepaintAll(state);
     }
     return 0;
 }

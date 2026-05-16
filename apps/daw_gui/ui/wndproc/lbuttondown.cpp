@@ -18,6 +18,7 @@
 #include <windowsx.h>
 #include <algorithm>
 #include <cstdint>
+#include "ui/repaint.h"
 
 namespace {
 
@@ -74,7 +75,7 @@ static bool LButtonOnDockSplitterOrTab(HWND hwnd, AppState& state, POINT pt) {
                                 state.ui.dock.dragTabCurPt   = pt;
                                 SetCapture(hwnd);
                             }
-                            InvalidateRect(hwnd, nullptr, FALSE);
+                            daw::ui::RequestRepaintAll(state);
                         }
                         return true;
                     }
@@ -90,14 +91,14 @@ static bool LButtonOnTopBarButtons(HWND hwnd, AppState& state, POINT pt) {
                 const auto ev = state.audio.playing ? TransportEvent::StopPressed
                                                      : TransportEvent::PlayPressed;
                 daw::app::DispatchTransportEvent(hwnd, state, ev, /*rewindOnStop=*/false);
-                InvalidateRect(hwnd, nullptr, FALSE);
+                daw::ui::RequestRepaintAll(state);
                 return true;
             }
             if (PtInRect(&state.ui.topBar.stopRect, pt)) {
                 // Stop button always rewinds.
                 daw::app::DispatchTransportEvent(hwnd, state,
                     daw::services::TransportEvent::StopPressed, /*rewindOnStop=*/true);
-                InvalidateRect(hwnd, nullptr, FALSE);
+                daw::ui::RequestRepaintAll(state);
                 return true;
             }
             if (PtInRect(&state.ui.topBar.recordRect, pt)) {
@@ -111,59 +112,59 @@ static bool LButtonOnTopBarButtons(HWND hwnd, AppState& state, POINT pt) {
                     ev = TransportEvent::RecordPressed;
                 }
                 daw::app::DispatchTransportEvent(hwnd, state, ev, /*rewindOnStop=*/true);
-                InvalidateRect(hwnd, nullptr, FALSE);
+                daw::ui::RequestRepaintAll(state);
                 return true;
             }
             if (PtInRect(&state.ui.topBar.importRect, pt)) {
                 ImportWavFiles(hwnd, state);
-                InvalidateRect(hwnd, nullptr, FALSE);
+                daw::ui::RequestRepaintAll(state);
                 return true;
             }
             if (PtInRect(&state.ui.topBar.automixRect, pt)) {
                 StartAutoMixAsync(hwnd, state);
-                InvalidateRect(hwnd, nullptr, FALSE);
+                daw::ui::RequestRepaintAll(state);
                 return true;
             }
             if (PtInRect(&state.ui.topBar.vocalCheckRect, pt)) {
                 AnalyzeSelectedTrackQuality(hwnd, state);
-                InvalidateRect(hwnd, nullptr, FALSE);
+                daw::ui::RequestRepaintAll(state);
                 return true;
             }
             if (PtInRect(&state.ui.topBar.autoMasterRect, pt)) {
                 DoAutoMaster(hwnd, state);
-                InvalidateRect(hwnd, nullptr, FALSE);
+                daw::ui::RequestRepaintAll(state);
                 return true;
             }
             if (PtInRect(&state.ui.topBar.metPlayRect, pt)) {
                 state.audio.metronomePlay = !state.audio.metronomePlay;
-                InvalidateRect(hwnd, nullptr, FALSE);
+                daw::ui::RequestRepaintAll(state);
                 return true;
             }
             if (PtInRect(&state.ui.topBar.metRecRect, pt)) {
                 state.audio.metronomeRecord = !state.audio.metronomeRecord;
-                InvalidateRect(hwnd, nullptr, FALSE);
+                daw::ui::RequestRepaintAll(state);
                 return true;
             }
             if (PtInRect(&state.ui.topBar.monitorRect, pt)) {
                 state.audio.inputMonitoring = !state.audio.inputMonitoring;
-                InvalidateRect(hwnd, nullptr, FALSE);
+                daw::ui::RequestRepaintAll(state);
                 return true;
             }
             if (PtInRect(&state.ui.topBar.bpmDownRect, pt)) {
                 const bool coarse = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
                 state.core.project.bpm = static_cast<float>(std::max(40, static_cast<int>(state.core.project.bpm) - (coarse ? 5 : 1)));
-                InvalidateRect(hwnd, nullptr, FALSE);
+                daw::ui::RequestRepaintAll(state);
                 return true;
             }
             if (PtInRect(&state.ui.topBar.bpmUpRect, pt)) {
                 const bool coarse = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
                 state.core.project.bpm = static_cast<float>(std::min(260, static_cast<int>(state.core.project.bpm) + (coarse ? 5 : 1)));
-                InvalidateRect(hwnd, nullptr, FALSE);
+                daw::ui::RequestRepaintAll(state);
                 return true;
             }
             if (PtInRect(&state.ui.topBar.countInRect, pt)) {
                 state.audio.countInEnabled = !state.audio.countInEnabled;
-                InvalidateRect(hwnd, nullptr, FALSE);
+                daw::ui::RequestRepaintAll(state);
                 return true;
             }
     return false;
@@ -175,7 +176,7 @@ static bool LButtonOnFxInspector(HWND hwnd, AppState& state, POINT pt, const REC
                 if (!PtInRect(&inspPanel, pt)) {
                     // Click outside → close
                     state.ui.inspector.fxInspectorOpen = false;
-                    InvalidateRect(hwnd, nullptr, FALSE);
+                    daw::ui::RequestRepaintAll(state);
                     return false;
                 } else {
                     // Click inside inspector - handle controls
@@ -210,7 +211,7 @@ static bool LButtonOnFxInspector(HWND hwnd, AppState& state, POINT pt, const REC
                     RECT closeBtn{inspPanel.right - 24, inspPanel.top + 4, inspPanel.right - 4, inspPanel.top + kUiDrawInspHeaderH - 4};
                     if (PtInRect(&closeBtn, pt)) {
                         state.ui.inspector.fxInspectorOpen = false;
-                        InvalidateRect(hwnd, nullptr, FALSE);
+                        daw::ui::RequestRepaintAll(state);
                         return true;
                     }
 
@@ -224,7 +225,7 @@ static bool LButtonOnFxInspector(HWND hwnd, AppState& state, POINT pt, const REC
                         state.core.projectModified = true;
                         UpdateWindowTitle(hwnd, state.core);
                         LeaveCriticalSection(&state.audio.audioStateLock);
-                        InvalidateRect(hwnd, nullptr, FALSE);
+                        daw::ui::RequestRepaintAll(state);
                         return true;
                     }
                     if (PtInRect(&remBtn, pt) && pSlots && slotCount > 0) {
@@ -235,7 +236,7 @@ static bool LButtonOnFxInspector(HWND hwnd, AppState& state, POINT pt, const REC
                         state.core.projectModified = true;
                         UpdateWindowTitle(hwnd, state.core);
                         LeaveCriticalSection(&state.audio.audioStateLock);
-                        InvalidateRect(hwnd, nullptr, FALSE);
+                        daw::ui::RequestRepaintAll(state);
                         return true;
                     }
 
@@ -254,7 +255,7 @@ static bool LButtonOnFxInspector(HWND hwnd, AppState& state, POINT pt, const REC
                             state.core.projectModified = true;
                             UpdateWindowTitle(hwnd, state.core);
                             LeaveCriticalSection(&state.audio.audioStateLock);
-                            InvalidateRect(hwnd, nullptr, FALSE);
+                            daw::ui::RequestRepaintAll(state);
                             return true;
                         }
                         if (PtInRect(&bypassBtn, pt) && pBypass) {
@@ -263,12 +264,12 @@ static bool LButtonOnFxInspector(HWND hwnd, AppState& state, POINT pt, const REC
                             state.core.projectModified = true;
                             UpdateWindowTitle(hwnd, state.core);
                             LeaveCriticalSection(&state.audio.audioStateLock);
-                            InvalidateRect(hwnd, nullptr, FALSE);
+                            daw::ui::RequestRepaintAll(state);
                             return true;
                         }
                         if (PtInRect(&arrowBtn, pt)) {
                             state.ui.inspector.fxInspectorSelectedSlot = (state.ui.inspector.fxInspectorSelectedSlot == s) ? -1 : s;
-                            InvalidateRect(hwnd, nullptr, FALSE);
+                            daw::ui::RequestRepaintAll(state);
                             return true;
                         }
                     }
@@ -337,7 +338,7 @@ static bool LButtonOnRuler(HWND hwnd, AppState& state, POINT pt, const LayoutRec
                 state.ui.view.playheadBeat = UiLayoutSnapBeat(beat);
                 state.ui.tools.draggingPlayhead = true;
                 SetCapture(hwnd);
-                InvalidateRect(hwnd, nullptr, FALSE);
+                daw::ui::RequestRepaintAll(state);
                 return true;
             }
     return false;
@@ -373,7 +374,7 @@ static bool LButtonOnTracksAndBusesPanel(HWND hwnd, AppState& state, POINT pt, c
                             UpdateWindowTitle(hwnd, state.core);
                         }
                         LeaveCriticalSection(&state.audio.audioStateLock);
-                        InvalidateRect(hwnd, nullptr, FALSE);
+                        daw::ui::RequestRepaintAll(state);
                         return true;
                     }
                     if (PtInRect(&fxRect, pt)) {
@@ -381,7 +382,7 @@ static bool LButtonOnTracksAndBusesPanel(HWND hwnd, AppState& state, POINT pt, c
                         state.ui.inspector.fxInspectorOpen    = true;
                         state.ui.inspector.fxInspectorIsTrack = true;
                         state.ui.inspector.fxInspectorIndex   = trackIndex;
-                        InvalidateRect(hwnd, nullptr, FALSE);
+                        daw::ui::RequestRepaintAll(state);
                         return true;
                     }
                     if (PtInRect(&panKnobRect, pt) || PtInRect(&panValRect, pt)) {
@@ -402,7 +403,7 @@ static bool LButtonOnTracksAndBusesPanel(HWND hwnd, AppState& state, POINT pt, c
                             state.ui.tools.dragPanStartVal = state.core.project.tracks[static_cast<size_t>(trackIndex)].pan;
                             SetCapture(hwnd);
                         }
-                        InvalidateRect(hwnd, nullptr, FALSE);
+                        daw::ui::RequestRepaintAll(state);
                         return true;
                     }
 
@@ -416,7 +417,7 @@ static bool LButtonOnTracksAndBusesPanel(HWND hwnd, AppState& state, POINT pt, c
                             state.core.project.tracks[static_cast<size_t>(trackIndex)].mute = !state.core.project.tracks[static_cast<size_t>(trackIndex)].mute;
                         }
                         LeaveCriticalSection(&state.audio.audioStateLock);
-                        InvalidateRect(hwnd, nullptr, FALSE);
+                        daw::ui::RequestRepaintAll(state);
                         return true;
                     }
                     if (PtInRect(&recRect, pt)) {
@@ -425,7 +426,7 @@ static bool LButtonOnTracksAndBusesPanel(HWND hwnd, AppState& state, POINT pt, c
                             state.core.project.tracks[static_cast<size_t>(trackIndex)].recordArm = !state.core.project.tracks[static_cast<size_t>(trackIndex)].recordArm;
                         }
                         LeaveCriticalSection(&state.audio.audioStateLock);
-                        InvalidateRect(hwnd, nullptr, FALSE);
+                        daw::ui::RequestRepaintAll(state);
                         return true;
                     }
                     if (PtInRect(&soloRect, pt)) {
@@ -434,7 +435,7 @@ static bool LButtonOnTracksAndBusesPanel(HWND hwnd, AppState& state, POINT pt, c
                             state.core.project.tracks[static_cast<size_t>(trackIndex)].solo = !state.core.project.tracks[static_cast<size_t>(trackIndex)].solo;
                         }
                         LeaveCriticalSection(&state.audio.audioStateLock);
-                        InvalidateRect(hwnd, nullptr, FALSE);
+                        daw::ui::RequestRepaintAll(state);
                         return true;
                     }
 
@@ -452,7 +453,7 @@ static bool LButtonOnTracksAndBusesPanel(HWND hwnd, AppState& state, POINT pt, c
                         state.core.project.tracks[static_cast<size_t>(trackIndex)].gainDb = state.ui.tools.dragFaderStartDb;
                         LeaveCriticalSection(&state.audio.audioStateLock);
                         SetCapture(hwnd);
-                        InvalidateRect(hwnd, nullptr, FALSE);
+                        daw::ui::RequestRepaintAll(state);
                         return true;
                     }
                 }
@@ -498,7 +499,7 @@ static bool LButtonOnTracksAndBusesPanel(HWND hwnd, AppState& state, POINT pt, c
                             state.ui.tools.dragPanStartY  = pt.y;
                             state.ui.tools.dragPanStartVal = state.core.project.buses[static_cast<size_t>(b)].pan;
                             SetCapture(hwnd);
-                            InvalidateRect(hwnd, nullptr, FALSE);
+                            daw::ui::RequestRepaintAll(state);
                             return true;
                         } else if (PtInRect(&fxRect, pt) && b < static_cast<int>(state.core.project.buses.size())) {
                             // Open insert-chain inspector for this bus
@@ -506,14 +507,14 @@ static bool LButtonOnTracksAndBusesPanel(HWND hwnd, AppState& state, POINT pt, c
                             state.ui.inspector.fxInspectorOpen    = true;
                             state.ui.inspector.fxInspectorIsTrack = false;
                             state.ui.inspector.fxInspectorIndex   = b;
-                            InvalidateRect(hwnd, nullptr, FALSE);
+                            daw::ui::RequestRepaintAll(state);
                             return true;
                         }
                         state.core.projectModified = true;
                         UpdateWindowTitle(hwnd, state.core);
                         LeaveCriticalSection(&state.audio.audioStateLock);
 
-                        InvalidateRect(hwnd, nullptr, FALSE);
+                        daw::ui::RequestRepaintAll(state);
                         return true;
                     }
                 }
@@ -561,7 +562,7 @@ static bool LButtonOnArrangeClip(HWND hwnd, AppState& state, POINT pt, const Lay
                         break;
                     }
                 }
-                InvalidateRect(hwnd, nullptr, FALSE);
+                daw::ui::RequestRepaintAll(state);
             }
     return true;
 }

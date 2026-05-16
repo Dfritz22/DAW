@@ -2,6 +2,7 @@
 
 #include "core/internal_app_services.h"
 #include "ui/dock.h"
+#include "ui/repaint.h"
 
 // Forward decl — defined in main.cpp until floating-window code moves
 // to ui/floating.{h,cpp}.
@@ -124,7 +125,7 @@ LRESULT WndProcOnLButtonUp(HWND hwnd, AppState& state) {
     if (changed) {
         UpdateWindowTitle(hwnd, state.core);
         ReleaseCapture();
-        InvalidateRect(hwnd, nullptr, FALSE);
+        daw::ui::RequestRepaintAll(state);
     }
     return 0;
 }

@@ -7,6 +7,7 @@
 #include "ui/UiRuntimeState.h"
 
 #include <windowsx.h>
+#include "ui/repaint.h"
 
 LRESULT WndProcOnRButtonUp(HWND hwnd, LPARAM lParam, AppState& state) {
     using daw::internal::core::UpdateWindowTitle;
@@ -46,12 +47,12 @@ LRESULT WndProcOnRButtonUp(HWND hwnd, LPARAM lParam, AppState& state) {
         AddNewTrack(state);
         state.core.projectModified = true;
         UpdateWindowTitle(hwnd, state.core);
-        InvalidateRect(hwnd, nullptr, FALSE);
+        daw::ui::RequestRepaintAll(state);
     } else if (cmd == kCmdTrackNew + 1000 && trackIndex >= 0 && trackIndex < static_cast<int>(state.core.project.tracks.size())) {
         EnterCriticalSection(&state.audio.audioStateLock);
         state.core.project.tracks[static_cast<size_t>(trackIndex)].recordArm = !state.core.project.tracks[static_cast<size_t>(trackIndex)].recordArm;
         LeaveCriticalSection(&state.audio.audioStateLock);
-        InvalidateRect(hwnd, nullptr, FALSE);
+        daw::ui::RequestRepaintAll(state);
     }
     return 0;
 }

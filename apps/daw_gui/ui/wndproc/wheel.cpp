@@ -7,6 +7,7 @@
 #include <windowsx.h>
 
 #include <algorithm>
+#include "ui/repaint.h"
 
 LRESULT WndProcOnMouseWheel(HWND hwnd, WPARAM wParam, LPARAM lParam, AppState& state) {
     const short delta = GET_WHEEL_DELTA_WPARAM(wParam);
@@ -26,7 +27,7 @@ LRESULT WndProcOnMouseWheel(HWND hwnd, WPARAM wParam, LPARAM lParam, AppState& s
         state.ui.view.tracksScrollY -= notches * step;
         const int maxScroll = UiLayoutMaxTracksScrollY(wlayout.leftPanel, state);
         state.ui.view.tracksScrollY = std::clamp(state.ui.view.tracksScrollY, 0, maxScroll);
-        InvalidateRect(hwnd, nullptr, FALSE);
+        daw::ui::RequestRepaintAll(state);
         return 0;
     }
 
@@ -52,16 +53,17 @@ LRESULT WndProcOnMouseWheel(HWND hwnd, WPARAM wParam, LPARAM lParam, AppState& s
                                                             (delta > 0) ? -step : step);
     }
     state.ui.view.viewStartBeat = std::max(0.0f, state.ui.view.viewStartBeat);
-    InvalidateRect(hwnd, nullptr, FALSE);
+    daw::ui::RequestRepaintAll(state);
     return 0;
 }
 
 LRESULT WndProcOnMouseHWheel(HWND hwnd, WPARAM wParam, AppState& state) {
+    (void)hwnd;
     const short delta = GET_WHEEL_DELTA_WPARAM(wParam);
     const float step = state.ui.view.viewBeatsVisible * 0.08f;
     state.ui.view.viewStartBeat += (delta > 0) ? -step : step;
     state.ui.view.viewStartBeat = std::max(0.0f, state.ui.view.viewStartBeat);
-    InvalidateRect(hwnd, nullptr, FALSE);
+    daw::ui::RequestRepaintAll(state);
     return 0;
 }
 

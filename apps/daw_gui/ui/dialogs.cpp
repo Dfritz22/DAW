@@ -1,6 +1,7 @@
 #include "ui/dialogs.h"
 
 #include "daw_audio.h"   // DeviceRefreshInputDevices/OutputDevices
+#include "ui/repaint.h"
 
 #include <algorithm>
 #include <iterator>
@@ -502,7 +503,7 @@ void UiShowAudioSettingsDialog(HWND hwndParent, AppState& state) {
 
     EnableWindow(hwndParent, TRUE);
     SetForegroundWindow(hwndParent);
-    InvalidateRect(hwndParent, nullptr, FALSE);
+    daw::ui::RequestRepaintAll(state);
 }
 
 void UiShowProjectSampleRateDialog(HWND hwndParent, AppState& state) {
@@ -568,5 +569,5 @@ void UiShowProjectSampleRateDialog(HWND hwndParent, AppState& state) {
         state.core.projectModified = true;
     }
 
-    InvalidateRect(hwndParent, nullptr, FALSE);
+    daw::ui::RequestRepaintAll(state);
 }
