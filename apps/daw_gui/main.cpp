@@ -98,10 +98,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         KillTimer(hwnd, kPlaybackTimerId);
         if (state != nullptr) {
             // Persist dock layout + floating-panel geometry so next launch restores arrangement.
-            if (state->ui.dockRoot) {
+            if (state->ui.dock.dockRoot) {
                 std::vector<daw::ui::DockFloatingPanel> floats;
-                floats.reserve(state->ui.floatingPanels.size());
-                for (const auto& fp : state->ui.floatingPanels) {
+                floats.reserve(state->ui.dock.floatingPanels.size());
+                for (const auto& fp : state->ui.dock.floatingPanels) {
                     if (!fp.hwnd || !IsWindow(fp.hwnd)) continue;
                     RECT wr{};
                     if (!GetWindowRect(fp.hwnd, &wr)) continue;
@@ -113,7 +113,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     out.h = wr.bottom - wr.top;
                     floats.push_back(out);
                 }
-                daw::ui::DockSaveLayout(state->ui.dockRoot.get(), floats);
+                daw::ui::DockSaveLayout(state->ui.dock.dockRoot.get(), floats);
             }
             StopRecording(*state, false);
             if (state->audio.automixThread != nullptr) {
@@ -194,8 +194,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             POINT pt{};
             GetCursorPos(&pt);
             ScreenToClient(hwnd, &pt);
-            for (const auto& sp : state->ui.dockSplitters) {
-                if (PtInRect(&sp.rect, pt) || (state->ui.draggingSplitter && state->ui.dragSplitterNode == sp.node)) {
+            for (const auto& sp : state->ui.dock.dockSplitters) {
+                if (PtInRect(&sp.rect, pt) || (state->ui.dock.draggingSplitter && state->ui.dock.dragSplitterNode == sp.node)) {
                     SetCursor(LoadCursor(nullptr, sp.horizontal ? IDC_SIZENS : IDC_SIZEWE));
                     return TRUE;
                 }

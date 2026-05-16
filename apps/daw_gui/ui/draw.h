@@ -28,16 +28,16 @@ void UiDrawRuler(HDC hdc, const RECT& rect, const AppState& state);
 void UiDrawArrangeLanes(HDC hdc, const RECT& rect, const AppState& state);
 
 // Renders the dock leaves (panel content + per-leaf tab strip) plus the
-// splitter dividers, then populates state.ui.dockTabs as a side effect so
+// splitter dividers, then populates state.ui.dock.dockTabs as a side effect so
 // the WM_LBUTTONDOWN tab hit-test can run. Caller must have already
-// computed state.ui.dockLayout + dockSplitters via daw::ui::DockLayout.
+// computed state.ui.dock.dockLayout + dockSplitters via daw::ui::DockLayout.
 // `smallFont` is selected into the DC for the duration so tab text is
 // measured/drawn with the same font as the status bar that follows.
 void UiDrawDockLeavesAndSplitters(HDC hdc, AppState& state, HFONT smallFont);
 
 // Renders the tab-drag drop preview overlay (translucent fill + 2 px accent
 // border around dropPreviewRect, plus the 5-square compass centered on the
-// target leaf). No-ops when state.ui.dragTabActive is false or no drop
+// target leaf). No-ops when state.ui.dock.dragTabActive is false or no drop
 // target has been resolved yet. Pure GDI; lives in draw.cpp so the WM_PAINT
 // handler in main.cpp stays focused on dock walking + composition.
 void UiDrawDockDropOverlay(HDC hdc, const AppState& state);

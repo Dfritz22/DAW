@@ -170,7 +170,7 @@ LRESULT CALLBACK FloatingWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             // permanently lost by closing its floating frame.
             DockReturnPanelToMain(*fwd->state, fwd->panel);
             // Drop the entry from the floatingPanels vector.
-            auto& vec = fwd->state->ui.floatingPanels;
+            auto& vec = fwd->state->ui.dock.floatingPanels;
             vec.erase(std::remove_if(vec.begin(), vec.end(),
                 [hwnd](const auto& fp){ return fp.hwnd == hwnd; }), vec.end());
             HWND mainHwnd = fwd->state->hwnd;

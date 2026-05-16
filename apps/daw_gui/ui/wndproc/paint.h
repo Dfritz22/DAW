@@ -16,7 +16,7 @@
 //   4. Lazily build dockRoot from layout.json (or DockBuildDefault) on
 //      first paint; spawn any persisted floating panels.
 //   5. Compute per-leaf rects, render dock leaves + tab strip + splitters
-//      (populates state.ui.dockTabs for WM_LBUTTONDOWN hit-test).
+//      (populates state.ui.dock.dockTabs for WM_LBUTTONDOWN hit-test).
 //   6. Tab-drag drop overlay.
 //   7. Insert/FX inspector floating layer.
 //   8. Status bar.

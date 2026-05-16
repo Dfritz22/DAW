@@ -8,7 +8,7 @@
 // must DPI-scale via Dpi() if comparing pixel deltas).
 constexpr int kDragTabThresholdPx = 4;
 
-// Hit-test `pt` against state.ui.dockLayout / dockTabs. Writes the resolved
+// Hit-test `pt` against state.ui.dock.dockLayout / dockTabs. Writes the resolved
 // drop target into state.ui.drop* fields (dropTargetLeaf, dropTargetSide,
 // dropTargetTabAt, dropPreviewRect) and returns true if a target was found.
 //

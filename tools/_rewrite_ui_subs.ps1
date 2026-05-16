@@ -17,9 +17,9 @@ foreach ($f in $Files) {
   $txt = $orig
   foreach ($sub in $map.Keys) {
     foreach ($field in $map[$sub]) {
-      # Match .ui.<field> NOT already followed by another dot-segment matching a sub name.
-      $pattern = "\.ui\.${field}\b"
-      $replacement = ".ui.${sub}.${field}"
+      # Match (.|->)ui.<field> NOT already followed by another dot-segment matching a sub name.
+      $pattern = "(\.|->)ui\.${field}\b"
+      $replacement = "`${1}ui.${sub}.${field}"
       $txt = [regex]::Replace($txt, $pattern, $replacement)
     }
   }

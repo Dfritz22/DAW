@@ -102,9 +102,9 @@ struct LayoutRects {
     RECT arrange;
 };
 
-// Phase 18 / Step G: UiRuntimeState ownership split. Reference aliases at
-// UiRuntimeState scope keep pre-split callsites compiling during 18c-18f
-// migration; aliases removed in 18g.
+// Phase 18 / Step G: UiRuntimeState ownership split into 5 sub-structs
+// (view, topBar, tools, inspector, dock). All consumers access via
+// state.ui.<sub>.<field>. AppState owns hwnd directly (state.hwnd).
 
 struct UiViewState {
     float playheadBeat    {0.0f};
@@ -210,87 +210,5 @@ struct UiRuntimeState {
     InspectorState  inspector;
     DockState       dock;
 
-    // ── Deprecated reference aliases (removed in Phase 18g) ──────────────
-    float& playheadBeat       {view.playheadBeat};
-    float& viewStartBeat      {view.viewStartBeat};
-    float& viewBeatsVisible   {view.viewBeatsVisible};
-    int&   tracksScrollY      {view.tracksScrollY};
-
-    RECT& playRect       {topBar.playRect};
-    RECT& stopRect       {topBar.stopRect};
-    RECT& recordRect     {topBar.recordRect};
-    RECT& importRect     {topBar.importRect};
-    RECT& automixRect    {topBar.automixRect};
-    RECT& vocalCheckRect {topBar.vocalCheckRect};
-    RECT& autoMasterRect {topBar.autoMasterRect};
-    RECT& metPlayRect    {topBar.metPlayRect};
-    RECT& metRecRect     {topBar.metRecRect};
-    RECT& monitorRect    {topBar.monitorRect};
-    RECT& bpmDownRect    {topBar.bpmDownRect};
-    RECT& bpmUpRect      {topBar.bpmUpRect};
-    RECT& countInRect    {topBar.countInRect};
-    RECT& fileMenuRect   {topBar.fileMenuRect};
-    RECT& viewMenuRect   {topBar.viewMenuRect};
-    RECT& audioMenuRect  {topBar.audioMenuRect};
-    RECT& trackMenuRect  {topBar.trackMenuRect};
-
-    bool&  draggingClip          {tools.draggingClip};
-    int&   dragClipIndex         {tools.dragClipIndex};
-    float& dragOffsetBeats       {tools.dragOffsetBeats};
-    bool&  draggingFader         {tools.draggingFader};
-    int&   dragFaderTrack        {tools.dragFaderTrack};
-    int&   dragFaderStartY       {tools.dragFaderStartY};
-    float& dragFaderStartDb      {tools.dragFaderStartDb};
-    bool&  draggingPan           {tools.draggingPan};
-    bool&  dragPanIsBus          {tools.dragPanIsBus};
-    int&   dragPanIndex          {tools.dragPanIndex};
-    int&   dragPanStartY         {tools.dragPanStartY};
-    float& dragPanStartVal       {tools.dragPanStartVal};
-
-    int&   selectedClipIndex     {view.selectedClipIndex};
-    int&   selectedTrackIndex    {view.selectedTrackIndex};
-
-    bool& fxInspectorOpen         {inspector.fxInspectorOpen};
-    bool& fxInspectorIsTrack      {inspector.fxInspectorIsTrack};
-    int&  fxInspectorIndex        {inspector.fxInspectorIndex};
-    int&  fxInspectorSelectedSlot {inspector.fxInspectorSelectedSlot};
-
-    bool&  draggingParamKnob     {tools.draggingParamKnob};
-    int&   paramKnobParamId      {tools.paramKnobParamId};
-    int&   paramKnobDragStartY   {tools.paramKnobDragStartY};
-    float& paramKnobDragStartVal {tools.paramKnobDragStartVal};
-
-    bool&  draggingPlayhead      {tools.draggingPlayhead};
-
-    bool&          trimmingClip         {tools.trimmingClip};
-    int&           trimClipIndex        {tools.trimClipIndex};
-    bool&          trimIsLeft           {tools.trimIsLeft};
-    float&         trimOrigStart        {tools.trimOrigStart};
-    float&         trimOrigLen          {tools.trimOrigLen};
-    std::uint64_t& trimOrigSourceOffset {tools.trimOrigSourceOffset};
-
-    std::unique_ptr<daw::ui::DockNode>&        dockRoot       {dock.dockRoot};
-    std::vector<daw::ui::DockLeafLayout>&      dockLayout     {dock.dockLayout};
-    std::vector<daw::ui::DockSplitterLayout>&  dockSplitters  {dock.dockSplitters};
-    std::vector<daw::ui::DockTabHit>&          dockTabs       {dock.dockTabs};
-
-    bool&                                      draggingSplitter       {dock.draggingSplitter};
-    daw::ui::DockNode*&                        dragSplitterNode       {dock.dragSplitterNode};
-    bool&                                      dragSplitterHorizontal {dock.dragSplitterHorizontal};
-
-    bool&                                      dragTabArmed   {dock.dragTabArmed};
-    bool&                                      dragTabActive  {dock.dragTabActive};
-    daw::ui::DockNode*&                        dragTabSource  {dock.dragTabSource};
-    int&                                       dragTabIndex   {dock.dragTabIndex};
-    daw::ui::PanelKind&                        dragTabPanel   {dock.dragTabPanel};
-    POINT&                                     dragTabStartPt {dock.dragTabStartPt};
-    POINT&                                     dragTabCurPt   {dock.dragTabCurPt};
-
-    daw::ui::DockNode*&                        dropTargetLeaf  {dock.dropTargetLeaf};
-    daw::ui::DockDropSide&                     dropTargetSide  {dock.dropTargetSide};
-    int&                                       dropTargetTabAt {dock.dropTargetTabAt};
-    RECT&                                      dropPreviewRect {dock.dropPreviewRect};
-
     using FloatingPanel = DockState::FloatingPanel;
-    std::vector<FloatingPanel>&                floatingPanels {dock.floatingPanels};
 };

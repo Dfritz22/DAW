@@ -35,7 +35,7 @@
 //     prune empty leaves, but never deletes primaries or violates the
 //     invariants above.
 //   * Floating panels (torn-off windows) are NOT in this tree; they live
-//     in `state.ui.floatingPanels` and are persisted by dock_persist.h.
+//     in `state.ui.dock.floatingPanels` and are persisted by dock_persist.h.
 //
 // Phases 7–8 of the overhaul will move dock + panel into a dedicated
 // library and split the rendering shims out of panel.cpp; the public
