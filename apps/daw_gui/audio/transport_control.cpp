@@ -15,6 +15,7 @@
 #include "ui/UiRuntimeState.h"          // kPalette
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -203,6 +204,14 @@ bool StartRecording(HWND hwnd, AppState& state) {
         return true;
     }
 
+    // Phase 21 / Step C — engine-readiness contract.
+    // Callers must route through DispatchTransportEvent which observes
+    // TransportStateFromAudio + WillCountIn; both require a resolved device
+    // SR. AudioEnsureReadyForTransport below is the runtime guard; this
+    // assert is the debug-build contract-violation catch.
+    assert(state.audio.activeDeviceSampleRate > 0
+           && "StartRecording called before activeDeviceSampleRate resolved");
+
     int armedTrack = -1;
     for (size_t i = 0; i < state.core.project.tracks.size(); ++i) {
         if (state.core.project.tracks[i].recordArm) {
@@ -230,6 +239,10 @@ bool StartRecording(HWND hwnd, AppState& state) {
 
 bool StartPlayback(HWND hwnd, AppState& state) {
     state.audio.lastPlaybackInitError.clear();
+
+    // Phase 21 / Step C — engine-readiness contract. See StartRecording.
+    assert(state.audio.activeDeviceSampleRate > 0
+           && "StartPlayback called before activeDeviceSampleRate resolved");
 
     // Engine readiness invariant: SR known, devices enumerated, no Error state.
     if (!AudioEnsureReadyForTransport(state.core, state.audio)) {
