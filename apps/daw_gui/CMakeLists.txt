@@ -42,6 +42,7 @@ add_executable(daw_gui WIN32
     audio/device_mme.cpp
     audio/device_wasapi.cpp
     audio/device_common.cpp
+    audio/rt_alloc_trace.cpp
 )
 
 target_link_libraries(daw_gui
@@ -69,6 +70,14 @@ target_include_directories(daw_gui
 )
 
 target_compile_definitions(daw_gui PRIVATE UNICODE _UNICODE)
+
+# Phase 22 / Step D — opt-in audio-thread allocation tracing.
+# Configure with -DDAW_RT_ALLOC_TRACE=ON to enable the global operator-new
+# guard in apps/daw_gui/audio/rt_alloc_trace.cpp. Default OFF (zero cost).
+option(DAW_RT_ALLOC_TRACE "Trap heap allocations on the audio thread" OFF)
+if(DAW_RT_ALLOC_TRACE)
+    target_compile_definitions(daw_gui PRIVATE DAW_RT_ALLOC_TRACE)
+endif()
 
 if(MSVC)
     target_compile_options(daw_gui PRIVATE /W4 /WX /permissive-)

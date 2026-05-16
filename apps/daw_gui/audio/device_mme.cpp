@@ -2,6 +2,7 @@
 #include "device_common.h"
 #include "engine.h"
 #include "engine_utils.h"
+#include "rt_alloc_trace.h"
 #include "core/automation.h"
 #include "core/timeline.h"
 
@@ -14,6 +15,11 @@ static DWORD WINAPI AudioThreadProc(LPVOID param) {
     if (audio == nullptr || audio->coreContext == nullptr) {
         return 0;
     }
+
+    // Phase 22 / Step D — mark this thread as the realtime audio thread for
+    // the duration of the callback loop. Under DAW_RT_ALLOC_TRACE, any heap
+    // allocation while this scope is active will trip an assert.
+    daw::audio::RtAudioThreadScope rtScope;
 
     bool draining = false;
     while (!audio->audioStopRequested.load()) {

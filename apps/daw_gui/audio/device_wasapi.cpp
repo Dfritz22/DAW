@@ -3,6 +3,7 @@
 #include "device_common.h"  // DeviceGetRenderedPlaybackFrame
 #include "engine.h"
 #include "engine_utils.h"
+#include "rt_alloc_trace.h"
 #include "core/automation.h"
 #include "core/timeline.h"
 
@@ -463,8 +464,24 @@ static DWORD WINAPI WasapiRenderThreadProc(LPVOID param) {
 
     audio->wasapiOutInitState.store(1);
 
+    // Pre-allocate the device staging buffer to the maximum size the inner
+    // loop will ever request (bufferFrameCount * 2 ch + safety margin for the
+    // `kAudioBufferFrames * 4` cap on `available`). Sizing it here means the
+    // per-callback `pcmBuf.assign(...)` below never grows the vector — it
+    // only memsets the existing storage. Without this, the first few
+    // callbacks would heap-allocate (caught by DAW_RT_ALLOC_TRACE).
+    const size_t maxSamples = static_cast<size_t>(
+        std::max<UINT32>(bufferFrameCount, static_cast<UINT32>(kAudioBufferFrames * 4))) * 2;
     std::vector<std::int16_t> pcmBuf;
+    pcmBuf.reserve(maxSamples);
     bool draining = false;
+
+    // Phase 22 / Step D — mark this thread as the realtime audio thread for
+    // the duration of the render loop. Device init above legitimately
+    // allocates (COM, format negotiation, scratch reserve); the trace scope
+    // only covers the steady-state callback loop where allocations are
+    // forbidden.
+    daw::audio::RtAudioThreadScope rtScope;
 
     while (!audio->audioStopRequested.load()) {
         UINT32 padding = 0;
