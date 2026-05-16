@@ -116,6 +116,29 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 }
                 daw::ui::DockSaveLayout(state->ui.dock.dockRoot.get(), floats);
             }
+            // Phase 20 / Step H: explicit floating-window teardown.
+            // FloatingWndData holds a raw AppState*; if a float's WM_CLOSE fires
+            // after `delete state` below (out-of-order session-end), we'd crash.
+            // Snapshot hwnds (each DestroyWindow triggers WM_DESTROY which erases
+            // from state->ui.dock.floatingPanels — iterating a copy avoids
+            // vector invalidation), DestroyWindow each, then drain the message
+            // queue so all WM_DESTROY/WM_NCDESTROY are processed before we free
+            // the state they reference.
+            {
+                std::vector<HWND> floatHwnds;
+                floatHwnds.reserve(state->ui.dock.floatingPanels.size());
+                for (const auto& fp : state->ui.dock.floatingPanels) {
+                    if (fp.hwnd && IsWindow(fp.hwnd)) floatHwnds.push_back(fp.hwnd);
+                }
+                for (HWND fh : floatHwnds) {
+                    DestroyWindow(fh);
+                }
+                MSG drainMsg;
+                while (PeekMessageW(&drainMsg, nullptr, 0, 0, PM_REMOVE)) {
+                    TranslateMessage(&drainMsg);
+                    DispatchMessageW(&drainMsg);
+                }
+            }
             StopRecording(*state, false);
             if (state->audio.automixThread != nullptr) {
                 WaitForSingleObject(state->audio.automixThread, INFINITE);
