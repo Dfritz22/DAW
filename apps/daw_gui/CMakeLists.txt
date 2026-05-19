@@ -43,6 +43,7 @@ add_executable(daw_gui WIN32
     audio/device_wasapi.cpp
     audio/device_common.cpp
     audio/rt_alloc_trace.cpp
+    audio/mix_snapshot_builder.cpp
 )
 
 target_link_libraries(daw_gui

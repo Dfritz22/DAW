@@ -103,6 +103,13 @@ struct AudioRuntimeState {
     // CRITICAL_SECTION).
     daw::engine::MixSnapshotPublisher mixSnapshotPublisher;
 
+    // Phase 24 / Step K2 — last MixSnapshot generation observed by the
+    // realtime audio callback. Written only by the audio thread (under the
+    // existing audioStateLock for now; K5 removes the lock). Read by
+    // diagnostic UI and tests to confirm the callback is seeing fresh
+    // publishes. Stays 0 until the first callback after a publish.
+    std::atomic<std::uint64_t> lastObservedMixSnapshotGen {0};
+
     // Realtime-thread scratch buffer reused by the engine when the device
     // sample rate differs from the project sample rate. Owning it here keeps
     // the realtime callback heap-allocation-free.

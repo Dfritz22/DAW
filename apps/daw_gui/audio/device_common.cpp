@@ -1,6 +1,7 @@
 #include "device_common.h"
 #include "core/CoreState.h"
 #include "audio/AudioRuntimeState.h"
+#include "audio/mix_snapshot_builder.h"
 #include "core/timeline.h"
 #include "audio/device_mme.h"
 
@@ -369,6 +370,13 @@ bool AudioInitializeRuntime(HWND hwnd, CoreState& core, AudioRuntimeState& audio
     // is set only by project load or the Project > Sample Rate menu. Device
     // code does not write to it.
     (void)core;
+
+    // Phase 24 / Step K2 — publish an initial MixSnapshot so the audio
+    // callback's Load() is never null. Subsequent K phases add publishes
+    // at every UI-side mix-parameter mutation site; for now this single
+    // bootstrap publish is sufficient because callback only reads the
+    // generation for diagnostics.
+    PublishMixSnapshotFromCore(audio, core);
 
     audio.engineState.store(AudioEngineState::Ready);
     return true;

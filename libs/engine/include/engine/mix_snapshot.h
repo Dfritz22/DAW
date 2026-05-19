@@ -1,8 +1,11 @@
 #pragma once
 
+#include "engine/mix_pipeline.h"
+
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 // ── Phase 24 / Step K \u2014 Lock-free MixSnapshot publication ────────────────────
 //
@@ -37,6 +40,28 @@ struct MixSnapshot {
     // diagnostics ("did the audio thread see the latest publish?") and for
     // future tests. Wraps cleanly at 2^64.
     std::uint64_t generation {0};
+
+    // Phase 24 / Step K2 \u2014 per-block mix parameters.
+    //
+    // Resolved per-track and per-bus mix values captured from the
+    // CoreState at the moment the snapshot was built. These mirror the
+    // outputs of the app-side ResolveTrackBusMix / ResolveBusRealtimeMix
+    // helpers (i.e. the *non-automation* baseline view: track.gainDb,
+    // track.pan, track.mute, bus.gainDb, bus.pan, bus.mute). Automation
+    // is cursor-dependent and is NOT precomputed here; the realtime
+    // callback still resolves automation per-block.
+    //
+    // Sized to track / bus counts at publish time; an empty vector means
+    // "no snapshot yet" or "snapshot pre-K2" and callers must fall back
+    // to the legacy CoreState-driven resolve.
+    std::vector<TrackMix> trackMixes;
+    std::vector<BusMix>   busMixes;
+
+    // True when at least one track in the source CoreState had `solo`
+    // set at snapshot time. Audio callbacks that consult solo state
+    // (IsTrackAudible-style) need this to remain consistent with the
+    // captured per-track audibility.
+    bool anySoloTracks {false};
 };
 
 // Atomic publisher. Wraps std::atomic<std::shared_ptr<const T>> so the

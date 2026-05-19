@@ -78,3 +78,44 @@ TEST(MixSnapshot, ConcurrentPublisherAndReaderConverges) {
     EXPECT_FALSE(sawRegression.load());
     EXPECT_EQ(pub.Load()->generation, static_cast<std::uint64_t>(kIterations));
 }
+
+// ── Phase 24 / Step K2 ────────────────────────────────────────────────────────
+
+TEST(MixSnapshot, DefaultMixVectorsAreEmpty) {
+    MixSnapshot snap;
+    EXPECT_TRUE(snap.trackMixes.empty());
+    EXPECT_TRUE(snap.busMixes.empty());
+    EXPECT_FALSE(snap.anySoloTracks);
+}
+
+TEST(MixSnapshot, MixVectorsRoundTripThroughPublisher) {
+    MixSnapshotPublisher pub;
+
+    auto next = std::make_shared<MixSnapshot>();
+    next->generation = 7;
+    next->trackMixes = {
+        daw::engine::TrackMix{/*audible*/ true,  /*bus*/ 0, 0.5f, 0.7f},
+        daw::engine::TrackMix{/*audible*/ false, /*bus*/ 1, 0.0f, 0.0f},
+        daw::engine::TrackMix{/*audible*/ true,  /*bus*/ 2, 1.0f, 0.25f},
+    };
+    next->busMixes = {
+        daw::engine::BusMix{/*active*/ true,  0.8f, 0.6f},
+        daw::engine::BusMix{/*active*/ false, 0.0f, 0.0f},
+    };
+    next->anySoloTracks = true;
+    pub.Publish(next);
+
+    auto obs = pub.Load();
+    ASSERT_EQ(obs->trackMixes.size(), 3u);
+    EXPECT_TRUE (obs->trackMixes[0].audible);
+    EXPECT_FALSE(obs->trackMixes[1].audible);
+    EXPECT_EQ   (obs->trackMixes[2].busIndex, 2);
+    EXPECT_FLOAT_EQ(obs->trackMixes[0].gainR, 0.7f);
+
+    ASSERT_EQ(obs->busMixes.size(), 2u);
+    EXPECT_TRUE (obs->busMixes[0].active);
+    EXPECT_FALSE(obs->busMixes[1].active);
+    EXPECT_FLOAT_EQ(obs->busMixes[0].gainL, 0.8f);
+
+    EXPECT_TRUE(obs->anySoloTracks);
+}

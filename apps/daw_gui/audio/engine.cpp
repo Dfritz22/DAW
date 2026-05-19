@@ -30,6 +30,19 @@ bool EngineFillRealtimeBufferLocked(CoreState& core, AudioRuntimeState& audio, s
         return false;
     }
 
+    // Phase 24 / Step K2 — Load the published MixSnapshot once per block.
+    // The shared_ptr keeps the snapshot alive for the duration of this
+    // callback even if the UI thread publishes a newer one mid-block. K2
+    // only records the observed generation for diagnostics; K3+ migrate
+    // the resolve calls below to read from `mixSnapshot->trackMixes` /
+    // `busMixes` instead of CoreState so the lock can be dropped in K5.
+    const auto mixSnapshot = audio.mixSnapshotPublisher.Load();
+    if (mixSnapshot) {
+        audio.lastObservedMixSnapshotGen.store(
+            mixSnapshot->generation, std::memory_order_relaxed);
+    }
+    (void)mixSnapshot;  // keeps the snapshot alive; readers in K3+.
+
     // Check if count-in has finished and clear the flag. Count-in runs in
     // its OWN time domain (countInFrameCursor); the playback cursor is held
     // at recordStartFrame for the entire count-in so the playhead does not
