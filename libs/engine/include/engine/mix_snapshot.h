@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/audio_clip.h"
 #include "dsp/insert_types.h"
 #include "engine/mix_pipeline.h"
 
@@ -90,6 +91,25 @@ struct MixSnapshot {
     };
     std::vector<InsertChainConfig> trackInserts;
     std::vector<InsertChainConfig> busInserts;
+
+    // Phase 24 / Step K4 \u2014 clip-placement snapshot.
+    //
+    // Immutable copy of core.project.clips at publish time. ClipItem is a
+    // small POD (track index, audio index, start/length beats, color,
+    // source-offset) so the per-publish copy is cheap relative to the
+    // mix-param + insert-config copies above. Captures only the timeline
+    // *placements*; the underlying LoadedAudio PCM buffers are NOT
+    // snapshotted here \u2014 they remain owned by core.project.audio and
+    // are read by the realtime callback under the audio lock today.
+    //
+    // The shared_ptr-ification of audio sources (required to drop the
+    // lock from the audio thread when the buffer vector resizes during
+    // recording / import) lands in K5 alongside the lock removal.
+    //
+    // `audioSourceCount` mirrors core.project.audio.size() so realtime
+    // bounds checks against clip.audioIndex can run from snapshot data.
+    std::vector<daw::core::ClipItem> clips;
+    int                              audioSourceCount {0};
 };
 
 // Atomic publisher. Wraps std::atomic<std::shared_ptr<const T>> so the

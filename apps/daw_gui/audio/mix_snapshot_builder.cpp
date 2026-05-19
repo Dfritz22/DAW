@@ -54,6 +54,14 @@ BuildMixSnapshotFromCore(const CoreState& core, const AudioRuntimeState& audio) 
         dst.slots   = bd.insertSlots;
     }
 
+    // Phase 24 / Step K4 \u2014 capture clip placements. ClipItem is a small
+    // POD; the per-publish copy is cheap compared to the insert-chain
+    // configs above. The underlying LoadedAudio PCM buffers remain owned
+    // by core.project.audio (lock-protected); their shared_ptr migration
+    // lands in K5.
+    snap->clips = core.project.clips;
+    snap->audioSourceCount = static_cast<int>(core.project.audio.size());
+
     return snap;
 }
 

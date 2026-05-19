@@ -165,3 +165,48 @@ TEST(MixSnapshot, InsertChainConfigRoundTripsThroughPublisher) {
     EXPECT_EQ(obs->busInserts[0].slots, 1);
     EXPECT_FLOAT_EQ(obs->busInserts[0].config[0].lim_ceiling_db, -0.5f);
 }
+
+// ── Phase 24 / Step K4 ────────────────────────────────────────────────────────
+
+TEST(MixSnapshot, DefaultClipFieldsAreEmpty) {
+    MixSnapshot snap;
+    EXPECT_TRUE(snap.clips.empty());
+    EXPECT_EQ(snap.audioSourceCount, 0);
+}
+
+TEST(MixSnapshot, ClipPlacementsRoundTripThroughPublisher) {
+    MixSnapshotPublisher pub;
+
+    auto next = std::make_shared<MixSnapshot>();
+    next->generation = 99;
+    next->audioSourceCount = 3;
+    next->clips.push_back(daw::core::ClipItem{
+        /*trackIndex*/         2,
+        /*audioIndex*/         0,
+        /*startBeat*/          4.0f,
+        /*lengthBeats*/        8.0f,
+        /*color*/              0x123456u,
+        /*name*/               L"kick",
+        /*sourceOffsetFrames*/ 1024u,
+    });
+    next->clips.push_back(daw::core::ClipItem{
+        /*trackIndex*/         0,
+        /*audioIndex*/         2,
+        /*startBeat*/          0.0f,
+        /*lengthBeats*/        2.0f,
+        /*color*/              0xABCDEFu,
+        /*name*/               L"snare",
+        /*sourceOffsetFrames*/ 0u,
+    });
+    pub.Publish(next);
+
+    auto obs = pub.Load();
+    ASSERT_EQ(obs->clips.size(), 2u);
+    EXPECT_EQ(obs->clips[0].trackIndex, 2);
+    EXPECT_EQ(obs->clips[0].audioIndex, 0);
+    EXPECT_FLOAT_EQ(obs->clips[0].startBeat, 4.0f);
+    EXPECT_FLOAT_EQ(obs->clips[0].lengthBeats, 8.0f);
+    EXPECT_EQ(obs->clips[0].sourceOffsetFrames, 1024u);
+    EXPECT_EQ(obs->clips[1].name, std::wstring(L"snare"));
+    EXPECT_EQ(obs->audioSourceCount, 3);
+}
