@@ -37,25 +37,20 @@ static DWORD WINAPI AudioThreadProc(LPVOID param) {
             }
 
             bool reachedEnd = false;
-            // Phase 23 / Step J — non-blocking audio callback. Try the lock;
-            // if a UI mutator (project save, AutoMix, future plugin GUI) is
-            // holding it, emit silence and bump the miss counter rather than
-            // stalling the audio thread. A glitch is preferable to a
-            // full-callback block under contention.
-            if (TryEnterCriticalSection(&audio->audioStateLock)) {
-                EngineFillRealtimeForDeviceLocked(
-                    *audio->coreContext,
-                    *audio,
-                    audio->waveData[static_cast<size_t>(i)].data(),
-                    kAudioBufferFrames,
-                    static_cast<int>(audio->waveFormat.nSamplesPerSec),
-                    &reachedEnd);
-                LeaveCriticalSection(&audio->audioStateLock);
-            } else {
-                audio->audioCallbackLockMisses.fetch_add(1, std::memory_order_relaxed);
-                auto& buf = audio->waveData[static_cast<size_t>(i)];
-                std::memset(buf.data(), 0, buf.size() * sizeof(std::int16_t));
-            }
+            // Phase 24 / Step K5c.4 — audio callback is lock-free. All
+            // per-block mix state (clips, inserts, track/bus mixes) is now
+            // read from the atomic MixSnapshot published by the UI thread;
+            // see RequestRepaintAll → PublishMixSnapshotFromCore. The
+            // audioStateLock is no longer required on this thread and the
+            // TryEnterCriticalSection guard has been removed. audioCallback
+            // LockMisses is retained for diagnostics but will never tick.
+            EngineFillRealtimeForDeviceLocked(
+                *audio->coreContext,
+                *audio,
+                audio->waveData[static_cast<size_t>(i)].data(),
+                kAudioBufferFrames,
+                static_cast<int>(audio->waveFormat.nSamplesPerSec),
+                &reachedEnd);
 
             hdr.lpData = reinterpret_cast<LPSTR>(audio->waveData[static_cast<size_t>(i)].data());
             hdr.dwBufferLength = static_cast<DWORD>(audio->waveData[static_cast<size_t>(i)].size() * sizeof(std::int16_t));
