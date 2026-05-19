@@ -154,6 +154,46 @@ void ApplyBusInsertChain(
         b.insertSlots);
 }
 
+// ── Phase 24 / Step K5b ──────────────────────────────────────────────────────
+
+void ApplyTrackInsertChain(
+    const daw::engine::MixSnapshot::InsertChainConfig& cfg,
+    AudioRuntimeState& audio,
+    int trackIndex,
+    std::vector<float>& buf,
+    float sampleRate)
+{
+    if (trackIndex < 0 || trackIndex >= static_cast<int>(audio.trackInsertDspState.size())) {
+        return;
+    }
+    if (cfg.slots <= 0) {
+        return;
+    }
+    DspApplyInsertChain(buf, sampleRate,
+        cfg.effects, cfg.bypass, cfg.config,
+        audio.trackInsertDspState[static_cast<size_t>(trackIndex)],
+        cfg.slots);
+}
+
+void ApplyBusInsertChain(
+    const daw::engine::MixSnapshot::InsertChainConfig& cfg,
+    AudioRuntimeState& audio,
+    int busIndex,
+    std::vector<float>& buf,
+    float sampleRate)
+{
+    if (busIndex < 0 || busIndex >= static_cast<int>(audio.busInsertDspState.size())) {
+        return;
+    }
+    if (cfg.slots <= 0) {
+        return;
+    }
+    DspApplyInsertChain(buf, sampleRate,
+        cfg.effects, cfg.bypass, cfg.config,
+        audio.busInsertDspState[static_cast<size_t>(busIndex)],
+        cfg.slots);
+}
+
 bool ReadClipSampleAtProjectFrame(
     const LoadedAudio& audio,
     std::uint64_t clipFrameInProjectRate,

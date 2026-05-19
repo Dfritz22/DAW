@@ -36,4 +36,18 @@ void RenderClipsForTrack(
     float* dstStereo,
     std::uint64_t dstFrames);
 
+// Phase 24 / Step K5b \u2014 snapshot-driven overload for the realtime path.
+// Behaviour matches the mutable-shared_ptr overload above; only the audio
+// pool type differs so the audio thread can pass MixSnapshot::audioSources
+// (vector<shared_ptr<const LoadedAudio>>) without per-callback allocations.
+void RenderClipsForTrack(
+    const std::vector<daw::core::ClipItem>& clips,
+    const std::vector<std::shared_ptr<const daw::core::LoadedAudio>>& audioPool,
+    int trackIndex,
+    int projectSampleRate,
+    float samplesPerBeat,
+    std::uint64_t bufferStartFrame,
+    float* dstStereo,
+    std::uint64_t dstFrames);
+
 } // namespace daw::engine

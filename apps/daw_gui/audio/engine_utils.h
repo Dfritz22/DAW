@@ -6,6 +6,7 @@
 #include "core/CoreState.h"
 #include "audio/AudioRuntimeState.h"
 #include "engine/mix_pipeline.h"
+#include "engine/mix_snapshot.h"
 
 #include <vector>
 
@@ -81,6 +82,31 @@ void ApplyTrackInsertChain(
 // range or the bus has no insert slots configured.
 void ApplyBusInsertChain(
     const CoreState& core,
+    AudioRuntimeState& audio,
+    int busIndex,
+    std::vector<float>& buf,
+    float sampleRate);
+
+// Phase 24 / Step K5b \u2014 snapshot-driven overloads.
+//
+// These read insert effect/bypass/config/slots from a MixSnapshot entry
+// (published by the UI thread) rather than from core.project.tracks /
+// core.project.buses, so the audio callback can drop the audio state
+// lock around insert-chain application. DSP state is still owned by
+// AudioRuntimeState (trackInsertDspState / busInsertDspState) and is
+// keyed by trackIndex / busIndex; the snapshot publishes are sized to
+// match core.project track/bus counts at publish time, so index ranges
+// align as long as the UI publishes after structural changes (handled
+// in K5c).
+void ApplyTrackInsertChain(
+    const daw::engine::MixSnapshot::InsertChainConfig& cfg,
+    AudioRuntimeState& audio,
+    int trackIndex,
+    std::vector<float>& buf,
+    float sampleRate);
+
+void ApplyBusInsertChain(
+    const daw::engine::MixSnapshot::InsertChainConfig& cfg,
     AudioRuntimeState& audio,
     int busIndex,
     std::vector<float>& buf,

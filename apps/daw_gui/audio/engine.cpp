@@ -158,22 +158,50 @@ bool EngineFillRealtimeBufferLocked(CoreState& core, AudioRuntimeState& audio, s
         trackCount,
         /*renderTrack*/ [&](int ti, float* dst, int n) {
             if (runCountInClick) return;  // count-in: no clip audio
-            daw::engine::RenderClipsForTrack(
-                core.project.clips,
-                core.project.audio,
-                ti,
-                core.project.projectSampleRate,
-                samplesPerBeat,
-                /*bufferStartFrame*/ startCursor,
-                dst,
-                static_cast<std::uint64_t>(n));
+            // Phase 24 / Step K5b \u2014 prefer snapshot when populated. Snapshot
+            // audioSources are shared_ptr<const LoadedAudio> so the realtime
+            // thread reads PCM without touching core.project. Snapshot clips
+            // are an immutable POD copy from the same publish, so timeline
+            // placements and source references agree. Fallback to core for
+            // empty/uninitialized snapshots (eg. pre-K2 transient states).
+            if (mixSnapshot && !mixSnapshot->audioSources.empty()) {
+                daw::engine::RenderClipsForTrack(
+                    mixSnapshot->clips,
+                    mixSnapshot->audioSources,
+                    ti,
+                    core.project.projectSampleRate,
+                    samplesPerBeat,
+                    /*bufferStartFrame*/ startCursor,
+                    dst,
+                    static_cast<std::uint64_t>(n));
+            } else {
+                daw::engine::RenderClipsForTrack(
+                    core.project.clips,
+                    core.project.audio,
+                    ti,
+                    core.project.projectSampleRate,
+                    samplesPerBeat,
+                    /*bufferStartFrame*/ startCursor,
+                    dst,
+                    static_cast<std::uint64_t>(n));
+            }
         },
         /*applyTrackInserts*/ [&](int ti, float* buf, int n) {
             // ApplyTrackInsertChain takes a vector& because DspApplyInsertChain
             // derives frame count from buf.size(); trackScratch is already
             // sized to activeFrames*2 so this is correct.
             (void)buf; (void)n;
-            ApplyTrackInsertChain(core, audio, ti, trackScratch, sampleRate);
+            // Phase 24 / Step K5b \u2014 read insert configs from snapshot when
+            // available. Snapshot trackInserts is sized to match
+            // core.project.tracks at publish time; DSP state ownership stays
+            // in AudioRuntimeState.trackInsertDspState (keyed by trackIndex).
+            if (mixSnapshot && ti < static_cast<int>(mixSnapshot->trackInserts.size())) {
+                ApplyTrackInsertChain(
+                    mixSnapshot->trackInserts[static_cast<size_t>(ti)],
+                    audio, ti, trackScratch, sampleRate);
+            } else {
+                ApplyTrackInsertChain(core, audio, ti, trackScratch, sampleRate);
+            }
         },
         trackScratch.data(),
         busBuf.data(),
@@ -203,7 +231,14 @@ bool EngineFillRealtimeBufferLocked(CoreState& core, AudioRuntimeState& audio, s
         kBusCount,
         /*applyBusInserts*/ [&](int bi, float* buf, int n) {
             (void)buf; (void)n;
-            ApplyBusInsertChain(core, audio, bi, busBuf[static_cast<size_t>(bi)], sampleRate);
+            // Phase 24 / Step K5b \u2014 prefer snapshot bus inserts.
+            if (mixSnapshot && bi < static_cast<int>(mixSnapshot->busInserts.size())) {
+                ApplyBusInsertChain(
+                    mixSnapshot->busInserts[static_cast<size_t>(bi)],
+                    audio, bi, busBuf[static_cast<size_t>(bi)], sampleRate);
+            } else {
+                ApplyBusInsertChain(core, audio, bi, busBuf[static_cast<size_t>(bi)], sampleRate);
+            }
         },
         busBuf.data(),
         masterBuf.data(),

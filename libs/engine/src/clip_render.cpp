@@ -8,9 +8,17 @@
 
 namespace daw::engine {
 
-void RenderClipsForTrack(
+namespace {
+
+// Templated body so both the mutable-shared_ptr (UI/offline) and
+// const-shared_ptr (audio-thread snapshot) overloads can share one
+// implementation without forcing the caller to convert vector element
+// types (which would require a per-callback allocation on the realtime
+// path).
+template <typename AudioPoolT>
+void RenderClipsForTrackImpl(
     const std::vector<daw::core::ClipItem>& clips,
-    const std::vector<std::shared_ptr<daw::core::LoadedAudio>>& audioPool,
+    const AudioPoolT& audioPool,
     int trackIndex,
     int projectSampleRate,
     float samplesPerBeat,
@@ -53,6 +61,36 @@ void RenderClipsForTrack(
             dstStereo[dst + 1] += r;
         }
     }
+}
+
+} // namespace
+
+void RenderClipsForTrack(
+    const std::vector<daw::core::ClipItem>& clips,
+    const std::vector<std::shared_ptr<daw::core::LoadedAudio>>& audioPool,
+    int trackIndex,
+    int projectSampleRate,
+    float samplesPerBeat,
+    std::uint64_t bufferStartFrame,
+    float* dstStereo,
+    std::uint64_t dstFrames)
+{
+    RenderClipsForTrackImpl(clips, audioPool, trackIndex, projectSampleRate,
+                            samplesPerBeat, bufferStartFrame, dstStereo, dstFrames);
+}
+
+void RenderClipsForTrack(
+    const std::vector<daw::core::ClipItem>& clips,
+    const std::vector<std::shared_ptr<const daw::core::LoadedAudio>>& audioPool,
+    int trackIndex,
+    int projectSampleRate,
+    float samplesPerBeat,
+    std::uint64_t bufferStartFrame,
+    float* dstStereo,
+    std::uint64_t dstFrames)
+{
+    RenderClipsForTrackImpl(clips, audioPool, trackIndex, projectSampleRate,
+                            samplesPerBeat, bufferStartFrame, dstStereo, dstFrames);
 }
 
 } // namespace daw::engine

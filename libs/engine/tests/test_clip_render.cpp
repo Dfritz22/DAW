@@ -151,3 +151,30 @@ TEST(RenderClipsForTrack, NullDstIsNoOp) {
     RenderClipsForTrack(clips, audio, 0, 48000, 24000.0f, 0, nullptr, 4);
     SUCCEED();
 }
+
+// ── Phase 24 / Step K5b ────────────────────────────────────────────────────────
+// Snapshot-driven overload uses shared_ptr<const LoadedAudio> entries.
+
+TEST(RenderClipsForTrack, ConstSharedPtrOverloadMatchesMutableOverload) {
+    auto src = MakeRamp(48000, 8);
+    std::vector<std::shared_ptr<LoadedAudio>> mutablePool{ src };
+    std::vector<std::shared_ptr<const LoadedAudio>> constPool{ src };
+    std::vector<ClipItem> clips{ MakeClip(0, 0, 0.0f, 8.0f / 24000.0f) };
+
+    std::vector<float> dstMutable(8 * 2, 0.0f);
+    std::vector<float> dstConst  (8 * 2, 0.0f);
+    RenderClipsForTrack(clips, mutablePool, 0, 48000, 24000.0f, 0, dstMutable.data(), 8);
+    RenderClipsForTrack(clips, constPool,   0, 48000, 24000.0f, 0, dstConst.data(),   8);
+
+    for (std::size_t i = 0; i < dstMutable.size(); ++i) {
+        EXPECT_FLOAT_EQ(dstConst[i], dstMutable[i]);
+    }
+}
+
+TEST(RenderClipsForTrack, ConstSharedPtrOverloadSkipsNullEntries) {
+    std::vector<std::shared_ptr<const LoadedAudio>> audio{ nullptr };
+    std::vector<ClipItem> clips{ MakeClip(0, 0, 0.0f, 4.0f / 24000.0f) };
+    std::vector<float> dst(4 * 2, 0.0f);
+    RenderClipsForTrack(clips, audio, 0, 48000, 24000.0f, 0, dst.data(), 4);
+    for (float v : dst) EXPECT_FLOAT_EQ(v, 0.0f);
+}
