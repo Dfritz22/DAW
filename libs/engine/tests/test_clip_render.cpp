@@ -2,6 +2,7 @@
 
 #include "engine/clip_render.h"
 
+#include <memory>
 #include <vector>
 
 using daw::core::ClipItem;
@@ -11,14 +12,14 @@ using daw::engine::RenderClipsForTrack;
 namespace {
 
 // Build a stereo source where left[i] = i+1, right[i] = -(i+1).
-LoadedAudio MakeRamp(int sampleRate, std::uint64_t frames) {
-    LoadedAudio a;
-    a.sampleRate = sampleRate;
-    a.frames = static_cast<std::uint32_t>(frames);
-    a.stereo.resize(static_cast<std::size_t>(frames) * 2, 0.0f);
+std::shared_ptr<LoadedAudio> MakeRamp(int sampleRate, std::uint64_t frames) {
+    auto a = std::make_shared<LoadedAudio>();
+    a->sampleRate = sampleRate;
+    a->frames = static_cast<std::uint32_t>(frames);
+    a->stereo.resize(static_cast<std::size_t>(frames) * 2, 0.0f);
     for (std::uint64_t i = 0; i < frames; ++i) {
-        a.stereo[static_cast<std::size_t>(i) * 2]     =  static_cast<float>(i + 1);
-        a.stereo[static_cast<std::size_t>(i) * 2 + 1] = -static_cast<float>(i + 1);
+        a->stereo[static_cast<std::size_t>(i) * 2]     =  static_cast<float>(i + 1);
+        a->stereo[static_cast<std::size_t>(i) * 2 + 1] = -static_cast<float>(i + 1);
     }
     return a;
 }
@@ -37,14 +38,14 @@ ClipItem MakeClip(int trackIndex, int audioIndex, float startBeat, float lengthB
 
 TEST(RenderClipsForTrack, EmptyClipListLeavesBufferUntouched) {
     std::vector<ClipItem> clips;
-    std::vector<LoadedAudio> audio;
+    std::vector<std::shared_ptr<LoadedAudio>> audio;
     std::vector<float> dst(8, 0.5f);
     RenderClipsForTrack(clips, audio, 0, 48000, 24000.0f, 0, dst.data(), 4);
     for (float v : dst) EXPECT_FLOAT_EQ(v, 0.5f);
 }
 
 TEST(RenderClipsForTrack, SingleClipFromZeroOffsetMixesAdditively) {
-    std::vector<LoadedAudio> audio{ MakeRamp(48000, 8) };
+    std::vector<std::shared_ptr<LoadedAudio>> audio{ MakeRamp(48000, 8) };
     std::vector<ClipItem> clips{ MakeClip(0, 0, 0.0f, /*lengthBeats*/ 8.0f / 24000.0f) };
 
     std::vector<float> dst(8 * 2, 1.0f); // pre-existing content
@@ -58,7 +59,7 @@ TEST(RenderClipsForTrack, SingleClipFromZeroOffsetMixesAdditively) {
 }
 
 TEST(RenderClipsForTrack, FiltersByTrackIndex) {
-    std::vector<LoadedAudio> audio{ MakeRamp(48000, 4) };
+    std::vector<std::shared_ptr<LoadedAudio>> audio{ MakeRamp(48000, 4) };
     std::vector<ClipItem> clips{
         MakeClip(/*track*/ 1, 0, 0.0f, 4.0f / 24000.0f),
         MakeClip(/*track*/ 0, 0, 0.0f, 4.0f / 24000.0f),
@@ -71,7 +72,7 @@ TEST(RenderClipsForTrack, FiltersByTrackIndex) {
 }
 
 TEST(RenderClipsForTrack, SkipsInvalidAudioIndex) {
-    std::vector<LoadedAudio> audio{ MakeRamp(48000, 4) };
+    std::vector<std::shared_ptr<LoadedAudio>> audio{ MakeRamp(48000, 4) };
     std::vector<ClipItem> clips{
         MakeClip(0, -1, 0.0f, 4.0f / 24000.0f),
         MakeClip(0,  9, 0.0f, 4.0f / 24000.0f),
@@ -83,7 +84,7 @@ TEST(RenderClipsForTrack, SkipsInvalidAudioIndex) {
 
 TEST(RenderClipsForTrack, RespectsBufferStartFrameWindow) {
     // Clip at absolute frames [0, 8). Buffer covers [4, 8).
-    std::vector<LoadedAudio> audio{ MakeRamp(48000, 8) };
+    std::vector<std::shared_ptr<LoadedAudio>> audio{ MakeRamp(48000, 8) };
     std::vector<ClipItem> clips{ MakeClip(0, 0, 0.0f, 8.0f / 24000.0f) };
 
     std::vector<float> dst(4 * 2, 0.0f);
@@ -98,7 +99,7 @@ TEST(RenderClipsForTrack, RespectsBufferStartFrameWindow) {
 
 TEST(RenderClipsForTrack, ClipPartiallyBeforeBufferIsCropped) {
     // Clip at [0, 8), buffer at [2, 6) → middle 4 frames written.
-    std::vector<LoadedAudio> audio{ MakeRamp(48000, 8) };
+    std::vector<std::shared_ptr<LoadedAudio>> audio{ MakeRamp(48000, 8) };
     std::vector<ClipItem> clips{ MakeClip(0, 0, 0.0f, 8.0f / 24000.0f) };
 
     std::vector<float> dst(4 * 2, 0.0f);
@@ -112,7 +113,7 @@ TEST(RenderClipsForTrack, ClipPartiallyBeforeBufferIsCropped) {
 
 TEST(RenderClipsForTrack, ClipBeyondBufferEndIsCropped) {
     // Clip at [4, 12), buffer [0, 8) → writes to dst frames 4..7 from source 0..3.
-    std::vector<LoadedAudio> audio{ MakeRamp(48000, 8) };
+    std::vector<std::shared_ptr<LoadedAudio>> audio{ MakeRamp(48000, 8) };
     // startBeat = 4 / spb; lengthBeats = 8 / spb; spb = 24000.
     std::vector<ClipItem> clips{ MakeClip(0, 0, 4.0f / 24000.0f, 8.0f / 24000.0f) };
 
@@ -131,7 +132,7 @@ TEST(RenderClipsForTrack, ClipBeyondBufferEndIsCropped) {
 }
 
 TEST(RenderClipsForTrack, OverlappingClipsSumAdditively) {
-    std::vector<LoadedAudio> audio{ MakeRamp(48000, 4) };
+    std::vector<std::shared_ptr<LoadedAudio>> audio{ MakeRamp(48000, 4) };
     std::vector<ClipItem> clips{
         MakeClip(0, 0, 0.0f, 4.0f / 24000.0f),
         MakeClip(0, 0, 0.0f, 4.0f / 24000.0f),
@@ -145,7 +146,7 @@ TEST(RenderClipsForTrack, OverlappingClipsSumAdditively) {
 }
 
 TEST(RenderClipsForTrack, NullDstIsNoOp) {
-    std::vector<LoadedAudio> audio{ MakeRamp(48000, 4) };
+    std::vector<std::shared_ptr<LoadedAudio>> audio{ MakeRamp(48000, 4) };
     std::vector<ClipItem> clips{ MakeClip(0, 0, 0.0f, 4.0f / 24000.0f) };
     RenderClipsForTrack(clips, audio, 0, 48000, 24000.0f, 0, nullptr, 4);
     SUCCEED();

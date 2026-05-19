@@ -110,6 +110,24 @@ struct MixSnapshot {
     // bounds checks against clip.audioIndex can run from snapshot data.
     std::vector<daw::core::ClipItem> clips;
     int                              audioSourceCount {0};
+
+    // Phase 24 / Step K5a \u2014 immutable shared references to audio sources.
+    //
+    // Each entry is a shared_ptr<const LoadedAudio> copied from
+    // core.project.audio at publish time. shared_ptr ownership keeps the
+    // LoadedAudio alive for the entire lifetime of this snapshot, even if
+    // the UI thread later clears or replaces the slot in core.project.audio
+    // (project load, take recorded, audio replaced). The realtime audio
+    // callback (wired in K5b) reads PCM via *audioSources[i] without
+    // touching core.project, eliminating the lock on the audio path.
+    //
+    // The pointed-to LoadedAudio is treated as immutable by readers; the
+    // only legal mutator is the recorder during active capture (and only
+    // for the in-progress take, which is not yet referenced by any
+    // committed snapshot). Once a take is committed via push_back into
+    // core.project.audio and a subsequent snapshot is published, that
+    // LoadedAudio is logically frozen.
+    std::vector<std::shared_ptr<const daw::core::LoadedAudio>> audioSources;
 };
 
 // Atomic publisher. Wraps std::atomic<std::shared_ptr<const T>> so the

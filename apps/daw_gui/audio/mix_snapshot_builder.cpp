@@ -62,6 +62,15 @@ BuildMixSnapshotFromCore(const CoreState& core, const AudioRuntimeState& audio) 
     snap->clips = core.project.clips;
     snap->audioSourceCount = static_cast<int>(core.project.audio.size());
 
+    // Phase 24 / Step K5a \u2014 share immutable references to audio sources.
+    // Element-wise shared_ptr copy: cheap (atomic refcount bump per slot),
+    // keeps every LoadedAudio alive for the snapshot's lifetime, and
+    // matches the realtime callback's future read path (K5b).
+    snap->audioSources.reserve(core.project.audio.size());
+    for (const auto& srcPtr : core.project.audio) {
+        snap->audioSources.push_back(srcPtr);  // shared_ptr<LoadedAudio> \u2192 shared_ptr<const LoadedAudio>
+    }
+
     return snap;
 }
 

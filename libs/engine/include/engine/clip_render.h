@@ -3,6 +3,7 @@
 #include "core/audio_clip.h"
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace daw::engine {
@@ -11,8 +12,9 @@ namespace daw::engine {
 // destination buffer, mixing into existing content (does not zero `dstStereo`).
 //
 //   clips              Project clip list.
-//   audioPool          Project audio pool. Clips with audioIndex outside
-//                      [0, audioPool.size()) are skipped.
+//   audioPool          Project audio pool. Each entry is a shared_ptr to a
+//                      LoadedAudio; null entries and clips with audioIndex
+//                      outside [0, audioPool.size()) are skipped.
 //   trackIndex         Only clips whose `trackIndex` matches are rendered.
 //   projectSampleRate  Project sample rate (Hz). Forwarded to ReadClipSample.
 //   samplesPerBeat     Project samples-per-beat. Used to convert beat-based
@@ -26,7 +28,7 @@ namespace daw::engine {
 //   dstFrames          Number of stereo frames in `dstStereo`.
 void RenderClipsForTrack(
     const std::vector<daw::core::ClipItem>& clips,
-    const std::vector<daw::core::LoadedAudio>& audioPool,
+    const std::vector<std::shared_ptr<daw::core::LoadedAudio>>& audioPool,
     int trackIndex,
     int projectSampleRate,
     float samplesPerBeat,

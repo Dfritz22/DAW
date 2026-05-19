@@ -274,7 +274,9 @@ bool IoSaveProject(const std::wstring& path, AppState& state) {
         }
 
         for (size_t i = 0; i < state.core.project.audio.size(); ++i) {
-            auto& a = state.core.project.audio[i];
+            auto aPtr = state.core.project.audio[i];
+            if (!aPtr) continue;
+            auto& a = *aPtr;
             const bool needsMaterialize = a.sourcePath.empty() || a.sourcePath == L"[recording]";
             if (!needsMaterialize) {
                 continue;
@@ -355,7 +357,8 @@ bool IoSaveProject(const std::wstring& path, AppState& state) {
     // Audio files (deduplicated source paths)
     js << "  \"audio_files\": [\n";
     for (size_t i = 0; i < state.core.project.audio.size(); ++i) {
-        const std::string src = JsonEscape(WstrToUtf8(state.core.project.audio[i].sourcePath));
+        const auto& aPtr = state.core.project.audio[i];
+        const std::string src = aPtr ? JsonEscape(WstrToUtf8(aPtr->sourcePath)) : std::string{};
         js << "    \"" << src << "\"";
         if (i + 1 < state.core.project.audio.size()) js << ",";
         js << "\n";
@@ -596,13 +599,13 @@ bool IoLoadProject(const std::wstring& path, AppState& state) {
                 LoadedAudio audio{};
                 std::wstring err;
                 if (std::filesystem::exists(srcPath) && IoLoadWavStereo(srcPath, &audio, &err)) {
-                    state.core.project.audio.push_back(std::move(audio));
+                    state.core.project.audio.push_back(std::make_shared<LoadedAudio>(std::move(audio)));
                 } else {
                     // Push placeholder so clip audio_index references stay valid
                     LoadedAudio placeholder{};
                     placeholder.sourcePath = srcPath;
                     placeholder.displayName = std::filesystem::path(srcPath).filename().wstring() + L" [missing]";
-                    state.core.project.audio.push_back(std::move(placeholder));
+                    state.core.project.audio.push_back(std::make_shared<LoadedAudio>(std::move(placeholder)));
                 }
                 cur = q2 + 1;
             }

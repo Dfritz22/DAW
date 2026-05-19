@@ -10,7 +10,7 @@ namespace daw::engine {
 
 void RenderClipsForTrack(
     const std::vector<daw::core::ClipItem>& clips,
-    const std::vector<daw::core::LoadedAudio>& audioPool,
+    const std::vector<std::shared_ptr<daw::core::LoadedAudio>>& audioPool,
     int trackIndex,
     int projectSampleRate,
     float samplesPerBeat,
@@ -27,7 +27,9 @@ void RenderClipsForTrack(
     for (const auto& clip : clips) {
         if (clip.trackIndex != trackIndex) continue;
         if (clip.audioIndex < 0 || clip.audioIndex >= audioCount) continue;
-        const auto& source = audioPool[static_cast<std::size_t>(clip.audioIndex)];
+        const auto& sourcePtr = audioPool[static_cast<std::size_t>(clip.audioIndex)];
+        if (!sourcePtr) continue;
+        const auto& source = *sourcePtr;
 
         const std::uint64_t clipStart = static_cast<std::uint64_t>(
             std::llround(std::max(0.0f, clip.startBeat) * samplesPerBeat));

@@ -132,9 +132,9 @@ bool ReplaceProjectWithSingleWav(AppState& state, const std::wstring& wavPath, s
         t.busIndex = 3; // mastered stereo routes directly to Master
         state.core.project.tracks.push_back(std::move(t));
     }
-        state.core.project.audio.push_back(std::move(audio));
+        state.core.project.audio.push_back(std::make_shared<LoadedAudio>(std::move(audio)));
 
-        const float lengthBeats = BeatsFromFrames(state, state.core.project.audio.back().frames);
+        const float lengthBeats = BeatsFromFrames(state, state.core.project.audio.back()->frames);
         state.core.project.clips.push_back(ClipItem{
             0,
             0,
@@ -171,11 +171,15 @@ bool DoAutoMaster(HWND hwnd, AppState& state) {
         if (!state.core.project.clips.empty() && state.ui.view.selectedClipIndex >= 0 && state.ui.view.selectedClipIndex < static_cast<int>(state.core.project.clips.size())) {
             const ClipItem& c = state.core.project.clips[static_cast<size_t>(state.ui.view.selectedClipIndex)];
             if (c.audioIndex >= 0 && c.audioIndex < static_cast<int>(state.core.project.audio.size())) {
-                sourceWav = state.core.project.audio[static_cast<size_t>(c.audioIndex)].sourcePath;
+                if (const auto& aPtr = state.core.project.audio[static_cast<size_t>(c.audioIndex)]) {
+                    sourceWav = aPtr->sourcePath;
+                }
             }
         }
         if (sourceWav.empty() && state.core.project.audio.size() == 1) {
-            sourceWav = state.core.project.audio[0].sourcePath;
+            if (const auto& aPtr = state.core.project.audio[0]) {
+                sourceWav = aPtr->sourcePath;
+            }
         }
         LeaveCriticalSection(&state.audio.audioStateLock);
     }

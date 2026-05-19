@@ -125,9 +125,9 @@ void ImportWavFiles(HWND hwnd, AppState& state) {
             t.busIndex = 1;
             state.core.project.tracks.push_back(std::move(t));
         }
-        state.core.project.audio.push_back(std::move(audio));
+        state.core.project.audio.push_back(std::make_shared<LoadedAudio>(std::move(audio)));
 
-        const float lengthBeats = BeatsFromFrames(state, state.core.project.audio.back().frames);
+        const float lengthBeats = BeatsFromFrames(state, state.core.project.audio.back()->frames);
         state.core.project.clips.push_back(ClipItem{
             trackIndex,
             audioIndex,
@@ -175,7 +175,9 @@ void ConvertImportedAudioToProjectSampleRate(HWND hwnd, AppState& state) {
     // Snapshot which clips need conversion (without holding the lock).
     int needCount = 0;
     int totalCount = static_cast<int>(state.core.project.audio.size());
-    for (const LoadedAudio& a : state.core.project.audio) {
+    for (const auto& aPtr : state.core.project.audio) {
+        if (!aPtr) continue;
+        const LoadedAudio& a = *aPtr;
         if (a.sampleRate > 0 && a.sampleRate != dstSR && a.frames > 0) {
             ++needCount;
         }
@@ -209,7 +211,9 @@ void ConvertImportedAudioToProjectSampleRate(HWND hwnd, AppState& state) {
     int converted = 0;
     int failed = 0;
     EnterCriticalSection(&state.audio.audioStateLock);
-    for (LoadedAudio& a : state.core.project.audio) {
+    for (auto& aPtr : state.core.project.audio) {
+        if (!aPtr) continue;
+        LoadedAudio& a = *aPtr;
         if (a.sampleRate <= 0 || a.sampleRate == dstSR || a.frames == 0) continue;
         const std::uint64_t dstFrames64 =
             (static_cast<std::uint64_t>(a.frames) * static_cast<std::uint64_t>(dstSR)

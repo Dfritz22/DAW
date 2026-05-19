@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -69,8 +70,13 @@ struct ProjectData {
     std::vector<TrackData> tracks;
     std::vector<BusData> buses;  // size == kProjectBusCount
 
-    // Audio files and clips
-    std::vector<LoadedAudio> audio;
+    // Audio files and clips. Audio sources are held by shared_ptr so the
+    // realtime audio thread can hold immutable references via MixSnapshot
+    // (Phase 24 / Step K5) while the UI thread mutates this vector under
+    // the audio state lock. Recorder append-during-capture remains valid
+    // because LoadedAudio buffers themselves are mutable; only the vector
+    // slot ownership is shared.
+    std::vector<std::shared_ptr<LoadedAudio>> audio;
     std::vector<ClipItem> clips;
 
     ProjectData() {

@@ -210,3 +210,37 @@ TEST(MixSnapshot, ClipPlacementsRoundTripThroughPublisher) {
     EXPECT_EQ(obs->clips[1].name, std::wstring(L"snare"));
     EXPECT_EQ(obs->audioSourceCount, 3);
 }
+
+// ── Phase 24 / Step K5a ───────────────────────────────────────────────────────
+
+TEST(MixSnapshot, DefaultAudioSourcesEmpty) {
+    MixSnapshot snap;
+    EXPECT_TRUE(snap.audioSources.empty());
+}
+
+TEST(MixSnapshot, AudioSourcesShareOwnershipAcrossSnapshots) {
+    MixSnapshotPublisher pub;
+
+    auto source = std::make_shared<daw::core::LoadedAudio>();
+    source->sampleRate = 48000;
+    source->frames     = 4;
+    source->stereo     = {0.1f, -0.1f, 0.2f, -0.2f, 0.3f, -0.3f, 0.4f, -0.4f};
+
+    auto next = std::make_shared<MixSnapshot>();
+    next->generation = 7;
+    next->audioSources.push_back(source);
+    next->audioSourceCount = 1;
+    pub.Publish(next);
+
+    // Drop our local copy; publisher + observer must keep it alive.
+    const daw::core::LoadedAudio* rawAddr = source.get();
+    source.reset();
+
+    auto obs = pub.Load();
+    ASSERT_EQ(obs->audioSources.size(), 1u);
+    ASSERT_NE(obs->audioSources[0], nullptr);
+    EXPECT_EQ(obs->audioSources[0].get(), rawAddr);
+    EXPECT_EQ(obs->audioSources[0]->sampleRate, 48000);
+    EXPECT_EQ(obs->audioSources[0]->frames, 4u);
+    EXPECT_FLOAT_EQ(obs->audioSources[0]->stereo[2], 0.2f);
+}

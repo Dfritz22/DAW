@@ -156,7 +156,7 @@ void StopRecording(AppState& state, bool commitTake) {
             const COLORREF clipColors[4] = {kPalette.clip1, kPalette.clip2, kPalette.clip3, kPalette.clip4};
             EnterCriticalSection(&state.audio.audioStateLock);
             const int audioIndex = static_cast<int>(state.core.project.audio.size());
-            state.core.project.audio.push_back(std::move(take));
+            state.core.project.audio.push_back(std::make_shared<LoadedAudio>(std::move(take)));
 
             // The engine holds the playback cursor at recordStartFrame for the
             // entire count-in (count-in runs in its own time domain), and the

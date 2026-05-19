@@ -334,7 +334,9 @@ void UiDrawArrangeLanes(HDC hdc, const RECT& rect, const AppState& state) {
 
         RECT waveRect{clipInnerLeft, labelRect.bottom + 1, clipInnerRight, clipInnerBottom};
         if (state.core.project.clips[i].audioIndex >= 0 && state.core.project.clips[i].audioIndex < static_cast<int>(state.core.project.audio.size()) && waveRect.right > waveRect.left && waveRect.bottom > waveRect.top) {
-            const LoadedAudio& audio = state.core.project.audio[static_cast<size_t>(state.core.project.clips[i].audioIndex)];
+            const auto& audioPtr = state.core.project.audio[static_cast<size_t>(state.core.project.clips[i].audioIndex)];
+            if (audioPtr) {
+            const LoadedAudio& audio = *audioPtr;
             const std::uint64_t totalFrames = static_cast<std::uint64_t>(audio.frames);
             const float spb = SamplesPerBeat(state);
             const std::uint64_t srcOffset = state.core.project.clips[i].sourceOffsetFrames;
@@ -347,6 +349,7 @@ void UiDrawArrangeLanes(HDC hdc, const RECT& rect, const AppState& state) {
                 std::uint64_t srcEnd   = srcOffset + (static_cast<std::uint64_t>(visibleRightPx) * clipLenFrames) / fcp;
                 srcEnd = std::min(std::max(srcEnd, srcStart + 1), totalFrames);
                 DrawClipWaveform(hdc, waveRect, audio, srcStart, srcEnd);
+            }
             }
         }
         StrokeRect(hdc, clipRect, (state.ui.view.selectedClipIndex == static_cast<int>(i)) ? RGB(232, 232, 232) : RGB(24, 24, 24));
