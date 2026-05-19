@@ -149,8 +149,22 @@ bool EngineFillRealtimeBufferLocked(CoreState& core, AudioRuntimeState& audio, s
     if (audio.engineTrackMixScratch.size() < static_cast<size_t>(trackCount)) {
         audio.engineTrackMixScratch.resize(static_cast<size_t>(trackCount));
     }
-    for (int ti = 0; ti < trackCount; ++ti) {
-        audio.engineTrackMixScratch[static_cast<size_t>(ti)] = ResolveTrackRealtimeMix(core, ti);
+    // Phase 24 / Step K5c.3 — prefer snapshot trackMixes (K5c.2 builds them
+    // via ResolveTrackRealtimeMix, so solo/mute audibility matches the per-
+    // block path). Fall back to per-block core read when the snapshot is
+    // not sized to match the current track count (eg. mid-publish during a
+    // track add/remove, or pre-init transient).
+    const bool snapHasTrackMixes = mixSnapshot
+        && mixSnapshot->trackMixes.size() == static_cast<size_t>(trackCount);
+    if (snapHasTrackMixes) {
+        for (int ti = 0; ti < trackCount; ++ti) {
+            audio.engineTrackMixScratch[static_cast<size_t>(ti)] =
+                mixSnapshot->trackMixes[static_cast<size_t>(ti)];
+        }
+    } else {
+        for (int ti = 0; ti < trackCount; ++ti) {
+            audio.engineTrackMixScratch[static_cast<size_t>(ti)] = ResolveTrackRealtimeMix(core, ti);
+        }
     }
 
     daw::engine::MixTracksToBuses(
@@ -222,8 +236,20 @@ bool EngineFillRealtimeBufferLocked(CoreState& core, AudioRuntimeState& audio, s
     if (audio.engineBusMixScratch.size() < static_cast<size_t>(kBusCount)) {
         audio.engineBusMixScratch.resize(static_cast<size_t>(kBusCount));
     }
-    for (int b = 0; b < kBusCount; ++b) {
-        audio.engineBusMixScratch[static_cast<size_t>(b)] = ResolveBusRealtimeMix(core, b);
+    // Phase 24 / Step K5c.3 — prefer snapshot busMixes. Snapshot builder
+    // sizes busMixes to exactly kBusCount, so the bounds check is just
+    // defensive against an uninitialized snapshot.
+    const bool snapHasBusMixes = mixSnapshot
+        && mixSnapshot->busMixes.size() >= static_cast<size_t>(kBusCount);
+    if (snapHasBusMixes) {
+        for (int b = 0; b < kBusCount; ++b) {
+            audio.engineBusMixScratch[static_cast<size_t>(b)] =
+                mixSnapshot->busMixes[static_cast<size_t>(b)];
+        }
+    } else {
+        for (int b = 0; b < kBusCount; ++b) {
+            audio.engineBusMixScratch[static_cast<size_t>(b)] = ResolveBusRealtimeMix(core, b);
+        }
     }
 
     daw::engine::MixBusesToMaster(
