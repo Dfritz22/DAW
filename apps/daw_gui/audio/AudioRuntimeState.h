@@ -81,6 +81,16 @@ struct AudioRuntimeState {
     std::atomic<std::uint64_t> playbackFrameCursor {0};
     CRITICAL_SECTION audioStateLock {};
 
+    // Phase 23 / Step J — audio-thread non-blocking guarantee.
+    // Counts the number of times an audio render callback failed to acquire
+    // `audioStateLock` via TryEnterCriticalSection and had to emit silence
+    // instead of blocking. Steady-state value should be 0; a non-zero value
+    // indicates UI or worker-thread contention on the audio path and is the
+    // canonical signal that a hot-path callee (project save, AutoMix, future
+    // plugin GUI) is holding the lock too long.
+    // Read by diagnostic UI; written only by audio threads.
+    std::atomic<std::uint64_t> audioCallbackLockMisses {0};
+
     // Realtime-thread scratch buffer reused by the engine when the device
     // sample rate differs from the project sample rate. Owning it here keeps
     // the realtime callback heap-allocation-free.

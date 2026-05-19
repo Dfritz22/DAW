@@ -501,9 +501,16 @@ static DWORD WINAPI WasapiRenderThreadProc(LPVOID param) {
 
         pcmBuf.assign(static_cast<size_t>(available) * 2, 0);
         bool reachedEnd = false;
-        EnterCriticalSection(&audio->audioStateLock);
-        EngineFillRealtimeForDeviceLocked(core, *audio, pcmBuf.data(), static_cast<int>(available), static_cast<int>(audio->wasapiOutFormat.nSamplesPerSec), &reachedEnd);
-        LeaveCriticalSection(&audio->audioStateLock);
+        // Phase 23 / Step J — non-blocking audio callback. See device_mme.cpp
+        // for rationale. pcmBuf was just zero-filled by .assign() above, so
+        // the silence-fallback path requires no additional work — we just
+        // skip the engine fill and submit zeros to the render client.
+        if (TryEnterCriticalSection(&audio->audioStateLock)) {
+            EngineFillRealtimeForDeviceLocked(core, *audio, pcmBuf.data(), static_cast<int>(available), static_cast<int>(audio->wasapiOutFormat.nSamplesPerSec), &reachedEnd);
+            LeaveCriticalSection(&audio->audioStateLock);
+        } else {
+            audio->audioCallbackLockMisses.fetch_add(1, std::memory_order_relaxed);
+        }
 
         BYTE* pData = nullptr;
         if (FAILED(renderClient->GetBuffer(available, &pData)) || pData == nullptr) break;
