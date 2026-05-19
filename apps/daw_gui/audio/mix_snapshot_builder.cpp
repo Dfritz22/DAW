@@ -29,6 +29,31 @@ BuildMixSnapshotFromCore(const CoreState& core, const AudioRuntimeState& audio) 
         snap->busMixes[static_cast<size_t>(b)] = ResolveBusRealtimeMix(core, b);
     }
 
+    // Phase 24 / Step K3 \u2014 capture insert-chain configs (effects, bypass,
+    // per-effect parameter blocks, slot count) for each track and bus.
+    // Persistent DSP state (filter memories, delay buffers) is NOT copied
+    // \u2014 those mutate on the audio thread and stay in AudioRuntimeState.
+    snap->trackInserts.resize(static_cast<size_t>(trackCount));
+    for (int ti = 0; ti < trackCount; ++ti) {
+        const auto& t = core.project.tracks[static_cast<size_t>(ti)];
+        auto& dst = snap->trackInserts[static_cast<size_t>(ti)];
+        dst.effects = t.insertEffects;
+        dst.bypass  = t.insertBypass;
+        dst.config  = t.insertConfig;
+        dst.slots   = t.insertSlots;
+    }
+
+    const int busCount = static_cast<int>(core.project.buses.size());
+    snap->busInserts.resize(static_cast<size_t>(busCount));
+    for (int b = 0; b < busCount; ++b) {
+        const auto& bd = core.project.buses[static_cast<size_t>(b)];
+        auto& dst = snap->busInserts[static_cast<size_t>(b)];
+        dst.effects = bd.insertEffects;
+        dst.bypass  = bd.insertBypass;
+        dst.config  = bd.insertConfig;
+        dst.slots   = bd.insertSlots;
+    }
+
     return snap;
 }
 

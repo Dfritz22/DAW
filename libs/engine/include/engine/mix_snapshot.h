@@ -1,5 +1,6 @@
 #pragma once
 
+#include "dsp/insert_types.h"
 #include "engine/mix_pipeline.h"
 
 #include <atomic>
@@ -62,6 +63,33 @@ struct MixSnapshot {
     // (IsTrackAudible-style) need this to remain consistent with the
     // captured per-track audibility.
     bool anySoloTracks {false};
+
+    // Phase 24 / Step K3 \u2014 insert-chain configuration snapshot.
+    //
+    // Per-track and per-bus copies of the DSP insert chain configuration
+    // (effect type ids, bypass flags, per-effect parameter blocks, slot
+    // count). The audio callback's persistent DSP *state* (filter
+    // memories, delay buffers, envelope followers) is NOT snapshotted \u2014
+    // that stays in AudioRuntimeState::trackInsertDspState /
+    // busInsertDspState because it is mutated on the audio thread
+    // every block.
+    //
+    // K3 only populates the data; the realtime callback's
+    // ApplyTrackInsertChain / ApplyBusInsertChain still read configs
+    // from core.project under the audio lock. K5 switches the callback
+    // to read from these vectors and wires UI mutators (FX knob drags,
+    // AutoMix completion, project load) to call Publish.
+    //
+    // Empty vectors mean "no snapshot yet" or "pre-K3"; callers must
+    // continue using the legacy CoreState-driven path until non-empty.
+    struct InsertChainConfig {
+        InsertEffectArray effects {};
+        InsertBypassArray bypass  {};
+        InsertConfigArray config  {};
+        int               slots   {0};
+    };
+    std::vector<InsertChainConfig> trackInserts;
+    std::vector<InsertChainConfig> busInserts;
 };
 
 // Atomic publisher. Wraps std::atomic<std::shared_ptr<const T>> so the

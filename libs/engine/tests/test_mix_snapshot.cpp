@@ -119,3 +119,49 @@ TEST(MixSnapshot, MixVectorsRoundTripThroughPublisher) {
 
     EXPECT_TRUE(obs->anySoloTracks);
 }
+
+// ── Phase 24 / Step K3 ────────────────────────────────────────────────────────
+
+TEST(MixSnapshot, DefaultInsertVectorsAreEmpty) {
+    MixSnapshot snap;
+    EXPECT_TRUE(snap.trackInserts.empty());
+    EXPECT_TRUE(snap.busInserts.empty());
+}
+
+TEST(MixSnapshot, InsertChainConfigRoundTripsThroughPublisher) {
+    MixSnapshotPublisher pub;
+
+    auto next = std::make_shared<MixSnapshot>();
+    next->generation = 11;
+
+    MixSnapshot::InsertChainConfig tcfg{};
+    tcfg.slots = 3;
+    tcfg.effects[0] = static_cast<std::uint8_t>(kFxEQ);
+    tcfg.effects[1] = static_cast<std::uint8_t>(kFxCMP);
+    tcfg.effects[2] = static_cast<std::uint8_t>(kFxLIM);
+    tcfg.bypass[1]  = true;
+    tcfg.config[0].eq[0].freq_hz = 250.0f;
+    tcfg.config[1].cmp_threshold_db = -24.0f;
+    next->trackInserts.push_back(tcfg);
+
+    MixSnapshot::InsertChainConfig bcfg{};
+    bcfg.slots = 1;
+    bcfg.effects[0] = static_cast<std::uint8_t>(kFxLIM);
+    bcfg.config[0].lim_ceiling_db = -0.5f;
+    next->busInserts.push_back(bcfg);
+
+    pub.Publish(next);
+
+    auto obs = pub.Load();
+    ASSERT_EQ(obs->trackInserts.size(), 1u);
+    EXPECT_EQ(obs->trackInserts[0].slots, 3);
+    EXPECT_EQ(obs->trackInserts[0].effects[1], static_cast<std::uint8_t>(kFxCMP));
+    EXPECT_TRUE (obs->trackInserts[0].bypass[1]);
+    EXPECT_FALSE(obs->trackInserts[0].bypass[0]);
+    EXPECT_FLOAT_EQ(obs->trackInserts[0].config[0].eq[0].freq_hz, 250.0f);
+    EXPECT_FLOAT_EQ(obs->trackInserts[0].config[1].cmp_threshold_db, -24.0f);
+
+    ASSERT_EQ(obs->busInserts.size(), 1u);
+    EXPECT_EQ(obs->busInserts[0].slots, 1);
+    EXPECT_FLOAT_EQ(obs->busInserts[0].config[0].lim_ceiling_db, -0.5f);
+}
