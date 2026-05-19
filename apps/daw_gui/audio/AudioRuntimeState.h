@@ -22,6 +22,7 @@
 #include "core/CoreState.h"
 #include "dsp/insert_types.h"
 #include "engine/mix_pipeline.h"
+#include "engine/mix_snapshot.h"
 
 constexpr int kAudioBufferFrames = 256;
 constexpr int kAudioBufferCount = 4;
@@ -90,6 +91,17 @@ struct AudioRuntimeState {
     // plugin GUI) is holding the lock too long.
     // Read by diagnostic UI; written only by audio threads.
     std::atomic<std::uint64_t> audioCallbackLockMisses {0};
+
+    // Phase 24 / Step K1 — lock-free mix-parameter snapshot publisher.
+    // UI / control thread publishes a new immutable snapshot on every
+    // mix-affecting mutation; the audio callback will Load() it at the top
+    // of each block (wiring lands in K2). Today the publisher is allocated
+    // and reachable but unused; this lets later K phases migrate data into
+    // the snapshot one call site at a time without further AudioRuntimeState
+    // surface changes. The publisher is non-copyable / non-movable, so it
+    // forces AudioRuntimeState to be likewise (already the case via
+    // CRITICAL_SECTION).
+    daw::engine::MixSnapshotPublisher mixSnapshotPublisher;
 
     // Realtime-thread scratch buffer reused by the engine when the device
     // sample rate differs from the project sample rate. Owning it here keeps
