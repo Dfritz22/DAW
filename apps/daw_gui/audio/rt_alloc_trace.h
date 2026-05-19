@@ -28,10 +28,21 @@ namespace daw::audio {
     inline bool RtIsAudioThread() noexcept { return false; }
 #endif
 
+} // namespace daw::audio
+
+// Phase 25 / Step L1 — always-on thread identity. RtAudioThreadScope now
+// brackets BOTH the optional DAW_RT_ALLOC_TRACE flag AND the always-on
+// daw::threading audio-thread marker, so every existing audio render thread
+// is automatically registered for IsAudioThread() / DAW_ASSERT_AUDIO_THREAD
+// checks without further plumbing.
+#include "threading/thread_identity.h"
+
+namespace daw::audio {
+
 // RAII scope guard.
 struct RtAudioThreadScope {
-    RtAudioThreadScope() noexcept { RtBeginAudioThread(); }
-    ~RtAudioThreadScope() noexcept { RtEndAudioThread(); }
+    RtAudioThreadScope() noexcept  { RtBeginAudioThread(); daw::threading::BeginAudioThread(); }
+    ~RtAudioThreadScope() noexcept { daw::threading::EndAudioThread(); RtEndAudioThread(); }
     RtAudioThreadScope(const RtAudioThreadScope&) = delete;
     RtAudioThreadScope& operator=(const RtAudioThreadScope&) = delete;
 };

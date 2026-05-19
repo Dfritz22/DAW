@@ -11,6 +11,7 @@
 #include "ai/automix_bridge.h"
 #include "audio/engine_utils.h"
 #include "audio/transport_adapter.h"
+#include "threading/thread_identity.h"
 #include "vm/timeline_zoom.h"
 #include "ui/wndproc/wheel.h"
 #include "ui/wndproc/timer.h"
@@ -233,6 +234,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 }
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdShow) {
+    // Phase 25 / Step L1 — record the main thread id before anything else so
+    // daw::threading::IsMainThread() answers correctly from the first
+    // WndProc dispatch onward.
+    daw::threading::RegisterMainThread();
+
     // Optional .dawproj path as first command-line argument.
     std::wstring startupProjectPath;
     if (lpCmdLine && lpCmdLine[0] != L'\0') {
