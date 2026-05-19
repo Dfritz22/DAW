@@ -18,7 +18,16 @@ BuildMixSnapshotFromCore(const CoreState& core, const AudioRuntimeState& audio) 
     snap->trackMixes.resize(static_cast<size_t>(trackCount));
     snap->anySoloTracks = false;
     for (int ti = 0; ti < trackCount; ++ti) {
-        snap->trackMixes[static_cast<size_t>(ti)] = ResolveTrackBusMix(core, ti);
+        // Phase 24 / Step K5c.2 \u2014 mirror the audio callback's resolve
+        // (ResolveTrackRealtimeMix) so trackMixes carry solo audibility,
+        // not just mute. This lets K5c.3 swap the audio thread's per-
+        // block ResolveTrackRealtimeMix call for snap->trackMixes
+        // without changing solo semantics. Automation curves are
+        // evaluated at beat 0 in both paths today (see automation.h
+        // single-arg overloads), so static gainDb/pan/busIndex remain
+        // the effective sources \u2014 per-block curve evaluation lands in
+        // a later phase along with curve snapshotting.
+        snap->trackMixes[static_cast<size_t>(ti)] = ResolveTrackRealtimeMix(core, ti);
         if (core.project.tracks[static_cast<size_t>(ti)].solo) {
             snap->anySoloTracks = true;
         }
